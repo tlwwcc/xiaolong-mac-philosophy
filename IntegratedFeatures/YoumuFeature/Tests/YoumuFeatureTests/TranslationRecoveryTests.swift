@@ -88,10 +88,10 @@ final class TranslationRecoveryTests: XCTestCase {
     }
 
     @MainActor
-    func testShortWordsRemainTranslatableAndAmbiguityUsesSystemDetection() {
+    func testShortWordsUseExplicitLanguageWithoutSystemDetection() {
         let short = LocalTranslationRouting.pair(for: ["OK"], targetLanguage: .zhHans)
         XCTAssertNotNil(short)
-        XCTAssertNil(short?.sourceIdentifier)
+        XCTAssertEqual(short?.sourceIdentifier, "en")
         XCTAssertEqual(short?.targetIdentifier, "zh-Hans")
         XCTAssertNotNil(LocalTranslationRouting.pair(for: ["Save"], targetLanguage: .zhHans))
         XCTAssertNotNil(LocalTranslationRouting.pair(for: ["こんにちは"], targetLanguage: .zhHans))

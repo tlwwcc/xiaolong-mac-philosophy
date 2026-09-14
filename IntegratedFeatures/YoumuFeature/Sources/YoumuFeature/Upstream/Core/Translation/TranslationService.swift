@@ -79,13 +79,13 @@ class TranslationService {
 
         if policy.triesAppleLocal {
             do {
-                if let local = try await AppleLocalTranslator.shared.translate(
+                if let local = try await AppleLocalTranslator.shared.translateBlocks(
                     texts: blockTexts, targetLanguage: targetLanguage,
                     systemPresentation: systemPresentation
                 ) {
-                    return local.enumerated().map {
-                        .init(index: $0.offset, text: $0.element, failed: false)
-                    }
+                    if let error = local.firstError,
+                       local.successfulGroups == 0 || policy.allowsOnline { throw error }
+                    return local.blocks
                 }
             } catch is CancellationError {
                 throw CancellationError()

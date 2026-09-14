@@ -56,55 +56,6 @@ enum AppleLocalModelCatalog {
     static let privacyDetail = "模型由 macOS 管理；安装后翻译内容只在本机处理。"
 }
 
-/// 翻译与“是否跳过目标语言”的标准不同：短菜单词也必须进入翻译。
-/// 识别不确定时让 Apple 显示语言确认，不能把短词当成模型不可用。
-enum LocalTranslationRouting {
-    struct Pair: Equatable {
-        let sourceIdentifier: String?
-        let targetIdentifier: String?
-    }
-
-    static func pair(for texts: [String], targetLanguage: Language) -> Pair? {
-        let text = texts.joined(separator: "\n")
-        guard text.unicodeScalars.contains(where: CharacterSet.letters.contains) else { return nil }
-        let tagger = NSLinguisticTagger(tagSchemes: [.language], options: 0)
-        tagger.string = text
-        let detected = tagger.dominantLanguage
-        let letterCount = text.unicodeScalars.filter(CharacterSet.letters.contains).count
-        let source = detected == "und" || letterCount < 4 ? nil : detected
-        let target: String?
-        switch targetLanguage {
-        case .auto: target = nil
-        case .zhHans: target = "zh-Hans"
-        case .zhHant: target = "zh-Hant"
-        case .en: target = "en"
-        case .ja: target = "ja"
-        case .ko: target = "ko"
-        }
-        return Pair(sourceIdentifier: source, targetIdentifier: target)
-    }
-
-    /// Apple 批量响应可乱序返回，必须按 clientIdentifier 归位，绝不按响应顺序对齐。
-    static func orderedTexts(
-        responsePairs: [(clientIdentifier: String?, text: String)],
-        expectedCount: Int
-    ) -> [String]? {
-        var mapped: [Int: String] = [:]
-        for response in responsePairs {
-            guard let raw = response.clientIdentifier,
-                  let index = Int(raw),
-                  (0..<expectedCount).contains(index),
-                  mapped[index] == nil,
-                  !response.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                continue
-            }
-            mapped[index] = response.text
-        }
-        guard mapped.count == expectedCount else { return nil }
-        return (0..<expectedCount).compactMap { mapped[$0] }
-    }
-}
-
 @available(macOS 15.0, *)
 enum AppleLocalModelAvailability {
     static func status() async -> AppleLocalModelStatus {
@@ -133,9 +84,17 @@ enum AppleLocalTranslationError: LocalizedError {
     case timedOut
     case incompleteResponse
     case modelDownloadTimedOut
+    case sourceLanguageUnidentified
+    case unsupportedLanguages(source: String, target: String)
 
     var errorDescription: String? {
         switch self {
+        case .sourceLanguageUnidentified: return "文字不足以判断语言，请扩大截图范围后重试"
+        case let .unsupportedLanguages(source, target):
+            let locale = Locale(identifier: "zh-Hans")
+            let sourceName = locale.localizedString(forIdentifier: source) ?? source
+            let targetName = locale.localizedString(forIdentifier: target) ?? target
+            return "Apple 暂不支持从\(sourceName)翻译为\(targetName)，其他可翻译部分会保留"
         case .busy: return "本机翻译正忙"
         case .timedOut: return "本机翻译超时"
         case .incompleteResponse: return "本机翻译结果不完整"
@@ -169,35 +128,58 @@ final class AppleLocalTranslator {
         texts: [String], targetLanguage: Language,
         systemPresentation: (@MainActor (Bool) -> Void)? = nil
     ) async throws -> [String]? {
-        guard !texts.isEmpty else { return [] }
-        if texts.allSatisfy({ !LanguageClassifier.shouldTranslate($0, targetLanguage: targetLanguage) }) {
-            return texts
-        }
+        guard let outcome = try await translateBlocks(
+            texts: texts, targetLanguage: targetLanguage, systemPresentation: systemPresentation
+        ) else { return nil }
+        if let error = outcome.firstError { throw error }
+        return outcome.blocks.map(\.text)
+    }
+
+    func translateBlocks(
+        texts: [String], targetLanguage: Language,
+        systemPresentation: (@MainActor (Bool) -> Void)? = nil
+    ) async throws -> LocalTranslationBatchOutcome? {
+        try Task.checkCancellation()
         guard #available(macOS 15.0, *) else { return nil }
-        guard let pair = LocalTranslationRouting.pair(for: texts, targetLanguage: targetLanguage) else {
-            return texts // 数字/标点没有可翻译的文字。
-        }
-        let source = pair.sourceIdentifier.map { Locale.Language(identifier: $0) }
-        let target = pair.targetIdentifier.map { Locale.Language(identifier: $0) }
-        var needsPreparation = false
-        var needsSystemUI = source == nil || target == nil
-        if let source, let target {
+        let groups = await LocalTranslationRouting.groupsForTranslation(texts: texts, targetLanguage: targetLanguage)
+        try Task.checkCancellation()
+        return try await LocalTranslationBatchExecutor.run(texts: texts, groups: groups) { pair, groupTexts in
+            guard let sourceID = pair.sourceIdentifier, let targetID = pair.targetIdentifier else {
+                throw AppleLocalTranslationError.sourceLanguageUnidentified
+            }
+            // Apple 不支持同一语言的繁简变体对；这里仅做本机字形转换，不请求模型。
+            if sourceID.hasPrefix("zh-"), targetID.hasPrefix("zh-") {
+                return try groupTexts.map {
+                    guard let text = LocalTranslationRouting.convertChineseVariant($0, pair: pair) else {
+                        throw AppleLocalTranslationError.incompleteResponse
+                    }
+                    return text
+                }
+            }
+            let source = Locale.Language(identifier: sourceID)
+            let target = Locale.Language(identifier: targetID)
             let status = await LanguageAvailability().status(from: source, to: target)
             try Task.checkCancellation()
+            let needsPreparation: Bool
             switch status {
-            case .installed: break
-            case .supported:
-                needsPreparation = true
-                needsSystemUI = true
-            case .unsupported: return nil
-            @unknown default: return nil
+            case .installed: needsPreparation = false
+            case .supported: needsPreparation = true
+            case .unsupported:
+                throw AppleLocalTranslationError.unsupportedLanguages(source: sourceID, target: targetID)
+            @unknown default:
+                throw AppleLocalTranslationError.unsupportedLanguages(source: sourceID, target: targetID)
+            }
+            let translated = try await AppleLocalTranslationBridge.shared.perform(
+                texts: groupTexts, source: source, target: target,
+                prepareFirst: needsPreparation, showsSystemUI: needsPreparation,
+                systemPresentation: systemPresentation
+            )
+            try Task.checkCancellation()
+            guard translated.count == groupTexts.count else { throw AppleLocalTranslationError.incompleteResponse }
+            return zip(groupTexts, translated).map {
+                LocalTranslationRouting.chineseInterfaceTranslation($0.0, pair: pair) ?? $0.1
             }
         }
-        return try await AppleLocalTranslationBridge.shared.perform(
-            texts: texts, source: source, target: target,
-            prepareFirst: needsPreparation, showsSystemUI: needsSystemUI,
-            systemPresentation: systemPresentation
-        )
     }
 }
 

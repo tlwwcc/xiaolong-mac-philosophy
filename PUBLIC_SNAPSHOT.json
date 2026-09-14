@@ -152,8 +152,8 @@
     },
     "IntegratedFeatures/YoumuFeature/Sources/YoumuFeature/Upstream/Core/Translation/AppleLocalTranslator.swift": {
       "executable": false,
-      "sha256": "7a71b0f402d0485959e47aac2f1117307fc6ecc061f7ffc3cb534c5c01f36c53",
-      "size": 17341
+      "sha256": "72c6476ec0dd978daa5d61cbf5b51d7dae3a7d18c2805b95b97e4cd3c859bdda",
+      "size": 17332
     },
     "IntegratedFeatures/YoumuFeature/Sources/YoumuFeature/Upstream/Core/Translation/AppleTranslationCancellation.swift": {
       "executable": false,
@@ -167,8 +167,13 @@
     },
     "IntegratedFeatures/YoumuFeature/Sources/YoumuFeature/Upstream/Core/Translation/LanguageClassifier.swift": {
       "executable": false,
-      "sha256": "1901857e3a7c0ff59917ef14e8466788c76bee993945d78712eedc76dfa86aef",
-      "size": 11206
+      "sha256": "a90556b0c98bc873da12a6c3f8ed08a4778f6c3316cec5067fad9b8215bf21df",
+      "size": 11509
+    },
+    "IntegratedFeatures/YoumuFeature/Sources/YoumuFeature/Upstream/Core/Translation/LocalTranslationRouting.swift": {
+      "executable": false,
+      "sha256": "ea854e5379fbdd81414207ae6c9d0d7a328f994b0265d7e8c89f8a494d7c4cb5",
+      "size": 12943
     },
     "IntegratedFeatures/YoumuFeature/Sources/YoumuFeature/Upstream/Core/Translation/NumberedBlockTranslation.swift": {
       "executable": false,
@@ -182,8 +187,8 @@
     },
     "IntegratedFeatures/YoumuFeature/Sources/YoumuFeature/Upstream/Core/Translation/TranslationService.swift": {
       "executable": false,
-      "sha256": "72f8d2164276e570268f62df101c63d4f76ba8e9d9ff1da0f248499e8cf30684",
-      "size": 7359
+      "sha256": "79ded87098db02bbc5491bc904347bf6d3ff8bf5ad9ce6b57b8b8fd7a6184ac3",
+      "size": 7393
     },
     "IntegratedFeatures/YoumuFeature/Sources/YoumuFeature/Upstream/Models/AppModels.swift": {
       "executable": false,
@@ -242,8 +247,8 @@
     },
     "IntegratedFeatures/YoumuFeature/Sources/YoumuFeature/Upstream/UI/ImageTranslate/InPlaceTranslationController.swift": {
       "executable": false,
-      "sha256": "74386463e4dfc89fb21a141164073915020985fa5900306ad5e2525d93f6c893",
-      "size": 20910
+      "sha256": "b42ee3185fcc04aff1563b9babdfecfa8f7327584223612fb588c680330ce118",
+      "size": 21108
     },
     "IntegratedFeatures/YoumuFeature/Sources/YoumuFeature/Upstream/UI/ImageTranslate/TranslatedImageRenderer.swift": {
       "executable": false,
@@ -332,8 +337,8 @@
     },
     "IntegratedFeatures/YoumuFeature/Sources/YoumuFeature/YoumuTranslationDiagnostics.swift": {
       "executable": false,
-      "sha256": "52e90c9c959233cfdaa2b708815d7c31962c23c6c41984f028a1c381ed181f03",
-      "size": 1644
+      "sha256": "b34459eaf777fd8562795307cadab44083badf3170c703b2c05caf1ee8fe5c68",
+      "size": 3537
     },
     "IntegratedFeatures/YoumuFeature/THIRD_PARTY_NOTICES.md": {
       "executable": false,
@@ -349,6 +354,11 @@
       "executable": false,
       "sha256": "90ec1643fccb26abb17a28f4a5f208bb1865abc7be31ca4ce5ace00fd0fb9ac8",
       "size": 3384
+    },
+    "IntegratedFeatures/YoumuFeature/Tests/YoumuFeatureTests/LocalTranslationRoutingTests.swift": {
+      "executable": false,
+      "sha256": "f092728fd96d9bc4b0a81a8ef9fd32f8b98a4076634b66e40bb228c494819555",
+      "size": 7639
     },
     "IntegratedFeatures/YoumuFeature/Tests/YoumuFeatureTests/OnlineDataConsentTests.swift": {
       "executable": false,
@@ -367,7 +377,7 @@
     },
     "IntegratedFeatures/YoumuFeature/Tests/YoumuFeatureTests/TranslationRecoveryTests.swift": {
       "executable": false,
-      "sha256": "81ec79f9fe535dd81398ed3afeb225037eb2a7c8c280cb6e4934cce5b92661b4",
+      "sha256": "015d506d56956292bde22b57825983bc50cd0180cc6739bf8bef571ce456c512",
       "size": 7080
     },
     "IntegratedFeatures/YoumuFeature/Tests/YoumuFeatureTests/YoumuFeatureRuntimeTests.swift": {
@@ -437,7 +447,7 @@
     },
     "Resources/Info.plist": {
       "executable": false,
-      "sha256": "6588f8012737df8d5ed89997384c86914f0e828ad1fedd5f2de68a869ede2bfc",
+      "sha256": "8d7145ef0e0391a9ab21818e2f61f1b0fb2bd36c95d821fa7ea6c3315e5585a9",
       "size": 3178
     },
     "Resources/PijuanAppIcon.png": {
@@ -767,8 +777,8 @@
     },
     "Sources/ReleaseNotes.swift": {
       "executable": false,
-      "sha256": "56a8f941bc7103dfe1a9f16a136ee9bb30d35348485d4e16e06e8781b0b88657",
-      "size": 102584
+      "sha256": "cda8cbcda5e369582c7935e444b69a45b272aa2d6e4a5726bf42b7db3c75ebb1",
+      "size": 103607
     },
     "Sources/RetiredShiftInputSourcePreferences.swift": {
       "executable": false,
@@ -888,5 +898,5 @@
   },
   "kind": "frozen",
   "schemaVersion": 1,
-  "sourceRevision": "193f77c256552a224ef75418f521bbc34d52d418"
+  "sourceRevision": "c08e9f2515ebf61f81922f2e0ec4553e1b18b4a6"
 }

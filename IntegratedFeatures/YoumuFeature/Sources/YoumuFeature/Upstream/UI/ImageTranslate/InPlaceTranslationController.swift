@@ -149,6 +149,8 @@ final class InPlaceTranslationController {
                 var failed = Set<Int>()
                 for (subIndex, result) in results.enumerated() {
                     let originalIndex = toTranslate[subIndex].offset
+                    // 目标语言/数字以及翻译后未变化的缩写保留原像素。
+                    if !result.failed && result.text == toTranslate[subIndex].element.text { continue }
                     translations[originalIndex] = result.text
                     if result.failed { failed.insert(originalIndex) }
                 }

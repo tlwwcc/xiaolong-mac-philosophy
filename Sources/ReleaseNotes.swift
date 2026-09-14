@@ -19,9 +19,24 @@ struct ReleaseNoteEntry: Equatable, Identifiable {
 
 enum ReleaseNotes {
   static let fallbackChangelogURL = URL(
-    string: "https://aixlg.com/mac/changelog/?v=20260914-permission-clipboard")!
+    string: "https://aixlg.com/mac/changelog/?v=20260914-image-language")!
 
   static let bundled: [ReleaseNoteEntry] = [
+    ReleaseNoteEntry(
+      version: "1.0.9",
+      build: 225,
+      dateText: "2026-09-14",
+      title: "图片中的短词，也能直接翻译",
+      summary: "选择图片中的区域即可直接翻译；英文菜单和缩写不再因文字短而提示无法检测语言，常见菜单按操作含义翻译，已有中文、数字和符号保留。",
+      highlights: [
+        "照常框选要翻译的区域，选择目标语言即可；常见英文短词无需再手动选择源语言。",
+        "选择含多种语言的区域时会分别翻译；某种语言暂不支持，也会保留其他已经完成的结果。",
+        "首次需要新语言模型时按系统提示下载；已安装的模型可以离线使用，不自动切换到在线服务。",
+        "升级保留个人快捷键、设置和剪贴板历史。",
+      ],
+      previousHighlights: ["所有功能永久免费，无需账号；官方签名、公证和更新安全校验继续保留。"],
+      changelogURL: fallbackChangelogURL,
+    ),
     ReleaseNoteEntry(
       version: "1.0.7",
       build: 223,

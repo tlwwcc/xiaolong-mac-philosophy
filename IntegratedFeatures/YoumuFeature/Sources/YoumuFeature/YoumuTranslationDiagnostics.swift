@@ -24,8 +24,41 @@ public enum YoumuTranslationDiagnostics {
                 }
                 report["fixture\(index + 1)"] = result[0]
             }
+            let imageTexts = ["Save", "使用", "Copy", "100%", "Open", "AI", "CPU 66%", "⚙️"]
+            guard let batch = try await AppleLocalTranslator.shared.translateBlocks(
+                texts: imageTexts, targetLanguage: .zhHans
+            ), batch.firstError == nil, batch.blocks.count == imageTexts.count,
+               !batch.blocks.contains(where: \.failed) else {
+                report["status"] = "FAIL"
+                report["reason"] = "Mixed OCR fixture returned a failed or incomplete translation"
+                return report
+            }
+            for (index, expected) in [(0, "保存"), (2, "复制"), (4, "打开")] {
+                guard batch.blocks[index].text == expected else {
+                    report["status"] = "FAIL"
+                    report["reason"] = "English menu fixture \(index) did not preserve its interface meaning"
+                    return report
+                }
+                report["imageBlock\(index)"] = batch.blocks[index].text
+            }
+            for index in [1, 3, 7] {
+                guard batch.blocks[index].text == imageTexts[index] else {
+                    report["status"] = "FAIL"
+                    report["reason"] = "Existing Chinese, numbers or emoji were modified"
+                    return report
+                }
+            }
+            guard let reverse = try await AppleLocalTranslator.shared.translate(
+                texts: ["请保存这份文档。"], targetLanguage: .en
+            )?.first, !reverse.isEmpty, LanguageClassifier.cjkLatinCounts(reverse).latin > 0 else {
+                report["status"] = "FAIL"
+                report["reason"] = "Chinese to English fixture failed after mixed OCR translation"
+                return report
+            }
+            report["reverse"] = reverse
             report["status"] = "PASS"
-            report["count"] = "\(fixtures.count)"
+            report["count"] = "\(fixtures.count + imageTexts.count + 1)"
+            report["imageBlockCount"] = "\(imageTexts.count)"
         } catch {
             report["status"] = "FAIL"
             report["reason"] = error.localizedDescription

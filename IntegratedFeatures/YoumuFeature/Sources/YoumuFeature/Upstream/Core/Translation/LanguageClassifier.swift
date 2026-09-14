@@ -4,7 +4,19 @@ import Foundation
 /// 目标语言是中文时，已是中文的块跳过翻译、跳过覆盖渲染；
 /// 目标是拉丁文字语言（如英文）时反向。纯数字/标点块不翻。
 /// 纯函数，无依赖，可独立编译自测。
-enum LanguageClassifier {
+nonisolated enum LanguageClassifier {
+
+    static func isLetter(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.properties.generalCategory {
+        case .uppercaseLetter, .lowercaseLetter, .titlecaseLetter, .modifierLetter, .otherLetter:
+            return true
+        default: return false
+        }
+    }
+
+    static func hasLetters(_ text: String) -> Bool {
+        text.unicodeScalars.contains(where: isLetter)
+    }
 
     /// 只有能从文字本身得到明确证据时，才认定“已经是目标语言”。
     /// 误跳过会把外文原样留在图片上，所以这里宁可多翻译一次，也不猜测。
@@ -172,10 +184,9 @@ enum LanguageClassifier {
     /// - 纯数字/标点（任何文字都没有）→ 不翻
     /// - 只有高置信精确匹配目标语言时才跳过；不确定一律翻译
     static func shouldTranslate(_ text: String, targetLanguage: Language) -> Bool {
-        // CharacterSet covers scripts not enumerated by ScriptEvidence (Greek, Hebrew, Devanagari,
-        // CJK extensions, and future Unicode additions). Unknown letters must fail open to
-        // translation; only true number/punctuation blocks are skipped.
-        guard text.unicodeScalars.contains(where: CharacterSet.letters.contains) else { return false }
+        // Unicode 字母分类覆盖未枚举的文字，但排除 emoji 的变体选择符/结合标记。
+        // CharacterSet.letters 会把这些标记也算进去，导致纯符号误进语言识别。
+        guard hasLetters(text) else { return false }
         return !confidentMatch(text, targetLanguage: targetLanguage)
     }
 }
