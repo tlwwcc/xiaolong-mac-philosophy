@@ -216,6 +216,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       // Free sharing never suppresses the normal system permission onboarding.
       _ = model.presentAuthorizationOnboardingIfNeeded()
     }
+    model.offerTranslationModelSetupIfNeeded()
   }
 
   func applicationDidBecomeActive(_ notification: Notification) {
@@ -1660,11 +1661,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       MainActor.assumeIsolated {
         guard let self else { return }
         self.syncNetworkSpeedStatusItemVisibility()
-        self.sendNetworkStatusHelperMessage(
-          NetworkStatusHelperMessage(
-            type: "healthPreferencesChanged",
-            snapshot: nil,
-            volume: nil))
       }
     }
   }

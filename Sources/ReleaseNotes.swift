@@ -19,9 +19,26 @@ struct ReleaseNoteEntry: Equatable, Identifiable {
 
 enum ReleaseNotes {
   static let fallbackChangelogURL = URL(
-    string: "https://aixlg.com/mac/changelog/?v=20260914-repairs")!
+    string: "https://aixlg.com/mac/changelog/?v=20260914-permission-clipboard")!
 
   static let bundled: [ReleaseNoteEntry] = [
+    ReleaseNoteEntry(
+      version: "1.0.7",
+      build: 223,
+      dateText: "2026-09-14",
+      title: "截图授权更完整，图片复制更顺手",
+      summary: "补齐截图所需的屏幕录制授权；首次缺少翻译模型时主动提示下载；超级剪贴板支持直接复制图片，状态栏移除健康卡片。",
+      highlights: [
+        "首次打开按提示完成授权，再下载 Apple 翻译模型；在超级剪贴板选择图片后按 ⌘C，或双击图片即可直接复制。",
+        "已授权的权限和已下载的模型会自动识别；模型也可以稍后从游目翻译设置中下载。",
+        "打开状态栏只显示常用工具，不用再查看健康卡片或关闭它的开关。",
+        "升级保留个人快捷键、设置和剪贴板历史。",
+      ],
+      previousHighlights: [
+        "所有功能永久免费，无需账号；官方签名、公证和更新安全校验继续保留。",
+      ],
+      changelogURL: fallbackChangelogURL,
+    ),
     ReleaseNoteEntry(
       version: "1.0.6",
       build: 222,

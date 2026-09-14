@@ -1060,7 +1060,7 @@ final class ClipboardHistoryController: ObservableObject {
 
   private enum PreparedReplayPayload {
     case files(ManagedReplayLease)
-    case image(Data)
+    case image(png: Data, tiff: Data)
     case text(plain: String?, richType: NSPasteboard.PasteboardType?, richData: Data?)
   }
 
@@ -1658,7 +1658,15 @@ final class ClipboardHistoryController: ObservableObject {
       else {
         throw ClipboardHistoryStoreError.payload("保存的图片已不存在。")
       }
-      return .image(data)
+      // Decode and materialize both advertised formats on the existing serial worker.
+      // Some AppKit consumers negotiate TIFF without asking the pasteboard to convert PNG.
+      try Self.validateImageData(data, expectedType: "public.png")
+      guard let bitmap = NSBitmapImageRep(data: data),
+        let tiff = bitmap.representation(using: .tiff, properties: [:]), !tiff.isEmpty
+      else {
+        throw ClipboardHistoryStoreError.payload("保存的图片无法解码，原剪贴板内容保持不变。")
+      }
+      return .image(png: data, tiff: tiff)
 
     case .text, .link:
       let plainURL = urls.first { $0.lastPathComponent == "plain.txt" }
@@ -1818,9 +1826,9 @@ final class ClipboardHistoryController: ObservableObject {
     switch prepared {
     case .files(let managed):
       return managed.lease.urls.map { $0 as NSURL }
-    case .image(let data):
+    case .image(let png, let tiff):
       let item = NSPasteboardItem()
-      guard item.setData(data, forType: .png) else { return nil }
+      guard item.setData(png, forType: .png), item.setData(tiff, forType: .tiff) else { return nil }
       return [item]
     case .text(let plain, let richType, let richData):
       let item = NSPasteboardItem()

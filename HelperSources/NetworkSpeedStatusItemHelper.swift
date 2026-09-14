@@ -548,15 +548,13 @@ private final class StatusItemRenderer {
 }
 
 @MainActor
-private final class NetworkSpeedStatusItemApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
+private final class NetworkSpeedStatusItemApp: NSObject, NSApplicationDelegate {
   private let optionsReader = DisplayOptionsReader()
   private let networkSampler = NetworkSpeedSampler()
   private let memorySampler = MemoryUsageSampler()
   private let cpuSampler = CPUUsageSampler()
   private let gpuSampler = GPUUsageSampler()
   private let renderer = StatusItemRenderer()
-  private let systemHealthController = SystemHealthSamplingController()
-  private let systemHealthCard = SystemHealthMenuCard()
   private let parentPID: pid_t
   private let parentBundleID: String?
   private let parentAppPath: String?
@@ -567,8 +565,6 @@ private final class NetworkSpeedStatusItemApp: NSObject, NSApplicationDelegate, 
   private var statusItem: NSStatusItem?
   private var statusMenu: NSMenu?
   private var statusMenuItems: [String: NSMenuItem] = [:]
-  private var systemHealthMenuItem: NSMenuItem?
-  private var systemHealthSeparator: NSMenuItem?
   private var youmuSectionSeparator: NSMenuItem?
   private var managementSectionSeparator: NSMenuItem?
   private var isOpeningStatusMenu = false
@@ -615,7 +611,6 @@ private final class NetworkSpeedStatusItemApp: NSObject, NSApplicationDelegate, 
     }
     NSApp.setActivationPolicy(.accessory)
     buildStatusItem()
-    configureSystemHealthMonitoring()
     startParentMessageInput()
     startTimers()
     sendParentCommand(StatusMenuCommandID.requestMenuSnapshot)
@@ -624,7 +619,6 @@ private final class NetworkSpeedStatusItemApp: NSObject, NSApplicationDelegate, 
   func applicationWillTerminate(_ notification: Notification) {
     updateTimer?.invalidate()
     parentTimer?.invalidate()
-    systemHealthController.stop()
     volumeFeedbackResetWorkItem?.cancel()
     FileHandle.standardInput.readabilityHandler = nil
   }
@@ -648,16 +642,6 @@ private final class NetworkSpeedStatusItemApp: NSObject, NSApplicationDelegate, 
   private func buildStatusMenu() {
     let menu = NSMenu()
     menu.autoenablesItems = false
-    menu.delegate = self
-
-    let healthItem = NSMenuItem()
-    healthItem.view = systemHealthCard
-    menu.addItem(healthItem)
-    let healthSeparator = NSMenuItem.separator()
-    menu.addItem(healthSeparator)
-    systemHealthMenuItem = healthItem
-    systemHealthSeparator = healthSeparator
-    refreshSystemHealthVisibility()
 
     let youmuItems = [
       (StatusMenuCommandID.quickSnapshot, "快速截图", "viewfinder"),
@@ -768,41 +752,6 @@ private final class NetworkSpeedStatusItemApp: NSObject, NSApplicationDelegate, 
         keyEquivalent: "q"))
     statusMenu = menu
     refreshMenuSectionSeparators()
-  }
-
-  private func configureSystemHealthMonitoring() {
-    systemHealthCard.openProcessViewer = { [weak self] in
-      guard let self else { return }
-      self.statusMenu?.cancelTracking()
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
-        self?.sendParentCommand(StatusMenuCommandID.processViewer)
-      }
-    }
-    systemHealthController.onSnapshot = { [weak self] snapshot in
-      self?.systemHealthCard.update(snapshot: snapshot)
-    }
-    systemHealthController.onEnabledChanged = { [weak self] _ in
-      self?.refreshSystemHealthVisibility()
-    }
-    systemHealthController.start()
-  }
-
-  private func refreshSystemHealthVisibility() {
-    let enabled = systemHealthCard.refreshEnabledState()
-    systemHealthMenuItem?.isHidden = !enabled
-    systemHealthSeparator?.isHidden = !enabled
-  }
-
-  func menuWillOpen(_ menu: NSMenu) {
-    guard menu === statusMenu else { return }
-    refreshSystemHealthVisibility()
-    systemHealthController.refreshPreferences()
-    systemHealthController.setMenuPresented(true)
-  }
-
-  func menuDidClose(_ menu: NSMenu) {
-    guard menu === statusMenu else { return }
-    systemHealthController.setMenuPresented(false)
   }
 
   private func makeMenuItem(
@@ -1046,9 +995,6 @@ private final class NetworkSpeedStatusItemApp: NSObject, NSApplicationDelegate, 
       if let volume = message.volume, volume.isFinite {
         showVolumeFeedback(min(100, max(0, volume)))
       }
-    case "healthPreferencesChanged":
-      refreshSystemHealthVisibility()
-      systemHealthController.refreshPreferences()
     default:
       break
     }

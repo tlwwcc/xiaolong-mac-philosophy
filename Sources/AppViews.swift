@@ -352,10 +352,16 @@ struct RootView: View {
     .sheet(
       isPresented: Binding(
         get: { model.isAccessibilityAuthorizationPresented },
-        set: { model.isAccessibilityAuthorizationPresented = $0 })
+        set: { model.isAccessibilityAuthorizationPresented = $0 }),
+      onDismiss: { model.offerTranslationModelSetupIfNeeded() }
     ) {
       AccessibilityAuthorizationSheetView()
         .environmentObject(model)
+    }
+    .sheet(isPresented: $model.isTranslationModelSetupPresented) {
+      model.makeTranslationModelSetupViewHandler? {
+        model.isTranslationModelSetupPresented = false
+      }
     }
     .sheet(isPresented: $model.isCommunityQRCodePresented) {
       VStack(spacing: 12) {
@@ -662,8 +668,8 @@ struct AccessibilityAuthorizationSheetView: View {
           }
           Text(
             model.allRequiredPermissionsComplete
-              ? "两项基础权限均已生效。"
-              : "从这里开始，按提示完成快捷键所需的两项权限。"
+              ? "三项必要权限均已生效。"
+              : "从这里开始，按提示完成快捷键、截图所需的三项权限。"
           )
           .font(.system(size: 12, weight: .medium))
           .foregroundStyle(muted)
@@ -709,9 +715,15 @@ struct AccessibilityAuthorizationSheetView: View {
           isCurrent: !model.advancedListeningAuthorized)
         AuthorizationPermissionStepRow(
           step: 2,
+          title: "屏幕录制",
+          isGranted: model.screenRecordingAuthorized,
+          isCurrent: model.advancedListeningAuthorized && !model.screenRecordingAuthorized)
+        AuthorizationPermissionStepRow(
+          step: 3,
           title: "输入监控",
           isGranted: model.inputMonitoringAuthorized,
-          isCurrent: model.advancedListeningAuthorized && !model.inputMonitoringAuthorized)
+          isCurrent: model.advancedListeningAuthorized && model.screenRecordingAuthorized
+            && !model.inputMonitoringAuthorized)
       }
 
       Button {
@@ -3984,11 +3996,6 @@ private struct MenuBarCustomizationSheet: View {
           VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 18) {
               NetworkMetricOptionToggle(
-                title: "系统健康卡片",
-                isOn: Binding(
-                  get: { model.systemHealthMonitoringEnabled },
-                  set: { model.setSystemHealthMonitoringEnabled($0) }))
-              NetworkMetricOptionToggle(
                 title: "内存占用",
                 isOn: Binding(
                   get: { model.networkSpeedShowMemory },
@@ -4012,7 +4019,7 @@ private struct MenuBarCustomizationSheet: View {
           .padding(12)
           .background(Color.white.opacity(0.62), in: RoundedRectangle(cornerRadius: 10))
 
-          Text("系统健康卡片关闭后不常驻采样；网速主入口仍会保留。")
+          Text("网速主入口始终保留；可选择同时显示的资源占用。")
             .font(.system(size: 11, weight: .medium))
             .foregroundStyle(muted)
 
@@ -7653,8 +7660,8 @@ struct AboutPanelView: View {
           VStack(alignment: .leading, spacing: 3) {
             Text(
               model.allRequiredPermissionsComplete
-                ? "两项基础权限均已开启。"
-                : "还有基础权限未完成，软件会按顺序带你设置。"
+                ? "三项必要权限均已开启。"
+                : "还有必要权限未完成，软件会按顺序带你设置。"
             )
             .font(.body.weight(.medium))
             .foregroundStyle(.primary)
@@ -7675,8 +7682,8 @@ struct AboutPanelView: View {
           color: model.inputMonitoringAuthorized ? teal : amber)
         SettingsStatusRow(
           title: "屏幕录制",
-          value: model.screenRecordingAuthorized ? "已开启" : "游目使用时开启",
-          color: model.screenRecordingAuthorized ? teal : .secondary)
+          value: model.screenRecordingAuthorized ? "已开启" : "待开启",
+          color: model.screenRecordingAuthorized ? teal : amber)
 
         HStack {
           permissionManagementButton
@@ -7904,7 +7911,7 @@ struct AboutPanelView: View {
     }
     .buttonStyle(.bordered)
     .tint(model.allRequiredPermissionsComplete ? teal : amber)
-    .help("检测两项基础权限；屏幕录制由游目在使用时单独请求")
+    .help("检查辅助功能、屏幕录制和输入监控")
     .accessibilityLabel(
       model.allRequiredPermissionsComplete ? "检测或管理系统权限" : "立即检测并开启系统权限")
   }

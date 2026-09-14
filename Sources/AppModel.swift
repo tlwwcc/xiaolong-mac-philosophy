@@ -267,7 +267,6 @@ final class AppModel: ObservableObject {
   @Published var isCommunityQRCodePresented = false
   @Published var systemMonitorSnapshot = SystemMonitorSnapshot.empty
   @Published var networkSpeedPluginEnabled = true
-  @Published var systemHealthMonitoringEnabled = true
   @Published var networkSpeedShowMemory = true
   @Published var networkSpeedShowCPU = false
   @Published var networkSpeedShowGPU = false
@@ -297,6 +296,11 @@ final class AppModel: ObservableObject {
   @Published private(set) var lastShortcutSemanticBackupURL: URL?
   @Published var pijuanPDFShortcutCount = 0
   @Published var isAccessibilityAuthorizationPresented = false
+  @Published var isTranslationModelSetupPresented = false
+  private let translationModelSetupOnboarding = TranslationModelSetupOnboarding()
+  var translationModelNeedsDownloadHandler: (() async -> Bool)?
+  var makeTranslationModelSetupViewHandler: ((@escaping () -> Void) -> AnyView?)?
+
   @Published private(set) var authorizationRelaunchCompleted = false
   @Published private(set) var authorizationAutomaticRelaunchInProgress = false
   @Published private(set) var authorizationManualRelaunchRequired = false
@@ -470,7 +474,6 @@ final class AppModel: ObservableObject {
   private static let capsCorePluginEnabledDefaultsKey = "capsCorePluginEnabledV1"
   private static let scrollEngineUserSetEnabledDefaultsKey = "scrollEngineUserSetEnabledV1"
   private static let networkSpeedPluginEnabledDefaultsKey = "networkSpeedPluginEnabledV1"
-  private static let systemHealthMonitoringEnabledDefaultsKey = "systemHealthMonitorEnabledV1"
   private static let networkSpeedShowMemoryDefaultsKey = "networkSpeedShowMemoryV1"
   private static let networkSpeedShowCPUDefaultsKey = "networkSpeedShowCPUV1"
   private static let networkSpeedShowGPUDefaultsKey = "networkSpeedShowGPUV1"
@@ -598,8 +601,6 @@ final class AppModel: ObservableObject {
     loadInputMethodRules()
     Self.ensureNetworkSpeedPrimaryEntryEnabled()
     networkSpeedPluginEnabled = true
-    systemHealthMonitoringEnabled = Self.boolDefaultingTrue(
-      forKey: Self.systemHealthMonitoringEnabledDefaultsKey)
     Self.migrateNetworkSpeedDisplayOptionsIfNeeded()
     networkSpeedShowMemory = Self.boolDefaultingTrue(
       forKey: Self.networkSpeedShowMemoryDefaultsKey)
@@ -910,9 +911,7 @@ final class AppModel: ObservableObject {
   }
 
   var allRequiredPermissionsComplete: Bool {
-    // Screen capture belongs to the screenshot/OCR feature and must never block the app-wide
-    // keyboard/window onboarding. That feature requests it at the point of use.
-    authorizationPermissionsComplete
+    authorizationPermissionSnapshot.allRequiredPermissionsGranted
   }
 
   var authorizationSetupDetail: String {
@@ -920,13 +919,13 @@ final class AppModel: ObservableObject {
       !$0.isGranted(in: authorizationPermissionSnapshot)
     }
     guard !missing.isEmpty else {
-      return "辅助功能和输入监控均已授权。"
+      return "辅助功能、屏幕录制和输入监控均已授权。"
     }
     return "仍需开启\(missing.map(\.displayName).joined(separator: "、"))。"
   }
 
   private var coreAuthorizationServices: [AuthorizationRepairService] {
-    [.accessibility, .inputMonitoring]
+    AuthorizationRepairService.allCases
   }
 
   var classicTabSwitcherPrimaryStatusText: String {
@@ -1491,9 +1490,9 @@ final class AppModel: ObservableObject {
     if allRequiredPermissionsComplete {
       return authorizationRelaunchCompleted
         ? "权限已生效，软件也已重新打开。"
-        : "权限已经开启；重新打开后，软件会自动核对两项基础权限。"
+        : "权限已经开启；重新打开后，软件会自动核对三项必要权限。"
     }
-    return "软件会逐项打开基础权限设置。屏幕录制只在你主动使用游目时由该功能单独请求。"
+    return "软件会依次引导辅助功能、屏幕录制和输入监控；屏幕录制用于截图、识字与译图。"
   }
 
   var authorizationPrimaryButtonDisabled: Bool {
@@ -1679,8 +1678,7 @@ final class AppModel: ObservableObject {
     let needsSleepItemReset = !sleepStatusItemVisible
     let needsDockReset = dockIconVisible
     let needsStatusContentReset =
-      systemHealthMonitoringEnabled
-      || !networkSpeedShowMemory
+      !networkSpeedShowMemory
       || networkSpeedShowCPU
       || networkSpeedShowGPU
     guard needsCatalogReset || needsSleepItemReset || needsDockReset || needsStatusContentReset
@@ -1695,11 +1693,9 @@ final class AppModel: ObservableObject {
       DockPresencePreference.save(false)
       dockIconVisible = false
     }
-    systemHealthMonitoringEnabled = false
     networkSpeedShowMemory = true
     networkSpeedShowCPU = false
     networkSpeedShowGPU = false
-    UserDefaults.standard.set(false, forKey: Self.systemHealthMonitoringEnabledDefaultsKey)
     UserDefaults.standard.set(true, forKey: Self.networkSpeedShowMemoryDefaultsKey)
     UserDefaults.standard.set(false, forKey: Self.networkSpeedShowCPUDefaultsKey)
     UserDefaults.standard.set(false, forKey: Self.networkSpeedShowGPUDefaultsKey)
@@ -5334,8 +5330,6 @@ final class AppModel: ObservableObject {
     menuBarVisibleItemIDs = MenuBarCatalog.loadVisibleItemIDs()
     Self.ensureNetworkSpeedPrimaryEntryEnabled()
     networkSpeedPluginEnabled = true
-    systemHealthMonitoringEnabled = UserDefaults.standard.bool(
-      forKey: Self.systemHealthMonitoringEnabledDefaultsKey)
     networkSpeedShowMemory = Self.boolDefaultingTrue(
       forKey: Self.networkSpeedShowMemoryDefaultsKey)
     networkSpeedShowCPU = UserDefaults.standard.bool(forKey: Self.networkSpeedShowCPUDefaultsKey)
@@ -5704,13 +5698,6 @@ final class AppModel: ObservableObject {
     networkSpeedPluginEnabled = true
     NotificationCenter.default.post(name: .networkSpeedPluginVisibilityChanged, object: nil)
     statusMessage = "网速显示是 Mac 哲学的菜单栏主入口，默认保持显示。"
-  }
-
-  func setSystemHealthMonitoringEnabled(_ enabled: Bool) {
-    systemHealthMonitoringEnabled = enabled
-    UserDefaults.standard.set(enabled, forKey: Self.systemHealthMonitoringEnabledDefaultsKey)
-    NotificationCenter.default.post(name: .networkSpeedPluginVisibilityChanged, object: nil)
-    statusMessage = enabled ? "菜单栏系统健康监控已开启。" : "菜单栏系统健康监控已关闭。"
   }
 
   func setNetworkSpeedShowMemory(_ enabled: Bool) {
@@ -6155,7 +6142,7 @@ final class AppModel: ObservableObject {
       if pendingAuthorizationRepairServices().isEmpty {
         authorizationRelaunchCompleted = true
       }
-      statusMessage = "两项基础权限均已确认。"
+      statusMessage = "三项必要权限均已确认。"
     } else {
       statusMessage = authorizationSetupDetail
     }
@@ -6192,6 +6179,24 @@ final class AppModel: ObservableObject {
       "authorization_onboarding_presented",
       ["missing": missingFingerprint])
     return true
+  }
+
+  /// Defer model preparation until the permission sheet and its restart flow have settled.
+  func offerTranslationModelSetupIfNeeded() {
+    guard isInstalledInApplications, !runtimeIdentity.isInvalid,
+      let needsDownload = translationModelNeedsDownloadHandler,
+      makeTranslationModelSetupViewHandler != nil
+    else { return }
+    translationModelSetupOnboarding.offerIfNeeded(
+      needsDownload: needsDownload,
+      canPresent: { [weak self] in self?.canPresentTranslationModelSetup == true },
+      present: { [weak self] in self?.isTranslationModelSetupPresented = true })
+  }
+
+  private var canPresentTranslationModelSetup: Bool {
+    !isAccessibilityAuthorizationPresented && !isTranslationModelSetupPresented
+      && !authorizationAutomaticRelaunchInProgress && !authorizationManualRelaunchRequired
+      && pendingAuthorizationRepairServices().isEmpty
   }
 
   func dismissAuthorizationCenter() {
@@ -6352,7 +6357,7 @@ final class AppModel: ObservableObject {
       if pendingAuthorizationRepairServices().isEmpty {
         authorizationRelaunchCompleted = true
       }
-      statusMessage = "两项基础权限均已确认。"
+      statusMessage = "三项必要权限均已确认。"
       return
     }
 

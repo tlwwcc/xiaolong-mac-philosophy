@@ -555,7 +555,8 @@ private struct YoumuShortcutOwnershipView: View {
 }
 
 @available(macOS 15.0, *)
-private struct AppleLocalModelControlRow: View {
+struct AppleLocalModelControlRow: View {
+  var onReady: (() -> Void)? = nil
   @State private var status: AppleLocalModelStatus = .checking
   @State private var downloadTask: Task<Void, Never>?
   @State private var failureDetail: String?
@@ -637,5 +638,6 @@ private struct AppleLocalModelControlRow: View {
   @MainActor
   private func updateStatus() async {
     status = await AppleLocalModelAvailability.status()
+    if status == .installed { onReady?() }
   }
 }

@@ -505,6 +505,10 @@ struct ClipboardHistoryWindowView: View {
     .onCommand(#selector(NSResponder.insertNewline(_:))) {
       activateSelectedEntryIfPossible()
     }
+    .onCommand(#selector(NSText.copy(_:))) {
+      guard let selectedEntry, !controller.isBusy else { return }
+      controller.copyToPasteboard(entry: selectedEntry) { _ in }
+    }
   }
 
   private func activateSelectedEntryIfPossible() {
@@ -755,6 +759,9 @@ private struct ClipboardHistoryDownsampledThumbnail: NSViewRepresentable {
 
 private final class ClipboardHistoryThumbnailImageView: NSImageView {
   var representedURL: URL?
+
+  // This view is decorative. Let the history row own selection, double-click and its menu.
+  override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 private enum ClipboardHistoryThumbnailPipeline {
