@@ -56,23 +56,32 @@ enum AppleLocalModelCatalog {
     static let privacyDetail = "模型由 macOS 管理；安装后翻译内容只在本机处理。"
 }
 
-/// 本机快路只覆盖当前最稳定、已验证的英中双向；其余语言继续走在线编号协议。
+/// 翻译与“是否跳过目标语言”的标准不同：短菜单词也必须进入翻译。
+/// 识别不确定时让 Apple 显示语言确认，不能把短词当成模型不可用。
 enum LocalTranslationRouting {
     struct Pair: Equatable {
-        let sourceIdentifier: String
-        let targetIdentifier: String
+        let sourceIdentifier: String?
+        let targetIdentifier: String?
     }
 
     static func pair(for texts: [String], targetLanguage: Language) -> Pair? {
         let text = texts.joined(separator: "\n")
+        guard text.unicodeScalars.contains(where: CharacterSet.letters.contains) else { return nil }
+        let tagger = NSLinguisticTagger(tagSchemes: [.language], options: 0)
+        tagger.string = text
+        let detected = tagger.dominantLanguage
+        let letterCount = text.unicodeScalars.filter(CharacterSet.letters.contains).count
+        let source = detected == "und" || letterCount < 4 ? nil : detected
+        let target: String?
         switch targetLanguage {
-        case .zhHans where LanguageClassifier.confidentMatch(text, targetLanguage: .en):
-            return Pair(sourceIdentifier: "en", targetIdentifier: "zh-Hans")
-        case .en where LanguageClassifier.confidentMatch(text, targetLanguage: .zhHans):
-            return Pair(sourceIdentifier: "zh-Hans", targetIdentifier: "en")
-        default:
-            return nil
+        case .auto: target = nil
+        case .zhHans: target = "zh-Hans"
+        case .zhHant: target = "zh-Hant"
+        case .en: target = "en"
+        case .ja: target = "ja"
+        case .ko: target = "ko"
         }
+        return Pair(sourceIdentifier: source, targetIdentifier: target)
     }
 
     /// Apple 批量响应可乱序返回，必须按 clientIdentifier 归位，绝不按响应顺序对齐。
@@ -151,179 +160,120 @@ enum AppleLocalSessionConfigurationPolicy {
     }
 }
 
-/// 对 Translation.framework 的安全包装：
-/// - 已安装模型时直接离线翻译；
-/// - Apple 标记为 supported 时调用 prepareTranslation()，由系统征得用户许可并下载；
-/// - 不支持的语言对或旧系统返回 nil，交给上层决定是否走在线兜底。
+/// 模型由 macOS 管理。需要下载/语言确认时使用可见窗口，不能将系统 UI 挂到离屏像素。
 final class AppleLocalTranslator {
     static let shared = AppleLocalTranslator()
-
     private init() {}
 
-    func translate(texts: [String], targetLanguage: Language) async throws -> [String]? {
-        guard !texts.isEmpty,
-              let pair = LocalTranslationRouting.pair(for: texts, targetLanguage: targetLanguage),
-              #available(macOS 15.0, *) else { return nil }
-
-        let source = Locale.Language(identifier: pair.sourceIdentifier)
-        let target = Locale.Language(identifier: pair.targetIdentifier)
-        let status = await LanguageAvailability().status(from: source, to: target)
-        switch status {
-        case .installed:
-            break
-        case .supported:
-            try await AppleLocalTranslationBridge.shared.prepare(
-                source: source,
-                target: target
-            )
-        case .unsupported:
-            return nil
-        @unknown default:
-            return nil
+    func translate(
+        texts: [String], targetLanguage: Language,
+        systemPresentation: (@MainActor (Bool) -> Void)? = nil
+    ) async throws -> [String]? {
+        guard !texts.isEmpty else { return [] }
+        if texts.allSatisfy({ !LanguageClassifier.shouldTranslate($0, targetLanguage: targetLanguage) }) {
+            return texts
         }
-
-        return try await AppleLocalTranslationBridge.shared.translate(
-            texts: texts,
-            source: source,
-            target: target
+        guard #available(macOS 15.0, *) else { return nil }
+        guard let pair = LocalTranslationRouting.pair(for: texts, targetLanguage: targetLanguage) else {
+            return texts // 数字/标点没有可翻译的文字。
+        }
+        let source = pair.sourceIdentifier.map { Locale.Language(identifier: $0) }
+        let target = pair.targetIdentifier.map { Locale.Language(identifier: $0) }
+        var needsPreparation = false
+        var needsSystemUI = source == nil || target == nil
+        if let source, let target {
+            let status = await LanguageAvailability().status(from: source, to: target)
+            try Task.checkCancellation()
+            switch status {
+            case .installed: break
+            case .supported:
+                needsPreparation = true
+                needsSystemUI = true
+            case .unsupported: return nil
+            @unknown default: return nil
+            }
+        }
+        return try await AppleLocalTranslationBridge.shared.perform(
+            texts: texts, source: source, target: target,
+            prepareFirst: needsPreparation, showsSystemUI: needsSystemUI,
+            systemPresentation: systemPresentation
         )
     }
 }
 
 @available(macOS 15.0, *)
 @MainActor
-private final class AppleLocalTranslationCoordinator: ObservableObject {
+final class AppleLocalTranslationCoordinator: ObservableObject {
     struct Job {
         let id: UUID
         let texts: [String]
+        let prepareFirst: Bool
         let continuation: CheckedContinuation<[String], Error>
     }
 
-    struct PreparationJob {
-        let id: UUID
-        let continuation: CheckedContinuation<Void, Error>
-    }
-
     @Published var configuration: TranslationSession.Configuration?
+    @Published private(set) var requestID: UUID?
     private var job: Job?
-    private var preparationJob: PreparationJob?
     private var timeoutTask: Task<Void, Never>?
 
-    func translate(
-        texts: [String],
-        source: Locale.Language,
-        target: Locale.Language
+    func perform(
+        id: UUID, texts: [String], source: Locale.Language?, target: Locale.Language?,
+        prepareFirst: Bool, allowsSystemInteraction: Bool
     ) async throws -> [String] {
         try Task.checkCancellation()
-        guard job == nil, preparationJob == nil else {
-            throw AppleLocalTranslationError.busy
-        }
-        let id = UUID()
+        guard job == nil else { throw AppleLocalTranslationError.busy }
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                job = Job(id: id, texts: texts, continuation: continuation)
-
-                let next = TranslationSession.Configuration(source: source, target: target)
-                switch AppleLocalSessionConfigurationPolicy.action(
-                    hasConfiguration: configuration != nil,
-                    usesSameLanguages: next == configuration
-                ) {
-                case .install:
-                    configuration = next
-                case .invalidate:
-                    configuration?.invalidate()
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
                 }
-
-                timeoutTask?.cancel()
+                job = Job(id: id, texts: texts, prepareFirst: prepareFirst, continuation: continuation)
+                requestID = id
+                // Configuration == 包含 version，不能拿新建 version=0 与已 invalidate 的配置比较。
+                if configuration != nil,
+                   configuration?.source == source, configuration?.target == target {
+                    configuration?.invalidate()
+                } else {
+                    configuration = TranslationSession.Configuration(source: source, target: target)
+                }
                 timeoutTask = Task { [weak self] in
-                    try? await Task.sleep(for: .seconds(3))
+                    // 冷启动/整图批量不能套 3 秒在线兜底阈值；系统下载允许用户完整处理。
+                    try? await Task.sleep(for: .seconds(allowsSystemInteraction ? 600 : 60))
                     guard !Task.isCancelled else { return }
-                    self?.finish(id: id, result: .failure(AppleLocalTranslationError.timedOut))
+                    self?.finish(id: id, result: .failure(
+                        allowsSystemInteraction
+                            ? AppleLocalTranslationError.modelDownloadTimedOut
+                            : AppleLocalTranslationError.timedOut
+                    ), invalidateSession: true)
                 }
             }
         } onCancel: { [weak self] in
-            Task { @MainActor in
-                self?.cancel(id: id)
-            }
+            Task { @MainActor in self?.cancel(id: id) }
         }
     }
 
-    func prepare(
-        source: Locale.Language,
-        target: Locale.Language
-    ) async throws {
-        try Task.checkCancellation()
-        guard job == nil, preparationJob == nil else {
-            throw AppleLocalTranslationError.busy
-        }
-        let id = UUID()
-        return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                preparationJob = PreparationJob(id: id, continuation: continuation)
-                let next = TranslationSession.Configuration(source: source, target: target)
-                switch AppleLocalSessionConfigurationPolicy.action(
-                    hasConfiguration: configuration != nil,
-                    usesSameLanguages: next == configuration
-                ) {
-                case .install:
-                    configuration = next
-                case .invalidate:
-                    configuration?.invalidate()
-                }
-
-                timeoutTask?.cancel()
-                timeoutTask = Task { [weak self] in
-                    try? await Task.sleep(for: .seconds(300))
-                    guard !Task.isCancelled else { return }
-                    self?.finishPreparation(
-                        id: id,
-                        result: .failure(AppleLocalTranslationError.modelDownloadTimedOut)
-                    )
-                }
-            }
-        } onCancel: { [weak self] in
-            Task { @MainActor in
-                self?.cancel(id: id)
-            }
-        }
-    }
-
-    /// Caller cancellation owns only its exact in-flight operation. A late session callback or
-    /// timeout therefore cannot finish a newer request that reused the persistent host view.
     func cancel(id: UUID) {
-        if let current = preparationJob, current.id == id {
-            timeoutTask?.cancel()
-            preparationJob = nil
-            timeoutTask = nil
-            current.continuation.resume(throwing: CancellationError())
-            return
-        }
-        if let current = job, current.id == id {
-            timeoutTask?.cancel()
-            job = nil
-            timeoutTask = nil
-            current.continuation.resume(throwing: CancellationError())
-        }
+        finish(id: id, result: .failure(CancellationError()), invalidateSession: true)
     }
 
-    func run(session: TranslationSession) async {
-        if let preparationJob {
-            do {
-                try await session.prepareTranslation()
-                finishPreparation(id: preparationJob.id, result: .success(()))
-            } catch {
-                finishPreparation(id: preparationJob.id, result: .failure(error))
-            }
-            return
-        }
-
-        guard let job else { return }
+    func run(session: TranslationSession, requestID: UUID?) async {
+        // 捕获 view 本次 render 的 owner；迟到的旧回调不可认领后来新任务。
+        guard let job, job.id == requestID else { return }
         do {
-            // Translation.framework 的 Request 未声明 Sendable，但该数组仅在当前 session 任务中创建和消费。
+            try Task.checkCancellation()
+            if job.prepareFirst { try await session.prepareTranslation() }
+            try Task.checkCancellation()
+            guard self.job?.id == job.id else { return }
+            if job.texts.isEmpty {
+                finish(id: job.id, result: .success([]))
+                return
+            }
             nonisolated(unsafe) let requests = job.texts.enumerated().map {
                 TranslationSession.Request(sourceText: $0.element, clientIdentifier: String($0.offset))
             }
             let responses = try await session.translations(from: requests)
+            try Task.checkCancellation()
             let ordered = LocalTranslationRouting.orderedTexts(
                 responsePairs: responses.map { ($0.clientIdentifier, $0.targetText) },
                 expectedCount: job.texts.count
@@ -331,25 +281,30 @@ private final class AppleLocalTranslationCoordinator: ObservableObject {
             guard let ordered else { throw AppleLocalTranslationError.incompleteResponse }
             finish(id: job.id, result: .success(ordered))
         } catch {
-            finish(id: job.id, result: .failure(error))
+            finishSessionFailure(id: job.id, error: error)
         }
     }
 
-    private func finishPreparation(id: UUID, result: Result<Void, Error>) {
-        guard let current = preparationJob, current.id == id else { return }
-        timeoutTask?.cancel()
-        timeoutTask = nil
-        preparationJob = nil
-        current.continuation.resume(with: result)
+    func finishSessionFailure(id: UUID, error: Error) {
+        // 原生下载/语言确认的取消有独立错误类型；归一后上层取消分支才不会
+        // 将它当成图片错误，或在 automatic 模式继续发起在线翻译。
+        if AppleTranslationCancellation.matches(error) {
+            cancel(id: id)
+        } else {
+            finish(id: id, result: .failure(error))
+        }
     }
 
-    private func finish(id: UUID, result: Result<[String], Error>) {
+    func finish(
+        id: UUID, result: Result<[String], Error>, invalidateSession: Bool = false
+    ) {
         guard let current = job, current.id == id else { return }
         timeoutTask?.cancel()
         timeoutTask = nil
         job = nil
-        // 保留语言配置。同一英中语种的下一次翻译必须在它上面 invalidate，
-        // SwiftUI 才会再次执行 translationTask；清 nil 会让连续请求丢触发信号。
+        requestID = nil
+        // invalidate 取消旧 SwiftUI 任务，同时保留递增 version，快速重试不会丢触发。
+        if invalidateSession { configuration?.invalidate() }
         current.continuation.resume(with: result)
     }
 }
@@ -357,61 +312,122 @@ private final class AppleLocalTranslationCoordinator: ObservableObject {
 @available(macOS 15.0, *)
 private struct AppleLocalTranslationHostView: View {
     @ObservedObject var coordinator: AppleLocalTranslationCoordinator
+    let cancel: () -> Void
 
     var body: some View {
-        Color.clear
-            .frame(width: 1, height: 1)
-            .translationTask(coordinator.configuration) { session in
-                await coordinator.run(session: session)
+        let owner = coordinator.requestID
+        VStack(alignment: .leading, spacing: 16) {
+            Label("准备 Apple 本机翻译", systemImage: "character.book.closed")
+                .font(.title3.weight(.semibold))
+            Text("首次使用请在系统提示中下载语言。准备好后会继续本次翻译，之后可离线使用。")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                ProgressView().controlSize(.small)
+                Text("正在等待 macOS…").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("取消本次翻译", action: cancel).keyboardShortcut(.cancelAction)
             }
+        }
+        .padding(24)
+        .frame(width: 410, height: 170)
+        .translationTask(coordinator.configuration) { session in
+            await coordinator.run(session: session, requestID: owner)
+        }
     }
 }
 
-/// pinned SDK 没有 TranslationSession 公共初始化器，所以用常驻、不可见 SwiftUI host 取得 session。
+/// SwiftUI host 持续存在；系统准备期间临时前置，完成后按本次 owner 归还焦点。
 @available(macOS 15.0, *)
 @MainActor
-private final class AppleLocalTranslationBridge {
+final class AppleLocalTranslationBridge: NSObject, NSWindowDelegate {
     static let shared = AppleLocalTranslationBridge()
-
     private let coordinator = AppleLocalTranslationCoordinator()
-    private let hostPanel: NSPanel
+    private var hostPanel: NSPanel!
+    private var owner: UUID?
 
-    private init() {
-        let host = NSHostingView(rootView: AppleLocalTranslationHostView(coordinator: coordinator))
-        host.frame = NSRect(x: 0, y: 0, width: 1, height: 1)
-
+    private override init() {
+        super.init()
         let panel = NSPanel(
-            contentRect: NSRect(x: -10_000, y: -10_000, width: 1, height: 1),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
+            contentRect: NSRect(x: 0, y: 0, width: 458, height: 218),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false
         )
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.alphaValue = 0.01
-        panel.ignoresMouseEvents = true
-        panel.hasShadow = false
-        panel.sharingType = .none
+        panel.title = "Apple 本机翻译"
+        panel.level = .floating
+        panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
-        panel.contentView = host
-        panel.orderFrontRegardless()
+        panel.hidesOnDeactivate = false
+        panel.sharingType = .none
+        panel.delegate = self
+        panel.contentView = NSHostingView(rootView: AppleLocalTranslationHostView(
+            coordinator: coordinator, cancel: { [weak self] in self?.cancelCurrent() }
+        ))
+        panel.center()
         hostPanel = panel
     }
 
-    func translate(
-        texts: [String],
-        source: Locale.Language,
-        target: Locale.Language
+    func perform(
+        texts: [String], source: Locale.Language?, target: Locale.Language?,
+        prepareFirst: Bool, showsSystemUI: Bool,
+        systemPresentation: (@MainActor (Bool) -> Void)? = nil
     ) async throws -> [String] {
-        _ = hostPanel // 常驻持有，确保 translationTask 生命周期覆盖整个 App 会话
-        return try await coordinator.translate(texts: texts, source: source, target: target)
+        try Task.checkCancellation()
+        guard owner == nil else { throw AppleLocalTranslationError.busy }
+        let id = UUID()
+        owner = id
+        let previousApp = NSWorkspace.shared.frontmostApplication
+        let previousWindow = NSApp.keyWindow
+        if showsSystemUI {
+            systemPresentation?(true)
+            hostPanel.center()
+            hostPanel.alphaValue = 1
+            hostPanel.ignoresMouseEvents = false
+            NSApp.activate(ignoringOtherApps: true)
+            hostPanel.makeKeyAndOrderFront(nil)
+        } else {
+            // 保持 host 的 view 生命周期以供 macOS 15 的已安装 session 使用。
+            hostPanel.alphaValue = 0
+            hostPanel.ignoresMouseEvents = true
+            hostPanel.orderFrontRegardless()
+        }
+        defer {
+            if owner == id {
+                owner = nil
+                hostPanel.alphaValue = 0
+                hostPanel.ignoresMouseEvents = true
+                if showsSystemUI {
+                    hostPanel.orderOut(nil)
+                    systemPresentation?(false)
+                    if let previousWindow, previousWindow.isVisible {
+                        previousWindow.makeKeyAndOrderFront(nil)
+                    } else if previousApp?.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+                        previousApp?.activate(options: [])
+                    }
+                }
+            }
+        }
+        return try await coordinator.perform(
+            id: id, texts: texts, source: source, target: target,
+            prepareFirst: prepareFirst, allowsSystemInteraction: showsSystemUI
+        )
     }
 
-    func prepare(
-        source: Locale.Language,
-        target: Locale.Language
-    ) async throws {
-        _ = hostPanel
-        try await coordinator.prepare(source: source, target: target)
+    func prepareModels() async throws {
+        _ = try await perform(
+            texts: [],
+            source: Locale.Language(identifier: AppleLocalModelCatalog.sourceIdentifier),
+            target: Locale.Language(identifier: AppleLocalModelCatalog.targetIdentifier),
+            prepareFirst: true, showsSystemUI: true
+        )
+    }
+
+    private func cancelCurrent() {
+        guard let owner else { return }
+        coordinator.cancel(id: owner)
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        cancelCurrent()
+        return false
     }
 }

@@ -33,6 +33,55 @@ struct TranslationConfig: Codable {
         "OpenAI": ("https://api.openai.com/v1/chat/completions", "gpt-4o-mini"),
     ]
 
+    /// 常见入口可直接粘贴根地址或 Base URL；完整自定义路径保持原样。
+    static func normalizedEndpoint(_ raw: String) throws -> URL {
+        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !value.contains("://"), !value.isEmpty { value = "https://" + value }
+        let validated = try LLMTranslator.validatedEndpoint(value)
+        guard var components = URLComponents(url: validated, resolvingAgainstBaseURL: false) else {
+            throw TranslationError.invalidEndpoint
+        }
+        let path = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if path.isEmpty {
+            if let preset = recommendedPreset(for: validated),
+               let known = URLComponents(string: preset.endpoint) {
+                components.path = known.path
+            } else {
+                components.path = "/v1/chat/completions"
+            }
+        } else if path == "v1" || path == "v4"
+                    || path.hasSuffix("/v1") || path.hasSuffix("/v4") {
+            components.path = "/" + path + "/chat/completions"
+        }
+        guard let result = components.url else { throw TranslationError.invalidEndpoint }
+        return try LLMTranslator.validatedEndpoint(result.absoluteString)
+    }
+
+    static func recommendedPreset(for endpoint: URL) -> (endpoint: String, model: String)? {
+        presetOrder.compactMap { presets[$0] }.first {
+            URL(string: $0.endpoint)?.host?.lowercased() == endpoint.host?.lowercased()
+        }
+    }
+
+    var requiresAPIKey: Bool {
+        guard let endpoint = try? Self.normalizedEndpoint(apiEndpoint) else { return false }
+        return Self.recommendedPreset(for: endpoint) != nil
+    }
+
+    func normalizedForUse() throws -> TranslationConfig {
+        var result = self
+        let endpoint = try Self.normalizedEndpoint(apiEndpoint)
+        result.apiEndpoint = endpoint.absoluteString
+        result.apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        result.modelName = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if result.modelName.isEmpty {
+            result.modelName = Self.recommendedPreset(for: endpoint)?.model ?? ""
+        }
+        guard !result.modelName.isEmpty else { throw TranslationError.missingModel }
+        if result.requiresAPIKey && result.apiKey.isEmpty { throw TranslationError.missingAPIKey }
+        return result
+    }
+
     private enum CodingKeys: String, CodingKey {
         case apiEndpoint, apiKey, modelName, systemPrompt
     }

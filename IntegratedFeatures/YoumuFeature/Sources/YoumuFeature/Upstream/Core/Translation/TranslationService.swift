@@ -20,7 +20,7 @@ enum TranslationBackendError: LocalizedError {
     case appleLocalUnavailable
 
     var errorDescription: String? {
-        "Apple 本机翻译不可用：请安装对应语言模型，或在设置里选择“自动最快 / 在线 API”。"
+        "Apple 暂不支持这组语言，或当前系统低于 macOS 15。可在游目设置中选择在线 API。"
     }
 }
 
@@ -40,7 +40,10 @@ class TranslationService {
                 )?.first {
                     return local
                 }
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
+                try Task.checkCancellation()
                 guard policy.allowsOnline else { throw error }
                 // 不记录原文/译文；本机快路失败时静默回到现有在线链路。
                 PrivacySafeLog.event("apple_translation_fallback", error: error)
@@ -67,7 +70,8 @@ class TranslationService {
     /// 仅当整体请求失败（网络/API 错误）时才 throw。
     func translateBlocks(
         _ blockTexts: [String],
-        targetLanguage: Language
+        targetLanguage: Language,
+        systemPresentation: (@MainActor (Bool) -> Void)? = nil
     ) async throws -> [NumberedBlockTranslation.BlockTranslation] {
         guard !blockTexts.isEmpty else { return [] }
         let settings = AppSettings.load()
@@ -76,13 +80,17 @@ class TranslationService {
         if policy.triesAppleLocal {
             do {
                 if let local = try await AppleLocalTranslator.shared.translate(
-                    texts: blockTexts, targetLanguage: targetLanguage
+                    texts: blockTexts, targetLanguage: targetLanguage,
+                    systemPresentation: systemPresentation
                 ) {
                     return local.enumerated().map {
                         .init(index: $0.offset, text: $0.element, failed: false)
                     }
                 }
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
+                try Task.checkCancellation()
                 guard policy.allowsOnline else { throw error }
                 PrivacySafeLog.event("apple_batch_translation_fallback", error: error)
             }
@@ -138,7 +146,10 @@ class TranslationService {
                     targetLanguage: targetLanguage.displayName
                 )
                 results.append(.init(index: index, text: single, failed: false))
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
+                try Task.checkCancellation()
                 PrivacySafeLog.event(
                     "single_block_translation_failed",
                     error: error,
@@ -153,8 +164,8 @@ class TranslationService {
     // MARK: - Private
 
     private func loadValidConfig(from settings: AppSettings) throws -> TranslationConfig {
-        let config = settings.translationConfig
-        guard !config.apiKey.isEmpty else {
+        let config = try settings.translationConfig.normalizedForUse()
+        guard !config.requiresAPIKey || !config.apiKey.isEmpty else {
             throw TranslationError.missingAPIKey
         }
         return config

@@ -15,11 +15,33 @@ if !AppRuntimeIdentity.isRuntimeBundleIdentityValid() {
 if !ProductReleaseIdentity.matchesPublicationMetadata(
   Bundle.main.object(forInfoDictionaryKey: "AIXLGReleasePublishedAt") as? String
 ) {
-  fputs("App release publication metadata does not match its compiled identity; refusing to start.\n", stderr)
+  fputs(
+    "App release publication metadata does not match its compiled identity; refusing to start.\n",
+    stderr)
   exit(78)
 }
 
 private let runtimeIdentity = AppRuntimeIdentity.current
+
+// Fixed-text, installed-binary diagnostic. It neither loads customer settings nor starts
+// shortcuts, clipboard capture, networking or model downloads.
+if Array(CommandLine.arguments.dropFirst()) == ["--youmu-translation-smoke"] {
+  MainActor.assumeIsolated {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.prohibited)
+    Task { @MainActor in
+      let result = await runInstalledTranslationSmoke()
+      if let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]),
+        let text = String(data: data, encoding: .utf8)
+      {
+        print(text)
+      }
+      exit(result["status"] == "PASS" ? 0 : 2)
+    }
+    app.run()
+  }
+  exit(2)
+}
 
 if CommandLine.arguments.contains(capsEntryKeyImportArgument) {
   let supportURL = FileManager.default.urls(

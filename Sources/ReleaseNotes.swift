@@ -19,9 +19,80 @@ struct ReleaseNoteEntry: Equatable, Identifiable {
 
 enum ReleaseNotes {
   static let fallbackChangelogURL = URL(
-    string: "https://aixlg.com/mac/changelog/?v=20260908-free-open-source")!
+    string: "https://aixlg.com/mac/changelog/?v=20260914-repairs")!
 
   static let bundled: [ReleaseNoteEntry] = [
+    ReleaseNoteEntry(
+      version: "1.0.6",
+      build: 222,
+      dateText: "2026-09-14",
+      title: "翻译更省心，快捷键和音量更顺手",
+      summary: "图片翻译默认使用 Apple 本机模型；常用快捷键可改键、防误删，滚轮调节增加静音恢复与设备读数校验。升级保留个人设置，恢复配置可按日期完整替换。",
+      highlights: [
+        "照常框选图片即可翻译；首次按系统提示下载语言模型，之后可以离线使用。需要在线服务时粘贴 API 地址，测试并保存。",
+        "游目、披卷等固定快捷键点击灰色按键框即可修改，不会被误删；自己新增的快捷键仍可删除。",
+        "用滚轮调高音量时可以恢复静音，查看提示即可看到设备实际读数；设备没有响应时会明确提示。",
+        "恢复默认配置前自动备份，再替换本 App 受管配置；个人文件和使用历史保留。",
+        "点击检查更新，直接查看本机与公开版本。较早版本无法更新时，下载完整安装包覆盖安装一次。",
+      ],
+      previousHighlights: [
+        "所有功能永久免费，无需账号。私人输入法规则、词组与密钥不随包分发。",
+        "官方签名、公证和更新安全校验继续保留。",
+      ],
+      changelogURL: fallbackChangelogURL,
+    ),
+    ReleaseNoteEntry(
+      version: "1.0.5",
+      build: 220,
+      dateText: "2026-09-13",
+      title: "静音后，滚轮也能直接恢复音量",
+      summary: "把鼠标移到右上角，直接滚动调节音量；静音后也能恢复声音，省去手动拖系统滑块这一步。",
+      highlights: [
+        "把鼠标移到右上角，照常滚动调节音量；从静音恢复时，无需先去系统声音里拖动滑块。",
+        "查看音量提示，可以看到设备实际音量；设备没有响应时，会提示检查系统声音。",
+        "在系统声音中选择输出设备后，直接用滚轮继续调节。",
+      ],
+      previousHighlights: [
+        "已有快捷键、个人设置与使用历史继续保留。",
+        "这是供本机验证滚轮手感的候选版本，蓝牙和其他外接设备仍需按实际设备验证。",
+      ],
+      changelogURL: fallbackChangelogURL,
+    ),
+    ReleaseNoteEntry(
+      version: "1.0.4",
+      build: 218,
+      dateText: "2026-09-13",
+      title: "翻译直接上手，常用快捷键一直都在",
+      summary: "图片翻译默认使用 Apple 本机模型，首次使用会显示下载入口；内置快捷键可以改键、不会被误删，恢复配置也能一次替换干净。",
+      highlights: [
+        "框选图片即可翻译；首次需要模型时跟随系统下载，完成后继续。在线翻译可直接粘贴 API 地址，测试并保存。",
+        "游目和披卷的灰色按键框可以点击修改，内置入口不能删除；自己新增的快捷键仍可删除。",
+        "在设置中可以查看配置日期。点击恢复，先自动备份，再替换本 App 的旧配置，不与旧设置合并。",
+        "点击检查更新，会说明本机版本是否高于公开版本；检查失败时可以直接下载完整安装包。",
+      ],
+      previousHighlights: [
+        "安装升级保留已有设置与使用历史；恢复操作不删除个人文件，私人输入法规则、短语和密钥不随包分发。",
+        "所有功能永久免费，无需账号；官方签名、公证和更新安全校验继续保留。",
+      ],
+      changelogURL: fallbackChangelogURL,
+    ),
+    ReleaseNoteEntry(
+      version: "1.0.3",
+      build: 217,
+      dateText: "2026-09-09",
+      title: "复制文件更放心，扫码就能联系小龙哥",
+      summary: "普通截图、下载和编辑器文件可以更顺畅地保存到剪贴板历史；软件内的反馈与支持入口直接显示交流群二维码，离线也能查看。",
+      highlights: [
+        "照常复制文件，打开剪贴板历史即可找回；文件附加信息随副本保留。",
+        "文件暂时无法读取或超过保存限制时，会说明原因；已有记录仍可使用，也不影响后续复制。",
+        "打开关于、反馈或支持入口，直接扫码加入交流群，不用再跳转网页。",
+      ],
+      previousHighlights: [
+        "个人快捷键、设置与已有历史继续保留。",
+        "所有功能永久免费，无需账号；官方签名、公证和更新安全校验继续保留。",
+      ],
+      changelogURL: URL(string: "https://aixlg.com/mac/changelog/?v=20260909-clipboard-community")!,
+    ),
     ReleaseNoteEntry(
       version: "1.0.2",
       build: 216,

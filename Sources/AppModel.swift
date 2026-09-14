@@ -264,6 +264,7 @@ final class AppModel: ObservableObject {
   @Published var dockIconVisible = DockPresencePreference.isVisible()
   @Published var menuBarVisibleItemIDs = MenuBarCatalog.defaultVisibleItemIDs
   @Published var isMenuBarCustomizationPresented = false
+  @Published var isCommunityQRCodePresented = false
   @Published var systemMonitorSnapshot = SystemMonitorSnapshot.empty
   @Published var networkSpeedPluginEnabled = true
   @Published var systemHealthMonitoringEnabled = true
@@ -565,8 +566,25 @@ final class AppModel: ObservableObject {
     launcherHistoryURL = base.appendingPathComponent("launcher-history.json")
     launcherPinnedURL = base.appendingPathComponent("launcher-pinned.json")
     inputMethodRulesURL = base.appendingPathComponent("input-method-rules.json")
+    var initialConfigurationError: String?
+    do {
+      _ = try XLGConfigImporter.installBundledConfigurationIfNeeded(
+        request: .appDefault(
+          applicationSupportURL: base,
+          shortcutsURL: base.appendingPathComponent("shortcuts.json"),
+          phrasesURL: base.appendingPathComponent("phrases.json")))
+    } catch {
+      AppDiagnostics.log(
+        "default_configuration_install_failed", ["error": error.localizedDescription])
+      initialConfigurationError = error.localizedDescription
+    }
     clipboardHistory = ClipboardHistoryController(
       baseDirectory: base.appendingPathComponent("clipboard-history", isDirectory: true))
+    if let initialConfigurationError {
+      statusMessage = "初始配置未能应用，请在设置中重试恢复：\(initialConfigurationError)"
+      return
+    }
+    setDiagnosticsEnabled(UserDefaults.standard.bool(forKey: "diagnosticsEnabled"))
     clipboardHistory.setRuntimeAllowed(true)
     initializeGlobalInputOwnership()
     loadKeepAwakeSettings()
@@ -2030,6 +2048,11 @@ final class AppModel: ObservableObject {
       updateServerVersionText = displayVersion
       updateStatusText = "发现新版 \(displayVersion)，请在更新窗口中确认。"
       statusMessage = "发现新版 \(displayVersion)。"
+    case .aheadOfRelease(let displayVersion):
+      updateFailureMessage = nil
+      updateServerVersionText = displayVersion ?? "暂未确认"
+      updateStatusText = "当前版本高于已发布版本，无需降级。"
+      statusMessage = updateStatusText
     case .current:
       updateFailureMessage = nil
       updateServerVersionText = appVersionText
@@ -4669,10 +4692,6 @@ final class AppModel: ObservableObject {
     }
     let decision = shortcutDeletionDecision(for: item)
     if let disabledMessage = decision.disabledMessage { return disabledMessage }
-    if isFixedFeatureShortcut(item) {
-      let featureName = item.name.replacingOccurrences(of: "游目 · ", with: "")
-      return "只删除快捷键绑定，不会删除游目里的“\(featureName)”功能；之后可随时恢复。"
-    }
     return decision.recoveryID == nil
       ? "只会移除这条按键绑定，不会删除对应功能。"
       : "只会移除这条按键绑定；之后可重新新增或从小龙哥最佳配置恢复。"
@@ -5248,15 +5267,9 @@ final class AppModel: ObservableObject {
     NSWorkspace.shared.open(url)
   }
 
-  func openFeedbackWebsite() {
-    guard let url = URL(string: "https://aixlg.com/feedback.html") else { return }
-    NSWorkspace.shared.open(url)
-    statusMessage = "已打开反馈页，可以直接粘贴截图。"
-  }
-
-  func openSupportWebsite() {
-    guard let url = URL(string: "https://aixlg.com/support.html") else { return }
-    NSWorkspace.shared.open(url)
+  func presentCommunityQRCode() {
+    presentWindowHandler?()
+    isCommunityQRCodePresented = true
   }
 
   func openPrivacyWebsite() {
@@ -5305,6 +5318,8 @@ final class AppModel: ObservableObject {
 
   private func finishXLGConfigImport(_ result: XLGConfigImportResult) {
     lastXLGConfigImportBackupURL = result.backupURL
+    clipboardHistory.reloadManagedPreferences()
+    setDiagnosticsEnabled(UserDefaults.standard.bool(forKey: "diagnosticsEnabled"))
     load()
     loadPhrases()
     loadInputMethodRules()
@@ -5345,6 +5360,8 @@ final class AppModel: ObservableObject {
     notifySleepStatusItemChanged()
     NotificationCenter.default.post(name: .menuBarConfigurationChanged, object: nil)
     NotificationCenter.default.post(name: .networkSpeedPluginVisibilityChanged, object: nil)
+    NotificationCenter.default.post(
+      name: Notification.Name("AIXLGManagedConfigurationDidRestore"), object: nil)
     isImportingXLGConfig = false
     statusMessage = "\(result.summary) 来源：\(result.sourceDescription)。"
   }
@@ -6319,7 +6336,6 @@ final class AppModel: ObservableObject {
         "service": currentService?.rawValue ?? "complete",
       ])
   }
-
 
   func startAutomaticAuthorization() {
     if authorizationManualRelaunchRequired {

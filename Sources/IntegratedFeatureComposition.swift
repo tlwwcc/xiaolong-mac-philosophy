@@ -1,5 +1,14 @@
 import Foundation
 
+@MainActor
+func runInstalledTranslationSmoke() async -> [String: String] {
+  #if canImport(BuiltinFeatureCatalog) && canImport(PijuanPDFFeature) && canImport(PlatformContracts) && canImport(PlatformServices) && canImport(YoumuFeature)
+    return await YoumuTranslationDiagnostics.runInstalledModelSmoke()
+  #else
+    return ["status": "SKIP", "reason": "本构建未包含游目翻译模块。"]
+  #endif
+}
+
 #if canImport(BuiltinFeatureCatalog) && canImport(PijuanPDFFeature) && canImport(PlatformContracts) && canImport(PlatformServices) && canImport(YoumuFeature)
   import AppKit
   import BuiltinFeatureCatalog

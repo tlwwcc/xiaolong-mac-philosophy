@@ -112,6 +112,8 @@ class RegionSelectionController {
     private let onSelection: (RegionSelectionResult) -> Void
     private let onCancel: () -> Void
     private var reviewCancelHandler: (() -> Void)?
+    private var reviewSuspendedForSystemUI = false
+    private var isDismissed = false
 
     init(
         keepOverlayOnSelection: Bool = false,
@@ -178,7 +180,7 @@ class RegionSelectionController {
 
         // Escape 监听：key window 可能不在鼠标所在屏，用本地+全局双监听兜底
         escLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.keyCode == 53 { // Escape
+            if event.keyCode == 53, self?.reviewSuspendedForSystemUI != true { // Escape
                 self?.handleEscape()
                 return nil
             }
@@ -200,7 +202,18 @@ class RegionSelectionController {
         }
     }
 
+    /// 系统下载/语言选择必须露出且接收键鼠；保留冻结截图，只暂隐评审遮罩。
+    func setReviewSuspendedForSystemUI(_ suspended: Bool) {
+        guard hasFinished, reviewCancelHandler != nil, !isDismissed else { return }
+        reviewSuspendedForSystemUI = suspended
+        for window in windows {
+            if suspended { window.orderOut(nil) } else { window.orderFrontRegardless() }
+        }
+    }
+
     private func handleEscape() {
+        guard !reviewSuspendedForSystemUI else { return }
+
         if hasFinished {
             // 评审态：选区已完成，Esc = 退出评审
             reviewCancelHandler?()
@@ -212,6 +225,8 @@ class RegionSelectionController {
     /// 只隐藏窗口，不 close —— 回调可能还在 mouseUp/keyDown 事件处理栈里，
     /// 真正的释放（外部置 nil）由调用方延迟 0.3s+ 再做
     func dismiss() {
+        isDismissed = true
+        reviewSuspendedForSystemUI = false
         if let monitor = escLocalMonitor {
             NSEvent.removeMonitor(monitor)
             escLocalMonitor = nil

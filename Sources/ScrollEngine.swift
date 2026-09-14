@@ -1655,7 +1655,7 @@ final class ScrollEngine {
 
   private func applyVolumeDelta(_ delta: Double) {
     guard let volume = volumeController.changeVolume(by: delta) else {
-      onNotice("没有找到可调节的系统输出音量。")
+      onNotice("当前输出设备未响应音量调整，请在系统声音中检查。")
       return
     }
     VolumeFeedbackPresenter.show(
@@ -2610,6 +2610,9 @@ final class SystemVolumeController {
       setVolume: { [weak self] device, percent in
         self?.setVolume(percent, device: device) == true
       },
+      unmute: { [weak self] device in
+        self?.unmute(device: device) == true
+      },
       onRouteChanged: { oldDevice, newDevice in
         AppDiagnostics.log(
           "mouse_volume_output_route_refreshed",
@@ -2655,6 +2658,31 @@ final class SystemVolumeController {
       &device)
     guard result == noErr, device != kAudioObjectUnknown else { return nil }
     return device
+  }
+
+  private func unmute(device: AudioDeviceID) -> Bool {
+    for element in [kAudioObjectPropertyElementMain, 1, 2] {
+      var address = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyMute,
+        mScope: kAudioDevicePropertyScopeOutput,
+        mElement: element)
+      guard AudioObjectHasProperty(device, &address) else { continue }
+      var muted = UInt32(0)
+      var size = UInt32(MemoryLayout<UInt32>.size)
+      guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &muted) == noErr
+      else { return false }
+      guard muted != 0 else { continue }
+      var settable = DarwinBoolean(false)
+      guard AudioObjectIsPropertySettable(device, &address, &settable) == noErr,
+        settable.boolValue
+      else { return false }
+      var unmuted = UInt32(0)
+      guard AudioObjectSetPropertyData(device, &address, 0, nil, size, &unmuted) == noErr,
+        AudioObjectGetPropertyData(device, &address, 0, nil, &size, &muted) == noErr,
+        muted == 0
+      else { return false }
+    }
+    return true
   }
 
   private func getVolumeScalar(device: AudioDeviceID, element: AudioObjectPropertyElement)

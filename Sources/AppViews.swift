@@ -357,6 +357,15 @@ struct RootView: View {
       AccessibilityAuthorizationSheetView()
         .environmentObject(model)
     }
+    .sheet(isPresented: $model.isCommunityQRCodePresented) {
+      VStack(spacing: 12) {
+        FeedbackRequestPanelView()
+        Button("关闭") { model.isCommunityQRCodePresented = false }
+          .keyboardShortcut(.cancelAction)
+      }
+      .padding(20)
+      .frame(width: 380)
+    }
     .sheet(isPresented: $isKeepAwakePresented) {
       KeepAwakeSheetView()
         .environmentObject(model)
@@ -3425,7 +3434,6 @@ struct CapsCorePluginCard: View {
     model.capsCorePluginEnabled && !model.authorizationPermissionsComplete
   }
 
-
   private var displayedStatusText: String {
     needsPermission ? "待授权" : model.capsCorePluginStatus.displayText
   }
@@ -3532,7 +3540,6 @@ struct CapsCorePluginCard: View {
         .overlay(
           RoundedRectangle(cornerRadius: 10, style: .continuous)
             .stroke(statusColor.opacity(0.16), lineWidth: 1))
-
 
         Button {
           model.presentAuthorizationCenter()
@@ -7313,6 +7320,12 @@ struct AboutPanelView: View {
     if model.updateStatusText == "未检查" {
       return "还没有检查更新。"
     }
+    if model.updateStatusText == "自动检查已开启。" {
+      return "自动检查已开启，也可以手动检查。"
+    }
+    if model.updateStatusText.hasPrefix("当前版本高于") {
+      return model.updateStatusText
+    }
     if model.updateStatusText.contains("已是最新版") {
       return "当前已是最新版。"
     }
@@ -7324,8 +7337,10 @@ struct AboutPanelView: View {
     if model.latestUpdate != nil { return "立即更新" }
     if model.updateStatusText.hasPrefix("发现新版") { return "显示更新" }
     if model.updateStatusText == "未检查" { return "检查更新" }
+    if model.updateStatusText == "自动检查已开启。" { return "检查更新" }
     if model.updateStatusText.hasPrefix("更新已安装") { return "再次检查" }
     if model.updateStatusText.contains("已是最新版") { return "再次检查" }
+    if model.updateStatusText.hasPrefix("当前版本高于") { return "再次检查" }
     return "重试"
   }
 
@@ -7424,8 +7439,8 @@ struct AboutPanelView: View {
       }
     } message: {
       Text(
-        "会替换本 App 的快捷键、短语、输入法规则、启动器固定项、游目交互和菜单栏等行为设置。"
-          + "恢复前会自动备份；不会删除个人文件、使用历史、许可、钥匙串、系统权限或其他软件的配置。")
+        "会先备份，再清空本 App 的旧配置，应用 \(XLGConfigImporter.bundledConfigurationDate) 的小龙哥配置，不与旧设置合并。"
+          + "自定义短语和输入法规则会清空；个人文件、使用历史、钥匙串和系统权限保留。")
     }
     .onAppear {
       model.refreshAccessibilityStatus()
@@ -7590,7 +7605,7 @@ struct AboutPanelView: View {
         HStack(alignment: .center, spacing: 12) {
           SettingsToggleLabel(
             title: "一键恢复小龙哥最佳配置",
-            detail: "目标电脑配置混乱时，先自动备份，再恢复经过净化的最佳行为基线。")
+            detail: "配置日期：\(XLGConfigImporter.bundledConfigurationDate)。自动备份后清空旧设置，再完整恢复，不合并冲突。")
           Spacer(minLength: 8)
           if model.isImportingXLGConfig {
             ProgressView()
@@ -7706,6 +7721,14 @@ struct AboutPanelView: View {
           }
         }
 
+        if model.updateFailureMessage != nil {
+          Link(destination: URL(string: "https://aixlg.com/downloads/小龙哥Mac哲学.dmg")!) {
+            Label("下载完整安装包", systemImage: "arrow.down.doc")
+          }
+          .help("从官网下载正式安装包，安装前核对版本。本机版本高于官网时无需覆盖安装；已有个人配置保留。")
+          .accessibilityIdentifier("update.downloadFullInstaller")
+        }
+
         if let progress = model.updateDownloadProgress {
           ProgressView(value: progress)
             .progressViewStyle(.linear)
@@ -7754,19 +7777,14 @@ struct AboutPanelView: View {
       }
 
       SettingsGroup(title: "帮助与隐私") {
-        AboutLinkButton(
-          title: "反馈与建议",
-          systemImage: "bubble.left.and.text.bubble.right",
-          help: "在网页中填写文字、粘贴截图并提交",
-          accessibilityLabel: "反馈与建议，打开反馈页"
-        ) { model.openFeedbackWebsite() }
+        FeedbackRequestPanelView()
         Divider().padding(.leading, 32)
         AboutLinkButton(
           title: "使用支持",
           systemImage: "questionmark.circle",
-          help: "打开使用支持",
-          accessibilityLabel: "使用支持，打开支持页"
-        ) { model.openSupportWebsite() }
+          help: "显示交流群二维码",
+          accessibilityLabel: "使用支持，显示入群二维码"
+        ) { model.presentCommunityQRCode() }
         Divider().padding(.leading, 32)
         AboutLinkButton(
           title: "隐私政策",
@@ -8514,15 +8532,15 @@ struct ShortcutUnifiedPanelView: View {
           .font(.system(size: 20, weight: .semibold))
           .foregroundStyle(ink)
         Button {
-          model.openFeedbackWebsite()
+          model.presentCommunityQRCode()
         } label: {
-          Text("反馈")
+          Text("交流群")
             .font(.system(size: 11, weight: .medium))
             .foregroundStyle(aixlgPurple)
         }
         .buttonStyle(.plain)
-        .help("打开反馈与建议页面")
-        .accessibilityLabel("反馈与建议，打开反馈页")
+        .help("显示交流群二维码")
+        .accessibilityLabel("加入交流群，显示入群二维码")
       }
       Text("在一个地方管理游目、披卷与 Mac 操作")
         .font(.system(size: 12, weight: .medium))
@@ -8551,7 +8569,7 @@ struct ShortcutUnifiedPanelView: View {
         HStack(spacing: 8) {
           Image(systemName: "doc.richtext")
             .foregroundStyle(aixlgPurple)
-          Text("披卷只删除快捷键绑定，PDF 阅读功能始终保留。")
+          Text("披卷内置快捷键可点击改键，不能删除。")
             .font(.system(size: 12, weight: .medium))
             .foregroundStyle(muted)
           Spacer(minLength: 0)
@@ -9345,6 +9363,7 @@ struct ShortcutRow: View {
       HotkeyCell(
         text: item.displayHotkey,
         active: model.isRecording(item.id),
+        isProtected: !model.canDeleteShortcut(id: item.id),
         onKeyDown: { event in
           model.applyRecorded(event)
         }
@@ -10419,6 +10438,7 @@ struct ShortcutActionCaptureSheet: View {
 struct HotkeyCell: View {
   let text: String
   let active: Bool
+  var isProtected = false
   let onKeyDown: (NSEvent) -> Void
   let action: () -> Void
 
@@ -10447,7 +10467,9 @@ struct HotkeyCell: View {
             endPoint: .bottomTrailing
           )
           : LinearGradient(
-            colors: [Color(red: 0.978, green: 0.984, blue: 0.990), Color.white.opacity(0.80)],
+            colors: isProtected
+              ? [Color(nsColor: .controlBackgroundColor), Color(nsColor: .controlBackgroundColor)]
+              : [Color(red: 0.978, green: 0.984, blue: 0.990), Color.white.opacity(0.80)],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
           ),
@@ -10467,7 +10489,9 @@ struct HotkeyCell: View {
     }
     .buttonStyle(.plain)
     .padding(.horizontal, 6)
-    .help(active ? "再点一下取消录制" : "点击录制组合键或实体修饰键双击")
+    .help(active ? "再点一下取消录制；Esc 退出" : (isProtected ? "内置快捷键：点击修改按键，不能删除" : "点击录制组合键或实体修饰键双击"))
+    .accessibilityLabel(active ? "正在录制快捷键" : "修改快捷键：\(text)")
+    .accessibilityHint(isProtected ? "内置功能，允许修改按键，不能删除" : "点击后按下新的快捷键")
   }
 }
 

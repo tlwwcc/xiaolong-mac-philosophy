@@ -205,7 +205,9 @@ class LLMTranslator {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        if !config.apiKey.isEmpty {
+            request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        }
         let encodedRequest = try JSONSerialization.data(withJSONObject: requestBody)
         do {
             try YoumuResourceBudget.validateTranslationRequestBody(
@@ -231,6 +233,8 @@ class LLMTranslator {
             (data, response) = try await loader.load(
                 request: request,
                 configuration: sessionConfiguration)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch let error as TranslationError {
             throw error
         } catch {
@@ -251,7 +255,9 @@ class LLMTranslator {
             throw TranslationError.emptyResponse
         }
 
-        return content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let translated = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !translated.isEmpty else { throw TranslationError.emptyResponse }
+        return translated
     }
 
     static func validatedEndpoint(_ rawValue: String) throws -> URL {
@@ -278,6 +284,7 @@ struct LLMResponse: Codable {
 
 enum TranslationError: LocalizedError {
     case missingAPIKey
+    case missingModel
     case invalidEndpoint
     case apiError(statusCode: Int)
     case emptyResponse
@@ -288,6 +295,8 @@ enum TranslationError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .missingModel:
+            return "这个服务需要填写模型名称，请从 API 服务商提供的信息中复制。"
         case .missingAPIKey:
             return "请先在设置中填写 API Key"
         case .invalidEndpoint:

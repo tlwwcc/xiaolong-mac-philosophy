@@ -6,7 +6,6 @@ struct PDFViewerShortcutSettingsView: View {
   let embedded: Bool
   @State private var feedbackText: String?
   @State private var feedbackAction: PDFViewerShortcutAction?
-  @State private var pendingDeletionAction: PDFViewerShortcutAction?
 
   init(shortcuts: PDFViewerShortcutStore, embedded: Bool = false) {
     self.shortcuts = shortcuts
@@ -65,24 +64,7 @@ struct PDFViewerShortcutSettingsView: View {
       maxHeight: embedded ? .infinity : nil
     )
     .background(Color(nsColor: .windowBackgroundColor))
-    .alert(
-      "删除这条快捷键？",
-      isPresented: Binding(
-        get: { pendingDeletionAction != nil },
-        set: { if !$0 { pendingDeletionAction = nil } }),
-      presenting: pendingDeletionAction
-    ) { action in
-      Button("取消", role: .cancel) {}
-      Button("删除", role: .destructive) {
-        shortcuts.delete(action)
-        feedbackAction = nil
-        feedbackText = "已删除“\(action.displayName)”快捷键。"
-        pendingDeletionAction = nil
-        PDFViewerAccessibilityAnnouncer.announce(feedbackText ?? "")
-      }
-    } message: { action in
-      Text("只删除快捷键绑定，不会删除披卷里的“\(action.displayName)”功能；之后可随时恢复。")
-    }
+
   }
 
   private var sectionHeader: some View {
@@ -241,7 +223,7 @@ struct PDFViewerShortcutSettingsView: View {
         .accessibilityIdentifier("pdf-shortcut-recorder-\(action.rawValue)")
 
         Button {
-          pendingDeletionAction = action
+          // Fixed PDF capability: deletion is disabled in the UI and data model.
         } label: {
           Image(systemName: "trash")
             .frame(width: 24, height: 24)
@@ -250,7 +232,9 @@ struct PDFViewerShortcutSettingsView: View {
         .foregroundStyle(.secondary)
         .accessibilityLabel("删除“\(action.displayName)”快捷键")
         .accessibilityIdentifier("pdf-shortcut-delete-\(action.rawValue)")
-        .help("删除快捷键")
+        .disabled(true)
+        .opacity(0.35)
+        .help("内置功能，可修改按键，不能删除。")
       }
       .padding(.horizontal, 12)
       .frame(minHeight: 52)

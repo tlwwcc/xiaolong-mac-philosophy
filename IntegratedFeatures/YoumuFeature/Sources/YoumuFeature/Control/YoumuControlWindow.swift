@@ -92,6 +92,9 @@ private struct YoumuControlView: View {
   @State private var selectedPreset: String
   @State private var onlineStatus: OnlineConfigurationStatus = .idle
   @State private var showAdvancedTranslationSettings = false
+  @State private var onlineTestTask: Task<Void, Never>?
+  @State private var onlineTestID: UUID?
+  @State private var previousAPIOrigin: String?
 
   let canOpenShortcutManager: Bool
   let openShortcutManager: @MainActor () -> Void
@@ -125,6 +128,17 @@ private struct YoumuControlView: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     .frame(minWidth: 680, minHeight: 520)
+    .onReceive(NotificationCenter.default.publisher(
+      for: Notification.Name("AIXLGManagedConfigurationDidRestore"))) { _ in
+        onlineTestTask?.cancel()
+        onlineTestID = nil
+        settings = AppSettings.load()
+        draftConfig = settings.translationConfig
+        selectedPreset = Self.matchingPreset(for: draftConfig) ?? Self.customPresetName
+        previousAPIOrigin = (try? TranslationConfig.normalizedEndpoint(draftConfig.apiEndpoint))
+          .flatMap { endpoint in endpoint.host.map { "\($0):\(endpoint.port ?? 443)" } }
+        onlineStatus = .idle
+    }
   }
 
   private var sidebar: some View {
@@ -290,7 +304,7 @@ private struct YoumuControlView: View {
   private var translationPane: some View {
     Form {
       Section("翻译方式") {
-        Picker("后端", selection: $settings.translationBackend) {
+        Picker("使用", selection: $settings.translationBackend) {
           ForEach(TranslationBackendPreference.allCases, id: \.self) { backend in
             Text(backend.displayName).tag(backend)
           }
@@ -317,64 +331,60 @@ private struct YoumuControlView: View {
         }
       }
 
-      Section("在线服务") {
-        Picker("服务", selection: $selectedPreset) {
-          ForEach(TranslationConfig.presetOrder + [Self.customPresetName], id: \.self) {
-            Text($0).tag($0)
+      if settings.translationBackend != .appleLocal {
+        Section("在线 API") {
+          TextField("API 地址", text: $draftConfig.apiEndpoint,
+                    prompt: Text("粘贴服务商的 API / Base URL"))
+            .textFieldStyle(.roundedBorder)
+            .onChange(of: draftConfig.apiEndpoint) { _ in endpointChanged() }
+          SecureField("API 密钥", text: $draftConfig.apiKey,
+                      prompt: Text("服务商需要时填写"))
+
+          Text("常见服务自动补齐接口和模型；密钥只保存在 macOS 钥匙串。")
+            .font(.caption).foregroundStyle(.secondary)
+
+          if needsCustomModel {
+            TextField("模型名称", text: $draftConfig.modelName,
+                      prompt: Text("复制服务商提供的模型名称"))
+              .textFieldStyle(.roundedBorder)
           }
-        }
-        .onChange(of: selectedPreset) { presetName in
-          applyPreset(named: presetName)
-        }
 
-        SecureField("API Key", text: $draftConfig.apiKey)
-
-        if let message = settings.credentialErrorMessage
-          ?? KeychainCredentialStore.shared.lastErrorMessage
-        {
-          Label(message, systemImage: "exclamationmark.triangle.fill")
-            .font(.caption)
-            .foregroundStyle(.red)
-        } else {
-          Label("API Key 只保存在 macOS 钥匙串。", systemImage: "key.fill")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-
-        DisclosureGroup("高级设置", isExpanded: $showAdvancedTranslationSettings) {
-          TextField("API Endpoint", text: $draftConfig.apiEndpoint)
-            .textFieldStyle(.roundedBorder)
-            .font(.system(.body, design: .monospaced))
-          TextField("Model", text: $draftConfig.modelName)
-            .textFieldStyle(.roundedBorder)
-          VStack(alignment: .leading, spacing: 5) {
-            Text("系统提示词")
-              .font(.caption)
-              .foregroundStyle(.secondary)
+          DisclosureGroup("模型与更多设置", isExpanded: $showAdvancedTranslationSettings) {
+            Picker("快速填入", selection: $selectedPreset) {
+              ForEach(TranslationConfig.presetOrder + [Self.customPresetName], id: \.self) {
+                Text($0.replacingOccurrences(of: "（默认）", with: "")).tag($0)
+              }
+            }
+            .onChange(of: selectedPreset) { applyPreset(named: $0) }
+            if !needsCustomModel {
+              TextField("模型名称", text: $draftConfig.modelName).textFieldStyle(.roundedBorder)
+            }
             TextEditor(text: $draftConfig.systemPrompt)
-              .font(.system(.body, design: .monospaced))
-              .frame(minHeight: 110)
+              .font(.system(.body, design: .monospaced)).frame(minHeight: 90)
+            Button("重新选择联网权限") {
+              OnlineDataConsentManager.shared.reset(.translation)
+            }
           }
-        }
 
-        HStack(spacing: 10) {
-          Button("测试连接") {
+          Button(onlineStatus == .testing ? "正在测试…" : "测试并保存") {
             testOnlineConnection()
           }
-          .disabled(onlineStatus == .testing)
-
-          Button("保存在线引擎") {
-            saveOnlineConfiguration()
-          }
           .buttonStyle(.borderedProminent)
-
-          Button("重新选择联网权限") {
-            OnlineDataConsentManager.shared.reset(.translation)
-          }
+          .disabled(onlineStatus == .testing)
+          onlineStatusView
         }
-
-        onlineStatusView
+        .disabled(onlineStatus == .testing)
+        .onAppear {
+          previousAPIOrigin = (try? TranslationConfig.normalizedEndpoint(draftConfig.apiEndpoint))
+            .flatMap { endpoint in endpoint.host.map { "\($0):\(endpoint.port ?? 443)" } }
+        }
+        .onDisappear {
+          onlineTestTask?.cancel()
+          onlineTestID = nil
+          if onlineStatus == .testing { onlineStatus = .idle }
+        }
       }
+
     }
     .formStyle(.grouped)
   }
@@ -412,61 +422,87 @@ private struct YoumuControlView: View {
     guard name != Self.customPresetName,
       let preset = TranslationConfig.presets[name]
     else { return }
+    previousAPIOrigin = URL(string: preset.endpoint).flatMap { endpoint in
+      endpoint.host.map { "\($0):\(endpoint.port ?? 443)" }
+    }
     draftConfig.apiEndpoint = preset.endpoint
     draftConfig.modelName = preset.model
     draftConfig.apiKey = settings.presetKeys[name] ?? ""
     onlineStatus = .idle
   }
 
-  private func saveOnlineConfiguration() {
-    guard (try? LLMTranslator.validatedEndpoint(draftConfig.apiEndpoint)) != nil else {
-      onlineStatus = .failure("API 地址必须使用有效的 HTTPS。")
-      return
+  private var needsCustomModel: Bool {
+    guard let endpoint = try? TranslationConfig.normalizedEndpoint(draftConfig.apiEndpoint) else {
+      return true
     }
-    guard !draftConfig.modelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      onlineStatus = .failure("请填写模型名称。")
-      return
-    }
+    return TranslationConfig.recommendedPreset(for: endpoint) == nil
+  }
 
-    settings.translationConfig = draftConfig
-    if selectedPreset != Self.customPresetName {
-      if draftConfig.apiKey.isEmpty {
-        settings.presetKeys.removeValue(forKey: selectedPreset)
-      } else {
-        settings.presetKeys[selectedPreset] = draftConfig.apiKey
-      }
+  private func endpointChanged() {
+    if case .success = onlineStatus,
+       (try? TranslationConfig.normalizedEndpoint(draftConfig.apiEndpoint).absoluteString)
+        == settings.translationConfig.apiEndpoint {
+      return
+    }
+    onlineTestTask?.cancel()
+    onlineTestID = nil
+    onlineStatus = .idle
+    guard let endpoint = try? TranslationConfig.normalizedEndpoint(draftConfig.apiEndpoint),
+          let host = endpoint.host else { return }
+    let origin = "\(host):\(endpoint.port ?? 443)"
+    if let previousAPIOrigin, previousAPIOrigin != origin {
+      // 地址换到另一家服务时绝不沿用旧家的密钥或模型。
+      draftConfig.apiKey = ""
+      draftConfig.modelName = TranslationConfig.recommendedPreset(for: endpoint)?.model ?? ""
+      selectedPreset = Self.customPresetName
+    }
+    previousAPIOrigin = origin
+  }
+
+  private func saveOnlineConfiguration(_ config: TranslationConfig, elapsed: String) {
+    // 只保存已经测试成功的快照；联网等待期间输入的另一份配置不能被冒认通过。
+    settings.translationConfig = config
+    if let name = Self.matchingPreset(for: config) {
+      settings.presetKeys[name] = config.apiKey
     }
     let saved = settings.save()
     settings.credentialErrorMessage = KeychainCredentialStore.shared.lastErrorMessage
-    onlineStatus =
-      saved
-      ? .success("已保存；API Key 仅在钥匙串中。")
-      : .failure(settings.credentialErrorMessage ?? "在线引擎未能保存。")
+    if saved {
+      draftConfig = config
+      onlineStatus = .success("连接正常，已保存 · \(elapsed)")
+    } else {
+      onlineStatus = .failure(settings.credentialErrorMessage ?? "连接正常，但设置未能保存。")
+    }
   }
 
   private func testOnlineConnection() {
-    guard !draftConfig.apiKey.isEmpty else {
-      onlineStatus = .failure("请先填写 API Key。")
+    let config: TranslationConfig
+    do {
+      config = try draftConfig.normalizedForUse()
+    } catch {
+      onlineStatus = .failure(error.localizedDescription)
       return
     }
-    guard let endpoint = try? LLMTranslator.validatedEndpoint(draftConfig.apiEndpoint) else {
-      onlineStatus = .failure("API 地址必须使用有效的 HTTPS。")
-      return
-    }
-
+    guard let endpoint = try? LLMTranslator.validatedEndpoint(config.apiEndpoint) else { return }
+    onlineTestTask?.cancel()
+    let id = UUID()
+    onlineTestID = id
     onlineStatus = .testing
-    let config = draftConfig
-    Task { @MainActor in
+    onlineTestTask = Task { @MainActor in
       let startedAt = Date()
       do {
         guard OnlineDataConsentManager.shared.request(.translation, endpoint: endpoint) else {
           throw TranslationError.onlineDataPermissionDenied
         }
-        _ = try await LLMTranslator(config: config).translate(
-          text: "你好", targetLanguage: "English")
+        _ = try await LLMTranslator(config: config).translate(text: "你好", targetLanguage: "English")
+        try Task.checkCancellation()
+        guard onlineTestID == id else { return }
         let elapsed = String(format: "%.1f 秒", Date().timeIntervalSince(startedAt))
-        onlineStatus = .success("连接正常 · \(elapsed)")
+        saveOnlineConfiguration(config, elapsed: elapsed)
+      } catch is CancellationError {
+        if onlineTestID == id { onlineStatus = .idle }
       } catch {
+        guard onlineTestID == id else { return }
         onlineStatus = .failure(error.localizedDescription)
       }
     }
@@ -521,8 +557,7 @@ private struct YoumuShortcutOwnershipView: View {
 @available(macOS 15.0, *)
 private struct AppleLocalModelControlRow: View {
   @State private var status: AppleLocalModelStatus = .checking
-  @State private var configuration: TranslationSession.Configuration?
-  @State private var downloadRequested = false
+  @State private var downloadTask: Task<Void, Never>?
   @State private var failureDetail: String?
 
   var body: some View {
@@ -562,18 +597,8 @@ private struct AppleLocalModelControlRow: View {
           .foregroundStyle(.red)
       }
     }
-    .translationTask(configuration) { session in
-      guard downloadRequested else { return }
-      downloadRequested = false
-      do {
-        try await session.prepareTranslation()
-        await updateStatus()
-      } catch {
-        failureDetail = error.localizedDescription
-        status = .failed
-      }
-    }
     .onAppear { refreshStatus() }
+    .onDisappear { downloadTask?.cancel() }
   }
 
   private var statusColor: Color {
@@ -588,12 +613,19 @@ private struct AppleLocalModelControlRow: View {
   private func requestDownload() {
     failureDetail = nil
     status = .downloading
-    downloadRequested = true
-    let source = Locale.Language(identifier: AppleLocalModelCatalog.sourceIdentifier)
-    let target = Locale.Language(identifier: AppleLocalModelCatalog.targetIdentifier)
-    var next = TranslationSession.Configuration(source: source, target: target)
-    if next == configuration { next.invalidate() }
-    configuration = next
+    downloadTask?.cancel()
+    downloadTask = Task { @MainActor in
+      do {
+        try await AppleLocalTranslationBridge.shared.prepareModels()
+        try Task.checkCancellation()
+        await updateStatus()
+      } catch is CancellationError {
+        await updateStatus()
+      } catch {
+        failureDetail = error.localizedDescription
+        status = .failed
+      }
+    }
   }
 
   private func refreshStatus() {

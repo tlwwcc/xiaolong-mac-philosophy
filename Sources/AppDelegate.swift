@@ -760,10 +760,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let helpMenuItem = NSMenuItem(title: "帮助", action: nil, keyEquivalent: "")
     let helpMenu = NSMenu(title: "帮助")
     let feedback = NSMenuItem(
-      title: "反馈与建议", action: #selector(openFeedbackWebsiteAction), keyEquivalent: "")
+      title: "加入交流群", action: #selector(showCommunityQRCodeAction), keyEquivalent: "")
     feedback.target = self
-    feedback.toolTip = "打开反馈与建议页面"
-    feedback.setAccessibilityLabel("反馈与建议，打开反馈页")
+    feedback.toolTip = "显示交流群二维码"
+    feedback.setAccessibilityLabel("加入交流群，显示入群二维码")
     helpMenu.addItem(feedback)
     helpMenuItem.submenu = helpMenu
     mainMenu.addItem(helpMenuItem)
@@ -2559,8 +2559,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     model.requestCreateShortcut()
   }
 
-  @objc private func openFeedbackWebsiteAction() {
-    model.openFeedbackWebsite()
+  @objc private func showCommunityQRCodeAction() {
+    model.presentCommunityQRCode()
   }
 
   @objc private func checkForUpdatesAction() {

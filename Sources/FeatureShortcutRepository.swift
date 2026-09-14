@@ -124,12 +124,12 @@ enum YoumuFeatureShortcutCatalog {
     deletedRecoveryIDs: Set<String> = []
   ) -> [FeatureShortcutCommandDescriptor] {
     all.filter { descriptor in
-      !deletedNames.contains(descriptor.displayName)
-        && !deletedRecoveryIDs.contains("feature.\(descriptor.id)")
-        && !items.contains { item in
-          item.commandID == descriptor.id
-            || (item.isBuiltIn != false && item.target == descriptor.target)
-        }
+      // Fixed Youmu capabilities remain discoverable even after deletion by older builds.
+      // The host backs up and restores missing rows without taking a conflicting hotkey.
+      !items.contains { item in
+        item.commandID == descriptor.id
+          || (item.isBuiltIn != false && item.target == descriptor.target)
+      }
     }
   }
 

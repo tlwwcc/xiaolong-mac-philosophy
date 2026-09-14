@@ -25,11 +25,12 @@ enum PDFBookmarkPolicy {
 
   static func resolve(_ data: Data) -> PDFBookmarkResolution? {
     var isStale = false
-    guard let url = try? URL(
-      resolvingBookmarkData: data,
-      options: [.withSecurityScope, .withoutUI],
-      relativeTo: nil,
-      bookmarkDataIsStale: &isStale)
+    guard
+      let url = try? URL(
+        resolvingBookmarkData: data,
+        options: [.withSecurityScope, .withoutUI],
+        relativeTo: nil,
+        bookmarkDataIsStale: &isStale)
     else { return nil }
     return PDFBookmarkResolution(url: url.standardizedFileURL, isStale: isStale)
   }
@@ -308,8 +309,15 @@ struct PDFViewerShortcut: Codable, Equatable, Hashable {
   let key: PDFViewerShortcutKey
   let modifiers: PDFViewerShortcutModifiers
 
+  // A visible, editable fixed row may have no binding after a legacy conflict is restored.
+  // Persist it in overrides so subsequent launches do not silently reclaim its default key.
+  static let unassigned = Self(key: PDFViewerShortcutKey(rawValue: ""), modifiers: [])
+
+  var isAssigned: Bool { self != .unassigned }
+
   var displayText: String {
-    modifiers.displayText + key.displayText
+    guard isAssigned else { return "未设置" }
+    return modifiers.displayText + key.displayText
   }
 }
 
@@ -402,9 +410,11 @@ enum PDFViewerShortcutPolicy {
       return true
     }
     if shortcut.modifiers == .control,
-      [" ", PDFViewerShortcutKey.upArrow.rawValue, PDFViewerShortcutKey.downArrow.rawValue,
-       PDFViewerShortcutKey.leftArrow.rawValue, PDFViewerShortcutKey.rightArrow.rawValue]
-        .contains(shortcut.key.rawValue)
+      [
+        " ", PDFViewerShortcutKey.upArrow.rawValue, PDFViewerShortcutKey.downArrow.rawValue,
+        PDFViewerShortcutKey.leftArrow.rawValue, PDFViewerShortcutKey.rightArrow.rawValue,
+      ]
+      .contains(shortcut.key.rawValue)
     {
       return true
     }
@@ -452,7 +462,8 @@ struct PDFViewerShortcutConfiguration: Codable, Equatable {
   }
 
   func activeShortcut(for action: PDFViewerShortcutAction) -> PDFViewerShortcut? {
-    isDeleted(action) ? nil : shortcut(for: action)
+    let shortcut = shortcut(for: action)
+    return isDeleted(action) || !shortcut.isAssigned ? nil : shortcut
   }
 
   func isDeleted(_ action: PDFViewerShortcutAction) -> Bool {
@@ -485,10 +496,8 @@ struct PDFViewerShortcutConfiguration: Codable, Equatable {
   }
 
   func deleting(_ action: PDFViewerShortcutAction) -> Self {
-    var next = self
-    next.overrides.removeValue(forKey: action.rawValue)
-    next.deletedActionIDs.insert(action.rawValue)
-    return next
+    // These are fixed PDF capabilities; changing a binding never grants deletion rights.
+    self
   }
 
   func restoringDeleted(_ action: PDFViewerShortcutAction) -> Self {
@@ -510,40 +519,31 @@ struct PDFViewerShortcutConfiguration: Codable, Equatable {
   func sanitized() -> Self {
     let knownActions = Set(PDFViewerShortcutAction.allCases.map(\.rawValue))
     var accepted = overrides.filter { knownActions.contains($0.key) }
-    let acceptedDeleted = deletedActionIDs.intersection(knownActions)
-    for actionID in acceptedDeleted {
-      accepted.removeValue(forKey: actionID)
-    }
     for action in PDFViewerShortcutAction.allCases {
       guard let shortcut = accepted[action.rawValue] else { continue }
       if shortcut == PDFViewerShortcutPolicy.defaultShortcut(for: action)
-        || PDFViewerShortcutPolicy.basicValidationError(for: shortcut) != nil
+        || (shortcut.isAssigned
+          && PDFViewerShortcutPolicy.basicValidationError(for: shortcut) != nil)
       {
         accepted.removeValue(forKey: action.rawValue)
       }
     }
 
-    while true {
-      let candidate = Self(overrides: accepted, deletedActionIDs: acceptedDeleted)
-      let actions = PDFViewerShortcutAction.allCases.filter { !candidate.isDeleted($0) }
-      guard let conflictShortcut = actions.lazy.compactMap(candidate.activeShortcut(for:)).first(where: {
-        shortcut in actions.filter { candidate.activeShortcut(for: $0) == shortcut }.count > 1
-      }) else {
-        return candidate
+    // Valid user bindings own their keys before any deleted fixed row returns. An unbound
+    // marker keeps the restored row editable without hiding it or taking somebody else's key.
+    var claimed: Set<PDFViewerShortcut> = []
+    for action in PDFViewerShortcutAction.allCases {
+      guard let shortcut = accepted[action.rawValue], shortcut.isAssigned else { continue }
+      if !claimed.insert(shortcut).inserted {
+        accepted[action.rawValue] = .unassigned
       }
-      let conflictingActions = actions.filter {
-        candidate.activeShortcut(for: $0) == conflictShortcut
-      }
-      let owner = conflictingActions.first(where: {
-        PDFViewerShortcutPolicy.defaultShortcut(for: $0) == conflictShortcut
-      }) ?? conflictingActions[0]
-      var removedOverride = false
-      for action in conflictingActions where action != owner {
-        removedOverride = accepted.removeValue(forKey: action.rawValue) != nil
-          || removedOverride
-      }
-      guard removedOverride else { return Self(deletedActionIDs: acceptedDeleted) }
     }
+    for action in PDFViewerShortcutAction.allCases where accepted[action.rawValue] == nil {
+      if !claimed.insert(PDFViewerShortcutPolicy.defaultShortcut(for: action)).inserted {
+        accepted[action.rawValue] = .unassigned
+      }
+    }
+    return Self(overrides: accepted, deletedActionIDs: [])
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -553,12 +553,14 @@ struct PDFViewerShortcutConfiguration: Codable, Equatable {
 
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    overrides = try container.decodeIfPresent(
-      [String: PDFViewerShortcut].self,
-      forKey: .overrides) ?? [:]
-    deletedActionIDs = try container.decodeIfPresent(
-      Set<String>.self,
-      forKey: .deletedActionIDs) ?? []
+    overrides =
+      try container.decodeIfPresent(
+        [String: PDFViewerShortcut].self,
+        forKey: .overrides) ?? [:]
+    deletedActionIDs =
+      try container.decodeIfPresent(
+        Set<String>.self,
+        forKey: .deletedActionIDs) ?? []
   }
 
   func encode(to encoder: Encoder) throws {

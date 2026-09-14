@@ -7,6 +7,7 @@ final class PDFViewerShortcutStore: ObservableObject {
 
   private let defaults: UserDefaults
   private let storageKey: String
+  private var configurationRestoreObserver: AnyCancellable?
 
   init(
     defaults: UserDefaults,
@@ -14,12 +15,26 @@ final class PDFViewerShortcutStore: ObservableObject {
   ) {
     self.defaults = defaults
     self.storageKey = storageKey
+    self.configuration = PDFViewerShortcutConfiguration()
+    reload()
+    configurationRestoreObserver = NotificationCenter.default.publisher(
+      for: Notification.Name("AIXLGManagedConfigurationDidRestore")
+    ).receive(on: RunLoop.main).sink { [weak self] _ in
+      self?.reload()
+    }
+  }
 
+  func reload() {
     if let data = defaults.data(forKey: storageKey) {
       if let decoded = try? JSONDecoder().decode(
         PDFViewerShortcutConfiguration.self,
         from: data)
       {
+        if !decoded.deletedActionIDs.isEmpty,
+          defaults.data(forKey: "\(storageKey).beforeBuiltInProtectionV2") == nil
+        {
+          defaults.set(data, forKey: "\(storageKey).beforeBuiltInProtectionV2")
+        }
         let sanitized = decoded.sanitized()
         self.configuration = sanitized
         if sanitized != decoded {

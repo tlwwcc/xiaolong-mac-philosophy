@@ -56,6 +56,7 @@ enum ClipboardPasteboardIsolation {
     let entry: ClipboardHistoryEntry?
     let requiredBytes: Int64?
     let maxBytes: Int64?
+    var skipMessage: String? = nil
   }
 
   private struct FileStoreRequest: Codable {
@@ -215,7 +216,7 @@ enum ClipboardPasteboardIsolation {
   static func runWorkerIfRequested(arguments: [String] = CommandLine.arguments) -> Int32? {
     guard let markerIndex = arguments.firstIndex(of: workerArgument) else { return nil }
     let values = Array(arguments.dropFirst(markerIndex + 1))
-    guard (values.count == 6 || values.count == 7),
+    guard values.count == 6 || values.count == 7,
       let expectedChangeCount = Int(values[2]),
       let byteLimit = Int(values[3]),
       byteLimit >= 0,
@@ -223,8 +224,9 @@ enum ClipboardPasteboardIsolation {
     else { return 64 }
 
     let operation = values[0]
-    guard (operation == "store-files" && values.count == 7)
-      || (operation != "store-files" && values.count == 6)
+    guard
+      (operation == "store-files" && values.count == 7)
+        || (operation != "store-files" && values.count == 6)
     else { return 64 }
     let createdFileLimit =
       operation == "store-files"
@@ -444,9 +446,10 @@ enum ClipboardPasteboardIsolation {
     requestNonce: String,
     byteLimit: Int64
   ) -> Response {
-    guard let encoded = readBoundedResponse(
-      at: requestPath,
-      maximumBytes: maximumStoreRequestBytes),
+    guard
+      let encoded = readBoundedResponse(
+        at: requestPath,
+        maximumBytes: maximumStoreRequestBytes),
       let request = try? PropertyListDecoder().decode(FileStoreRequest.self, from: encoded),
       request.version == protocolVersion,
       request.requestNonce == requestNonce,
@@ -507,13 +510,13 @@ enum ClipboardPasteboardIsolation {
           capturedAt: request.capturedAt),
         retentionDays: request.retentionDays,
         maxBytes: request.maxBytes)
-#if AIXLG_TESTING
-      if let rawDelay = ProcessInfo.processInfo.environment[
-        "AIXLG_CLIPBOARD_QA_POST_COMMIT_DELAY_MS"
-      ], let delayMilliseconds = UInt32(rawDelay), delayMilliseconds > 0 {
-        usleep(delayMilliseconds * 1_000)
-      }
-#endif
+      #if AIXLG_TESTING
+        if let rawDelay = ProcessInfo.processInfo.environment[
+          "AIXLG_CLIPBOARD_QA_POST_COMMIT_DELAY_MS"
+        ], let delayMilliseconds = UInt32(rawDelay), delayMilliseconds > 0 {
+          usleep(delayMilliseconds * 1_000)
+        }
+      #endif
       let wire: FileStoreWire
       switch result {
       case .inserted(let entry):
@@ -536,14 +539,24 @@ enum ClipboardPasteboardIsolation {
         snapshot: nil,
         fileStore: wire)
     } catch let error as ClipboardHistoryStoreError {
-      let outcome: String
-      if case .database = error {
-        outcome = "failed"
-      } else {
-        outcome = "rejected"
+      let message: String
+      switch error {
+      case .database, .invalidPolicy:
+        return Response(
+          version: protocolVersion, outcome: "failed", capture: nil, snapshot: nil)
+      case .unreadableFile:
+        message = "文件暂时无法读取；请确认文件仍存在、已下载到本机且允许访问后，重新复制。"
+      case .emptyCapture:
+        message = "没有可保存的文件，请重新复制。"
+      case .payload(let detail):
+        message = detail
       }
+      // A known per-file refusal is distinct from a store failure or an unknown commit.
       return Response(
-        version: protocolVersion, outcome: outcome, capture: nil, snapshot: nil)
+        version: protocolVersion, outcome: "ok", capture: nil, snapshot: nil,
+        fileStore: FileStoreWire(
+          outcome: "skipped", entry: nil, requiredBytes: nil, maxBytes: nil,
+          skipMessage: String(message.prefix(512))))
     } catch {
       return Response(
         version: protocolVersion, outcome: "failed", capture: nil, snapshot: nil)
@@ -1168,6 +1181,18 @@ final class ClipboardHistoryController: ObservableObject {
 
   func requestSearchFocus() {
     searchFocusRequest &+= 1
+  }
+
+  func reloadManagedPreferences() {
+    isEnabled = defaults.object(forKey: DefaultsKey.enabled) == nil
+      ? true : defaults.bool(forKey: DefaultsKey.enabled)
+    let savedRetention = defaults.integer(forKey: DefaultsKey.retentionDays)
+    retentionDays = Self.clampedRetentionDays(savedRetention == 0 ? 30 : savedRetention)
+    let savedMaxBytes = defaults.object(forKey: DefaultsKey.maxBytes) as? NSNumber
+    maxBytes = Self.clampedMaxBytes(savedMaxBytes?.int64Value ?? 1_000_000_000)
+    excludedApplications = Self.loadExcludedApplications(defaults: defaults)
+    invalidatePasteboardReads()
+    syncMonitoring(performInitialMaintenance: false)
   }
 
   func setEnabled(_ enabled: Bool) {
@@ -1946,14 +1971,14 @@ final class ClipboardHistoryController: ObservableObject {
     for managed in pending { scheduleReplayLeaseDiscard(managed) }
   }
 
-  private func syncMonitoring() {
+  private func syncMonitoring(performInitialMaintenance: Bool = true) {
     if activeReplayLease != nil { ensureReplayLeaseTimer() }
     guard store != nil else {
       stop()
       return
     }
     if maintenanceTimer == nil {
-      cleanNow(announces: false)
+      if performInitialMaintenance { cleanNow(announces: false) }
       let maintenance = Timer(timeInterval: 3_600, repeats: true) { [weak self] _ in
         self?.cleanNow(announces: false)
       }
@@ -2228,6 +2253,21 @@ final class ClipboardHistoryController: ObservableObject {
                 throw ClipboardHistoryStoreError.payload("隔离文件去重结果无效。")
               }
               result = .deduplicated(entry)
+            case "skipped":
+              guard let message = wire.skipMessage, !message.isEmpty,
+                message.utf8.count <= 2_048, wire.entry == nil
+              else {
+                throw ClipboardHistoryStoreError.payload("文件保存返回了无效的跳过原因。")
+              }
+              try store.recoverAfterIsolatedCapture()
+              let entries = try store.entries()
+              let stats = try store.statistics()
+              DispatchQueue.main.async {
+                self.apply(entries: entries, stats: stats)
+                self.isBusy = false
+                self.statusMessage = "本次文件未保存：\(message)"
+              }
+              return
             case "rejected-quota":
               guard let requiredBytes = wire.requiredBytes,
                 let returnedMaxBytes = wire.maxBytes,
@@ -2258,8 +2298,15 @@ final class ClipboardHistoryController: ObservableObject {
             }
             return
           case .rejected, .noPayload, .stale:
-            try? store.recoverAfterIsolatedCapture()
-            throw ClipboardHistoryStoreError.payload("文件无法在安全边界内读取，已跳过本次保存。")
+            try store.recoverAfterIsolatedCapture()
+            let entries = try store.entries()
+            let stats = try store.statistics()
+            DispatchQueue.main.async {
+              self.apply(entries: entries, stats: stats)
+              self.isBusy = false
+              self.statusMessage = "本次文件未保存：文件读取请求无效，请重新复制；已有历史仍可使用。"
+            }
+            return
           }
         }
         let entries = try store.entries()

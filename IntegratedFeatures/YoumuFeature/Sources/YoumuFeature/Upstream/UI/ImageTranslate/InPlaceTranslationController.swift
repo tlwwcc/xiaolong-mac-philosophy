@@ -110,7 +110,7 @@ final class InPlaceTranslationController {
                 // 「英语八级眼镜」：已是目标语言的块跳过翻译、跳过覆盖渲染，
                 // 只有外文块发给 LLM —— 混排界面里中文部分纹丝不动
                 let toTranslate = ocrResults.enumerated().filter {
-                    !LanguageClassifier.confidentMatch(
+                    LanguageClassifier.shouldTranslate(
                         $0.element.text,
                         targetLanguage: targetLanguage
                     )
@@ -132,7 +132,16 @@ final class InPlaceTranslationController {
 
                 let results = try await TranslationService.shared.translateBlocks(
                     toTranslate.map(\.element.text),
-                    targetLanguage: targetLanguage
+                    targetLanguage: targetLanguage,
+                    systemPresentation: { [weak self] visible in
+                        guard let self, !self.tornDown, self.processingRequestID == requestID else { return }
+                        self.overlayController.setReviewSuspendedForSystemUI(visible)
+                        if visible {
+                            self.hintPanel?.orderOut(nil)
+                        } else if !Task.isCancelled {
+                            self.showHint(text: "正在翻译…", isError: false)
+                        }
+                    }
                 )
                 try Task.checkCancellation()
                 // 子集下标 → 原始块下标 映射
@@ -161,6 +170,10 @@ final class InPlaceTranslationController {
                     self.processingTask = nil
                 }
             } catch is CancellationError {
+                await MainActor.run {
+                    guard !self.tornDown, self.processingRequestID == requestID else { return }
+                    self.teardown()
+                }
                 return
             } catch {
                 await MainActor.run {

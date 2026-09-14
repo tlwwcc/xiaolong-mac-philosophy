@@ -23,7 +23,7 @@
 	<key>AIXLGLicenseEnforcementEnabled</key>
 	<false/>
 	<key>AIXLGReleasePublishedAt</key>
-	<string>2026-09-08T00:00:00+08:00</string>
+	<string>2026-09-14T00:00:00+08:00</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>zh_CN</string>
 	<key>CFBundleDisplayName</key>
@@ -93,9 +93,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.2</string>
+	<string>1.0.6</string>
 	<key>CFBundleVersion</key>
-	<string>216</string>
+	<string>222</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 	<key>NSAppleEventsUsageDescription</key>

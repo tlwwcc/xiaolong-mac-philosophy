@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import Sparkle
 
 enum SparkleUpdateState: Equatable {
@@ -6,7 +6,94 @@ enum SparkleUpdateState: Equatable {
   case checking
   case found(displayVersion: String)
   case current
+  case aheadOfRelease(displayVersion: String?)
   case failed(message: String)
+}
+
+enum SparkleUpdateResultPolicy {
+  static func state(for error: NSError) -> SparkleUpdateState {
+    guard error.domain == SUSparkleErrorDomain,
+      error.code == SUError.noUpdateError.rawValue
+    else {
+      return .failed(message: "暂时无法完成更新检查，请重试，或下载完整安装包。")
+    }
+    guard let rawReason = error.userInfo[SPUNoUpdateFoundReasonKey] as? NSNumber,
+      let reason = SPUNoUpdateFoundReason(rawValue: rawReason.int32Value)
+    else {
+      return .failed(message: "暂时无法确认可用版本，请重新检查更新。")
+    }
+    let item = error.userInfo[SPULatestAppcastItemFoundKey] as? SUAppcastItem
+    switch reason {
+    case .onLatestVersion:
+      // Sparkle also uses this reason for an empty or inapplicable feed. Only an actual
+      // matching item proves that the installed version is the latest published version.
+      guard item != nil else {
+        return .failed(message: "更新列表暂时没有可用版本，请稍后重新检查。")
+      }
+      return .current
+    case .onNewerThanLatestVersion:
+      return .aheadOfRelease(
+        displayVersion: item.map {
+          CustomerVersionFormatter.updateVersion($0.displayVersionString)
+        })
+    case .systemIsTooOld:
+      return .failed(message: "新版本需要更高版本的 macOS；升级系统后再检查更新。当前版本可继续使用。")
+    case .systemIsTooNew:
+      return .failed(message: "新版本暂不支持当前 macOS，请保留当前版本并稍后检查更新。")
+    case .hardwareDoesNotSupportARM64:
+      return .failed(message: "此更新适用于 Apple 芯片，当前 Intel Mac 暂无可用更新。")
+    case .unknown:
+      return .failed(message: "暂时无法确认可用版本，请重新检查更新。")
+    @unknown default:
+      return .failed(message: "暂时无法确认可用版本，请重新检查更新。")
+    }
+  }
+}
+
+@MainActor
+enum CustomerSparkleNoUpdateAlert {
+  static func make(error: NSError, currentVersion: String) -> NSAlert {
+    let alert = NSAlert()
+    alert.alertStyle = .informational
+    let current = CustomerVersionFormatter.updateVersion(currentVersion)
+    switch SparkleUpdateResultPolicy.state(for: error) {
+    case .current:
+      alert.messageText = "当前已是最新版本"
+      alert.informativeText = "本机版本 \(current)，与公开版本一致。"
+    case .aheadOfRelease(let published):
+      alert.messageText = "当前版本比公开版更新"
+      if let published {
+        alert.informativeText = "本机版本 \(current)，公开版本 \(published)。无需更新，可继续使用。"
+      } else {
+        alert.informativeText = "本机版本 \(current) 已领先于公开更新，无需更新，可继续使用。"
+      }
+    case .failed(let message):
+      alert.messageText = "暂时没有可用更新"
+      alert.informativeText = message
+    case .ready, .checking, .found:
+      alert.messageText = "暂时无法确认更新结果"
+      alert.informativeText = "请稍后重新检查更新。"
+    }
+    alert.addButton(withTitle: "好")
+    return alert
+  }
+}
+
+@MainActor
+final class CustomerSparkleUserDriver: SPUStandardUserDriver {
+  override func showUpdateNotFoundWithError(
+    _ error: any Error, acknowledgement: @escaping () -> Void
+  ) {
+    // This public cleanup also closes the standard checking window. The updater will
+    // finish its session after acknowledgement; all download/install UI stays standard.
+    dismissUpdateInstallation()
+    let alert = CustomerSparkleNoUpdateAlert.make(
+      error: error as NSError,
+      currentVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString")
+        as? String ?? "")
+    defer { acknowledgement() }
+    alert.runModal()
+  }
 }
 
 final class CustomerSparkleVersionDisplay: NSObject, SUVersionDisplay {
@@ -31,13 +118,14 @@ final class CustomerSparkleVersionDisplay: NSObject, SUVersionDisplay {
 }
 
 @MainActor
-final class SparkleUpdateController: NSObject, SPUUpdaterDelegate {
+final class SparkleUpdateController: NSObject, SPUUpdaterDelegate,
+  @preconcurrency SPUStandardUserDriverDelegate
+{
   private let stateHandler: (SparkleUpdateState) -> Void
   private let customerVersionDisplay = CustomerSparkleVersionDisplay()
-  private lazy var controller = SPUStandardUpdaterController(
-    startingUpdater: false,
-    updaterDelegate: self,
-    userDriverDelegate: nil)
+  private lazy var userDriver = CustomerSparkleUserDriver(hostBundle: .main, delegate: self)
+  private lazy var updater = SPUUpdater(
+    hostBundle: .main, applicationBundle: .main, userDriver: userDriver, delegate: self)
   private var started = false
 
   init(stateHandler: @escaping (SparkleUpdateState) -> Void) {
@@ -49,19 +137,26 @@ final class SparkleUpdateController: NSObject, SPUUpdaterDelegate {
     startIfNeeded()
   }
 
-  private func startIfNeeded() {
-    guard !started else { return }
-    started = true
-    controller.startUpdater()
-    stateHandler(.ready)
+  @discardableResult
+  private func startIfNeeded() -> Bool {
+    guard !started else { return true }
+    do {
+      try updater.start()
+      started = true
+      stateHandler(.ready)
+      return true
+    } catch {
+      stateHandler(SparkleUpdateResultPolicy.state(for: error as NSError))
+      return false
+    }
   }
 
   func checkForUpdates() {
     // Free base updates remain available while account recovery is unavailable. Release metadata
     // and the signed update are still checked immediately before installation.
-    startIfNeeded()
+    guard startIfNeeded() else { return }
     stateHandler(.checking)
-    controller.checkForUpdates(nil)
+    updater.checkForUpdates()
   }
 
   func updater(
@@ -90,17 +185,21 @@ final class SparkleUpdateController: NSObject, SPUUpdaterDelegate {
     customerVersionDisplay
   }
 
+  func standardUserDriverRequestsVersionDisplayer() -> (any SUVersionDisplay)? {
+    customerVersionDisplay
+  }
+
   func updaterDidNotFindUpdate(_ updater: SPUUpdater, error: any Error) {
-    stateHandler(.current)
+    stateHandler(SparkleUpdateResultPolicy.state(for: error as NSError))
   }
 
   func updater(_ updater: SPUUpdater, didAbortWithError error: any Error) {
     let nsError = error as NSError
     if nsError.domain == SUSparkleErrorDomain, nsError.code == SUError.noUpdateError.rawValue {
-      stateHandler(.current)
+      stateHandler(SparkleUpdateResultPolicy.state(for: nsError))
       return
     }
-    stateHandler(.failed(message: "暂时无法完成更新检查，请稍后重试。"))
+    stateHandler(SparkleUpdateResultPolicy.state(for: nsError))
     AppDiagnostics.log(
       "sparkle_update_aborted",
       ["domain": nsError.domain, "code": "\(nsError.code)"])

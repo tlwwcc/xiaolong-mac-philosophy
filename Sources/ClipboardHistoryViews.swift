@@ -51,6 +51,15 @@ struct ClipboardHistoryApplicationDetailView: View {
             message: "先清理旧记录或提高空间上限，新的文件副本才能继续保存。",
             color: ClipboardHistoryPalette.danger
           )
+        } else if let message = controller.statusMessage,
+          message.hasPrefix("本次文件未保存")
+        {
+          ClipboardHistoryNotice(
+            icon: "info.circle",
+            title: "已跳过这次文件复制",
+            message: message,
+            color: ClipboardHistoryPalette.warning
+          )
         } else if !controller.isEnabled {
           ClipboardHistoryNotice(
             icon: "pause.circle.fill",
@@ -1039,7 +1048,9 @@ private struct ClipboardHistorySnapshotCard: View {
     if controller.quotaBlocked {
       return "空间上限已触发，新的内容暂未保存。"
     }
-    if let message = controller.statusMessage, message.hasPrefix("保存失败") {
+    if let message = controller.statusMessage,
+      message.hasPrefix("保存失败") || message.hasPrefix("本次文件未保存")
+    {
       return message
     }
     if controller.pendingDeletionBytes > 0 {

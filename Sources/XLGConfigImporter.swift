@@ -99,7 +99,8 @@ enum XLGConfigProcessRunner {
     try? errorPipe.fileHandleForReading.close()
     let (standardOutput, outputWasTruncated) = output.value()
     let (standardError, errorWasTruncated) = error.value()
-    let status = launchError == nil && didTerminate && !process.isRunning
+    let status =
+      launchError == nil && didTerminate && !process.isRunning
       ? process.terminationStatus : nil
     return XLGConfigProcessResult(
       terminationStatus: status,
@@ -161,6 +162,7 @@ struct XLGConfigImportRequest {
   var launcherPinnedURL: URL
   var youmuSettingsURL: URL
   var defaults: UserDefaults
+  var pdfDefaults: UserDefaults
   var allowNetworkDownload: Bool
   var includeKarabiner: Bool
   var manifestURL: URL
@@ -181,7 +183,8 @@ struct XLGConfigImportRequest {
     karabinerCLIURL: URL,
     inputMethodRulesURL: URL? = nil,
     launcherPinnedURL: URL? = nil,
-    youmuSettingsURL: URL? = nil
+    youmuSettingsURL: URL? = nil,
+    pdfDefaults: UserDefaults? = nil
   ) {
     self.applicationSupportURL = applicationSupportURL
     self.shortcutsURL = shortcutsURL
@@ -196,6 +199,7 @@ struct XLGConfigImportRequest {
       youmuSettingsURL
       ?? applicationSupportURL.appendingPathComponent("Features/Youmu/settings.json")
     self.defaults = defaults
+    self.pdfDefaults = pdfDefaults ?? defaults
     self.allowNetworkDownload = allowNetworkDownload
     self.includeKarabiner = includeKarabiner
     self.manifestURL = manifestURL
@@ -226,7 +230,9 @@ struct XLGConfigImportRequest {
         .appendingPathComponent(".config/karabiner/karabiner.json"),
       karabinerCLIURL: URL(
         fileURLWithPath:
-          "/Library/Application Support/org.pqrs/Karabiner-Elements/bin/karabiner_cli"))
+          "/Library/Application Support/org.pqrs/Karabiner-Elements/bin/karabiner_cli"),
+      pdfDefaults: UserDefaults(
+        suiteName: "cn.tlww.aixlg.hotkeys.feature.pijuan-pdf"))
   }
 }
 
@@ -245,13 +251,7 @@ struct XLGConfigImportResult {
   var warnings: [String]
 
   var summary: String {
-    var parts = [
-      "已恢复小龙哥最佳配置：\(shortcutsCount) 条快捷键、\(phrasesCount) 条短语。",
-      "备份：\(backupURL.path)",
-    ]
-    if appliedUserDefaultsCount > 0 {
-      parts.append("已更新 \(appliedUserDefaultsCount) 个行为设置。")
-    }
+    var parts = ["已恢复小龙哥最佳配置，原配置已备份。"]
     if !karabinerMessage.isEmpty {
       parts.append(karabinerMessage)
     }
@@ -280,12 +280,16 @@ struct XLGConfigPayload: Codable {
   var schema: Int
   var app: XLGConfigAppPayload
   var karabiner: XLGKarabinerPayload?
+  var configurationDate: String? = nil
 }
 
 struct XLGConfigAppPayload: Codable {
   var shortcuts: [ShortcutItem]
   var phrases: [PhraseItem]
   var userDefaults: [String: XLGConfigJSONValue]
+  var launcherPinned: XLGConfigJSONValue? = nil
+  var youmuSettings: XLGConfigJSONValue? = nil
+  var pdfShortcuts: XLGConfigJSONValue? = nil
 }
 
 struct XLGKarabinerPayload: Codable {
@@ -426,6 +430,14 @@ enum XLGConfigImporter {
     "classicTabSwitcherDemotionV1",
     "classicTabSwitcherBuiltInRouteV1",
     "classicTabSwitcherRetiredV1",
+    "commandWProtectionBundleIDs",
+    "diagnosticsEnabled",
+    "clipboardHistory.excludedApplicationsV1",
+    "clipboardHistory.enabledV1",
+    "clipboardHistory.retentionDaysV1",
+    "clipboardHistory.maxBytesV1",
+    "youmu.editor.arrow-style",
+    "cn.tlww.aixlg.hotkeys.feature.youmu.defaults.selection-reader.font-scale",
   ]
 
   private static let acceptedUserDefaultsKeys =
@@ -452,14 +464,40 @@ enum XLGConfigImporter {
   static func importRecommendedConfig(
     request: XLGConfigImportRequest
   ) async throws -> XLGConfigImportResult {
-    let loaded = await loadConfigData(request: request)
-    return try importConfigData(
-      loaded.data,
-      sourceDescription: loaded.sourceDescription,
-      warnings: loaded.warnings,
-      sourceTrust: loaded.sourceTrust,
-      request: request,
-      replaceManagedConfiguration: true)
+    try importBundledConfiguration(request: request)
+  }
+
+  /// Detect an entirely new configuration. Missing shortcuts alone never means a new user:
+  /// any existing managed file (even malformed/a broken symlink) or preference preserves the profile.
+  static func installBundledConfigurationIfNeeded(
+    request: XLGConfigImportRequest
+  ) throws -> XLGConfigImportResult? {
+    let files = [
+      request.shortcutsURL, request.phrasesURL, request.inputMethodRulesURL,
+      request.launcherPinnedURL, request.youmuSettingsURL,
+    ]
+    for file in files {
+      var info = stat()
+      if lstat(file.path, &info) == 0 { return nil }
+      if errno != ENOENT { return nil }
+    }
+    if allowlistedUserDefaultsKeys.contains(where: { request.defaults.object(forKey: $0) != nil })
+      || request.pdfDefaults.object(forKey: pdfShortcutsKey) != nil
+    {
+      return nil
+    }
+    return try importBundledConfiguration(request: request)
+  }
+
+  /// A synchronous transaction for the first launch after the caller has verified no existing
+  /// user configuration is present. Ordinary upgrades must not invoke this automatically.
+  static func importBundledConfiguration(
+    request: XLGConfigImportRequest
+  ) throws -> XLGConfigImportResult {
+    try importConfigData(
+      builtInConfigData(),
+      sourceDescription: "小龙哥配置 · \(bundledConfigurationDate)",
+      warnings: [], sourceTrust: .bundled, request: request, replaceManagedConfiguration: true)
   }
 
   static func importConfigData(
@@ -478,7 +516,7 @@ enum XLGConfigImporter {
       replaceManagedConfiguration: false)
   }
 
-  private static func importConfigData(
+  static func importConfigData(
     _ data: Data,
     sourceDescription: String,
     warnings: [String],
@@ -513,11 +551,14 @@ enum XLGConfigImporter {
       try write(importedShortcuts, to: request.shortcutsURL)
       try write(payload.app.phrases, to: request.phrasesURL)
       if replaceManagedConfiguration {
-        try writeJSONObject(bestInputMethodRulesJSONObject(), to: request.inputMethodRulesURL)
-        try writeJSONObject(["version": 1, "items": []], to: request.launcherPinnedURL)
-        // 游目会在每次截图时重新读取；空对象会按当前安全默认值补齐。
-        try writeJSONObject([:], to: request.youmuSettingsURL)
+        try writeJSONObject(["version": 1, "rules": []], to: request.inputMethodRulesURL)
+        try writeJSONObject(
+          payload.app.launcherPinned?.jsonObject ?? ["version": 1, "items": []],
+          to: request.launcherPinnedURL)
+        try writeJSONObject(
+          payload.app.youmuSettings?.jsonObject ?? [:], to: request.youmuSettingsURL)
         clearManagedUserDefaults(request.defaults)
+        try applyPDFShortcuts(payload.app.pdfShortcuts, defaults: request.pdfDefaults)
       }
       let appliedDefaults = try applyUserDefaults(
         payload.app.userDefaults,
@@ -550,17 +591,56 @@ enum XLGConfigImporter {
     }
   }
 
+  /// The signed App must contain the exact frozen snapshot. Command-line fixtures may read the
+  /// source-adjacent resource; an installed App never falls back to the working directory.
   static func builtInConfigData() throws -> Data {
-    let payload = XLGConfigPayload(
-      schema: payloadSchema,
-      app: XLGConfigAppPayload(
-        shortcuts: defaultShortcuts(),
-        phrases: defaultPhrases(),
-        userDefaults: recommendedUserDefaultsPayload()),
-      karabiner: XLGKarabinerPayload(importCapsEntryKeyRule: true))
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    return try encoder.encode(payload)
+    #if AIXLG_FORMAL_RELEASE
+      // Fixture source paths must never become string literals in a signed App.
+      let resourceURL = Bundle.main.url(
+        forResource: "XLGDefaultConfiguration", withExtension: "json")
+    #else
+      let resourceURL: URL?
+      if let bundledURL = Bundle.main.url(
+        forResource: "XLGDefaultConfiguration", withExtension: "json")
+      {
+        resourceURL = bundledURL
+      } else if Bundle.main.bundleURL.pathExtension != "app" {
+        resourceURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+          .deletingLastPathComponent().appendingPathComponent(
+            "Resources/XLGDefaultConfiguration.json")
+      } else {
+        resourceURL = nil
+      }
+    #endif
+    guard let resourceURL else {
+      throw XLGConfigImportError.invalidPayload("安装包缺少日期配置，请重新安装最新版本")
+    }
+    let data = try LocalConfigurationFileCodec.readData(
+      from: resourceURL, maximumBytes: maximumPayloadBytes)
+    try validatePayloadShape(data, sourceTrust: .bundled)
+    return data
+  }
+
+  static var bundledConfigurationDate: String {
+    guard let data = try? builtInConfigData(),
+      let payload = try? JSONDecoder().decode(XLGConfigPayload.self, from: data),
+      let date = payload.configurationDate
+    else { return "配置不可用" }
+    return date
+  }
+
+  static let pdfShortcutsKey = "feature.pijuan-pdf.shortcut-configuration-v1"
+
+  private static func applyPDFShortcuts(_ value: XLGConfigJSONValue?, defaults: UserDefaults) throws
+  {
+    if let value, value != .null {
+      let data = try JSONSerialization.data(
+        withJSONObject: value.jsonObject, options: [.sortedKeys])
+      defaults.set(data, forKey: pdfShortcutsKey)
+    } else {
+      defaults.removeObject(forKey: pdfShortcutsKey)
+    }
+    defaults.synchronize()
   }
 
   static func sha256Hex(_ data: Data) -> String {
@@ -580,35 +660,6 @@ enum XLGConfigImporter {
     return XLGCapsEntryKeyImportResult(message: result.message, backupURL: result.backupURL)
   }
 
-  private static func loadConfigData(
-    request: XLGConfigImportRequest
-  ) async -> (
-    data: Data, sourceDescription: String, warnings: [String], sourceTrust: XLGConfigSourceTrust
-  ) {
-    guard request.allowNetworkDownload else {
-      return builtInFallback(warnings: [])
-    }
-    return builtInFallback(
-      warnings: ["为防止远程配置加入未审计动作，正式安全路线仅使用 App 内置推荐配置。"])
-  }
-
-  private static func builtInFallback(
-    warnings: [String]
-  ) -> (
-    data: Data, sourceDescription: String, warnings: [String], sourceTrust: XLGConfigSourceTrust
-  ) {
-    do {
-      return (try builtInConfigData(), "内置小龙哥推荐配置", warnings, .bundled)
-    } catch {
-      return (
-        Data("{}".utf8),
-        "内置小龙哥推荐配置",
-        warnings + ["内置配置生成失败：\(error.localizedDescription)"],
-        .bundled
-      )
-    }
-  }
-
   private static func validatePayloadShape(
     _ data: Data,
     sourceTrust: XLGConfigSourceTrust
@@ -618,15 +669,32 @@ enum XLGConfigImporter {
     }
     guard
       let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-      Set(root.keys).isSubset(of: ["schema", "app", "karabiner"]),
+      Set(root.keys).isSubset(of: ["schema", "app", "karabiner", "configurationDate"]),
       root["schema"] is NSNumber,
       let app = root["app"] as? [String: Any],
-      Set(app.keys) == ["shortcuts", "phrases", "userDefaults"],
+      Set(["shortcuts", "phrases", "userDefaults"]).isSubset(of: Set(app.keys)),
+      Set(app.keys).isSubset(of: [
+        "shortcuts", "phrases", "userDefaults", "launcherPinned", "youmuSettings", "pdfShortcuts",
+      ]),
       let shortcuts = app["shortcuts"] as? [[String: Any]],
       let phrases = app["phrases"] as? [[String: Any]],
       let userDefaults = app["userDefaults"] as? [String: Any]
     else {
       throw XLGConfigImportError.invalidPayload("顶层字段不完整或含未知字段")
+    }
+    if sourceTrust == .untrusted,
+      root["configurationDate"] != nil || app["launcherPinned"] != nil
+        || app["youmuSettings"] != nil || app["pdfShortcuts"] != nil
+    {
+      throw XLGConfigImportError.invalidPayload("外部配置不能声明打包配置或写入内置功能设置")
+    }
+    if let date = root["configurationDate"] {
+      guard let date = date as? String,
+        date.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil,
+        phrases.isEmpty,
+        app["launcherPinned"] is [String: Any],
+        app["youmuSettings"] is [String: Any]
+      else { throw XLGConfigImportError.invalidPayload("日期配置不完整或含个人短语") }
     }
     guard shortcuts.count <= maximumRecordCount, phrases.count <= maximumRecordCount else {
       throw XLGConfigImportError.invalidPayload("记录数量超过 500 条")
@@ -697,96 +765,6 @@ enum XLGConfigImporter {
     }
   }
 
-  private static func recommendedUserDefaultsPayload() -> [String: XLGConfigJSONValue] {
-    [
-      "capsCorePluginEnabledV1": .bool(true),
-      "inputMethodPluginEnabledV1": .bool(true),
-      "inputMethodLauncherRuleSeededV1": .bool(true),
-      "deletedShortcutNamesV1": .null,
-      "deletedShortcutRecoveryIDsV1": .null,
-      "shortcutSemanticCapsSpaceChoiceFingerprintV1": .null,
-      "shortcutSemanticCommandSpaceChoiceFingerprintV1": .null,
-      "shortcutSemanticMigrationUndoFingerprintV1": .null,
-      "shortcutDefaultBaselineVersionV1": .int(ShortcutDefaultBaseline.currentVersion),
-      "selectedOptimizationIDs": .null,
-      "selectedOptimizationIDsVersion": .null,
-      "sleepStatusItemVisibleV1": .bool(true),
-      "networkSpeedPluginEnabledV1": .bool(true),
-      // 跟随当前小龙哥本机：默认不常驻采样，需要时在自定义菜单栏开启。
-      "systemHealthMonitorEnabledV1": .bool(false),
-      "networkSpeedShowMemoryV1": .bool(true),
-      "networkSpeedShowCPUV1": .bool(false),
-      "networkSpeedShowGPUV1": .bool(false),
-      "networkSpeedDisplayOptionsVersionV1": .int(1),
-      "mouseVolumePluginUserSetV1": .bool(false),
-      "scrollEngineUserSetEnabledV1": .bool(false),
-      "scrollEngineSettings": .object([
-        "enabled": .bool(false),
-        "reverseVertical": .bool(true),
-        "reverseHorizontal": .bool(true),
-        "smooth": .bool(true),
-        "affectTrackpad": .bool(false),
-        "speed": .double(2.7),
-        "step": .double(33.6),
-        "duration": .double(4.35),
-        "volumeHotCornerEnabled": .bool(false),
-        "volumeHotCornerWidthRatio": .double(0.14),
-        "volumeHotCornerHeightRatio": .double(0.16),
-        "volumeStep": .double(2.0),
-      ]),
-      "keepAwakePreventDisplaySleep": .bool(false),
-      "keepAwakeCustomHours": .int(3),
-      "launcherDisplayModeV1": .string(LauncherDefaultConfiguration.displayModeRawValue),
-      "launcherShowsPinnedNamesV1": .bool(LauncherDefaultConfiguration.showsPinnedNames),
-      "launcherSearchEngineV1": .string("google"),
-      "launcherPluginEnabledV1": .bool(true),
-      "showDockIconV1": .bool(false),
-      "menuBarVisibleCatalogItemIDsV1": .array([
-        .string("youmu"),
-        .string("host.phrases"),
-        .string("host.inputMethod"),
-        .string("host.networkProbe"),
-        .string("host.keepAwake"),
-        .string("host.launcher"),
-        .string("host.shortcuts"),
-        .string("host.processViewer"),
-      ]),
-      "menuBarCatalogConfigurationVersionV1": .int(1),
-      "processViewerPluginEnabledV1": .bool(true),
-      "processViewerShowSystemProcessesV1": .bool(false),
-      "codexNetworkProbePluginEnabledV1": .bool(true),
-      "classicTabSwitcherEnabledV1": .bool(false),
-      "classicTabSwitcherCommandTabTakeoverConfirmedV1": .bool(false),
-      "classicTabSwitcherDemotionV1": .bool(true),
-      "classicTabSwitcherBuiltInRouteV1": .bool(true),
-      "classicTabSwitcherRetiredV1": .bool(true),
-    ]
-  }
-
-  private static func bestInputMethodRulesJSONObject() -> [String: Any] {
-    [
-      "version": 1,
-      "rules": [
-        [
-          "id": "best-config-launcher-abc-v1",
-          "appName": "小龙哥启动器",
-          "bundleIdentifier": "\(Bundle.main.bundleIdentifier ?? "cn.tlww.aixlg.hotkeys").launcher",
-          "appPath": Bundle.main.bundleURL.path,
-          "sourceSelectionID": "com.apple.keylayout.ABC",
-          "enabled": true,
-        ],
-        [
-          "id": "best-config-finder-abc-v1",
-          "appName": "访达",
-          "bundleIdentifier": "com.apple.finder",
-          "appPath": "/System/Library/CoreServices/Finder.app",
-          "sourceSelectionID": "com.apple.keylayout.ABC",
-          "enabled": true,
-        ],
-      ],
-    ]
-  }
-
   private struct BackupRecord: Codable {
     var directoryPath: String
     var shortcutsExisted: Bool
@@ -811,7 +789,8 @@ enum XLGConfigImporter {
     let backupURL = request.applicationSupportURL
       .appendingPathComponent("backups", isDirectory: true)
       .appendingPathComponent("xlg-config-import-\(timestamp())", isDirectory: true)
-    try FileManager.default.createDirectory(at: backupURL, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(
+      at: backupURL, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
 
     let shortcutsExisted = FileManager.default.fileExists(atPath: request.shortcutsURL.path)
     if shortcutsExisted {
@@ -839,6 +818,10 @@ enum XLGConfigImporter {
 
     try backupUserDefaults(
       request.defaults, to: backupURL.appendingPathComponent(userDefaultsBackupName))
+
+    try backupUserDefaults(
+      request.pdfDefaults, to: backupURL.appendingPathComponent("pdf-shortcuts.plist"),
+      keys: [pdfShortcutsKey])
 
     let karabinerExisted = FileManager.default.fileExists(atPath: request.karabinerConfigURL.path)
     if request.includeKarabiner, karabinerExisted {
@@ -893,6 +876,9 @@ enum XLGConfigImporter {
     try restoreUserDefaults(
       request.defaults,
       from: backup.directoryURL.appendingPathComponent(userDefaultsBackupName))
+    try restoreUserDefaults(
+      request.pdfDefaults, from: backup.directoryURL.appendingPathComponent("pdf-shortcuts.plist"),
+      keys: [pdfShortcutsKey])
     if request.includeKarabiner {
       try restoreFile(
         original: request.karabinerConfigURL,
@@ -938,10 +924,12 @@ enum XLGConfigImporter {
     return existed
   }
 
-  private static func backupUserDefaults(_ defaults: UserDefaults, to url: URL) throws {
+  private static func backupUserDefaults(
+    _ defaults: UserDefaults, to url: URL, keys: Set<String> = allowlistedUserDefaultsKeys
+  ) throws {
     var snapshot: [String: Any] = [:]
     var presentKeys: [String] = []
-    for key in allowlistedUserDefaultsKeys.sorted() {
+    for key in keys.sorted() {
       guard let object = defaults.object(forKey: key) else { continue }
       presentKeys.append(key)
       snapshot[key] = object
@@ -954,7 +942,9 @@ enum XLGConfigImporter {
     try data.write(to: url, options: [.atomic])
   }
 
-  private static func restoreUserDefaults(_ defaults: UserDefaults, from url: URL) throws {
+  private static func restoreUserDefaults(
+    _ defaults: UserDefaults, from url: URL, keys: Set<String> = allowlistedUserDefaultsKeys
+  ) throws {
     let data = try LocalConfigurationFileCodec.readData(from: url)
     guard
       let snapshot = try PropertyListSerialization.propertyList(from: data, format: nil)
@@ -962,7 +952,7 @@ enum XLGConfigImporter {
       let presentKeys = snapshot["_presentKeys"] as? [String]
     else { return }
 
-    for key in allowlistedUserDefaultsKeys {
+    for key in keys {
       if presentKeys.contains(key), let value = snapshot[key] {
         defaults.set(value, forKey: key)
       } else {
@@ -981,13 +971,17 @@ enum XLGConfigImporter {
     for (key, value) in values {
       guard allowlistedUserDefaultsKeys.contains(key) else { continue }
       switch (key, value) {
-      case ("scrollEngineSettings", .object):
+      case ("scrollEngineSettings", .object), ("clipboardHistory.excludedApplicationsV1", .array):
+        // These consumers read JSON Data, not plist dictionaries/arrays. In particular an array
+        // of exclusion objects must not pass through propertyListValue's compactMap.
         let data = try JSONSerialization.data(
           withJSONObject: value.jsonObject,
           options: [.sortedKeys])
         defaults.set(data, forKey: key)
       case (_, .null):
         defaults.removeObject(forKey: key)
+      case ("scrollEngineSettings", _), ("clipboardHistory.excludedApplicationsV1", _):
+        throw XLGConfigImportError.invalidUserDefaultsValue(key)
       default:
         guard let propertyListValue = value.propertyListValue else {
           throw XLGConfigImportError.invalidUserDefaultsValue(key)
@@ -1150,6 +1144,6 @@ enum XLGConfigImporter {
   private static func timestamp() -> String {
     let formatter = DateFormatter()
     formatter.dateFormat = "yyyyMMddHHmmss"
-    return formatter.string(from: Date())
+    return formatter.string(from: Date()) + "-" + UUID().uuidString.lowercased()
   }
 }

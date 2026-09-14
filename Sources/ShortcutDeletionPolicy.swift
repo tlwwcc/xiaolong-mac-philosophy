@@ -2,11 +2,14 @@ import Foundation
 
 enum ShortcutDeletionDisabledReason: Equatable {
   case missingRecovery
+  case fixedFeature
 
   var message: String {
     switch self {
     case .missingRecovery:
-      return "这条内置快捷键没有可验证的恢复入口，不能删除。"
+      return "内置快捷键，可修改按键；没有恢复入口，不能删除。"
+    case .fixedFeature:
+      return "内置功能，可修改按键，不能删除。"
     }
   }
 }
@@ -39,10 +42,7 @@ enum ShortcutDeletionPolicy {
     recoveryID: String?
   ) -> ShortcutDeletionDecision {
     if isFixedFeature {
-      guard let recoveryID, !recoveryID.isEmpty else {
-        return .disabled(.missingRecovery)
-      }
-      return .allowed(recoveryID: recoveryID)
+      return .disabled(.fixedFeature)
     }
     if isUserDefined || !isAppManaged {
       return .allowed(recoveryID: nil)

@@ -46,6 +46,10 @@ final class ClipboardHistoryStore {
   private static let sparseFileInspectionFloor: Int64 = 64 * 1_024 * 1_024
   private static let maximumExtendedAttributeNameListBytes = 64 * 1_024
   private static let resourceForkAttributeName = "com.apple.ResourceFork"
+  // App-defined attributes are opaque bytes, not executable instructions. Bound and account
+  // them instead of rejecting ordinary screenshots/downloads for an unfamiliar attribute name.
+  private static let maximumOtherExtendedAttributeBytes = 64 * 1_024
+  private static let maximumExtendedAttributeBytesPerNode: Int64 = 1 * 1_024 * 1_024
   private static let allowedExtendedAttributes: [String: Int] = [
     "com.apple.FinderInfo": 32,
     "com.apple.lastuseddate#PS": 64,
@@ -268,6 +272,25 @@ final class ClipboardHistoryStore {
   }
 
   func capture(
+    _ capture: ClipboardHistoryCapture,
+    retentionDays: Int,
+    maxBytes: Int64
+  ) throws -> ClipboardHistoryCaptureResult {
+    do {
+      return try captureWithinLimits(capture, retentionDays: retentionDays, maxBytes: maxBytes)
+    } catch FileTraversalLimitError.byteLimit(let requiredBytes, let maximumBytes) {
+      return .rejectedQuota(requiredBytes: requiredBytes, maxBytes: maximumBytes)
+    } catch FileTraversalLimitError.deadline {
+      throw ClipboardHistoryStoreError.payload(
+        "文件读取耗时过长，请等待文件下载完成后重试，或分批复制。")
+    } catch FileTraversalLimitError.depthLimit {
+      throw ClipboardHistoryStoreError.payload("文件夹层级过深，请进入子文件夹后分批复制。")
+    } catch FileTraversalLimitError.nodeLimit {
+      throw ClipboardHistoryStoreError.payload("文件夹内项目过多，请分批复制。")
+    }
+  }
+
+  private func captureWithinLimits(
     _ capture: ClipboardHistoryCapture,
     retentionDays: Int,
     maxBytes: Int64
@@ -1283,9 +1306,14 @@ final class ClipboardHistoryStore {
         }
         continue
       }
-      guard let maximumSize = Self.allowedExtendedAttributes[name], size <= maximumSize else {
+      let maximumSize =
+        Self.allowedExtendedAttributes[name]
+        ?? Self.maximumOtherExtendedAttributeBytes
+      guard size <= maximumSize,
+        Int64(size) <= Self.maximumExtendedAttributeBytesPerNode - byteCount
+      else {
         throw ClipboardHistoryStoreError.payload(
-          "文件包含未获准或过大的扩展属性，已跳过本次复制。")
+          "文件附加信息过大，已跳过本次复制；可直接在访达中复制粘贴原文件。")
       }
 
       try budget.chargeDeclaredBytes(Int64(size))
@@ -1586,11 +1614,9 @@ final class ClipboardHistoryStore {
       guard !deletionIDs.contains(entry.id) else { return partial }
       return try Self.checkedNodeCountSum(partial, storedNodeCounts[entry.id] ?? 1)
     }
-    if (
-      remainingBytes > maxBytes
-        || remainingEntryCount > Self.maximumStoredEntryCount
-        || remainingNodeCount > Self.maximumStoredFileNodeCount
-    ),
+    if remainingBytes > maxBytes
+      || remainingEntryCount > Self.maximumStoredEntryCount
+      || remainingNodeCount > Self.maximumStoredFileNodeCount,
       pendingDeletionBytes == 0
     {
       let quotaCandidates =
@@ -1661,9 +1687,10 @@ final class ClipboardHistoryStore {
     var projectedNodeCount = try storedNodeCounts.values.reduce(incomingNodes) { partial, count in
       try Self.checkedNodeCountSum(partial, count)
     }
-    guard projectedBytes > maxBytes
-      || projectedEntryCount > Self.maximumStoredEntryCount
-      || projectedNodeCount > Self.maximumStoredFileNodeCount
+    guard
+      projectedBytes > maxBytes
+        || projectedEntryCount > Self.maximumStoredEntryCount
+        || projectedNodeCount > Self.maximumStoredFileNodeCount
     else {
       return []
     }
@@ -2191,9 +2218,11 @@ final class ClipboardHistoryStore {
 
     var logicalByteCount: Int64 = 0
     var accountedByteCount: Int64 = 0
-    let budget = sharedBudget ?? FileTraversalBudget(
-      maximumBytes: Self.maximumManagedFileTreeBytes,
-      duration: Self.maximumFileTraversalDuration)
+    let budget =
+      sharedBudget
+      ?? FileTraversalBudget(
+        maximumBytes: Self.maximumManagedFileTreeBytes,
+        duration: Self.maximumFileTraversalDuration)
     for url in urls {
       let cost = try nodeCost(at: url, budget: budget, depth: 0)
       logicalByteCount = try Self.checkedByteCountSum(

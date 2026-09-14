@@ -2,7 +2,6 @@ import SwiftUI
 
 struct FreeSoftwareSettingsView: View {
   private let productURL = URL(string: "https://aixlg.com/mac/")!
-  private let supportURL = URL(string: "https://aixlg.com/support.html")!
 
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
@@ -19,9 +18,8 @@ struct FreeSoftwareSettingsView: View {
       Text("感谢最早购买或收到赠送的 14 位朋友。既有的永久 AI 答疑支持继续保留，遇到问题，随时联系小龙哥。")
         .font(.subheadline).foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
-      Link(destination: supportURL) {
-        Label("联系小龙哥", systemImage: "bubble.left.and.bubble.right")
-      }
+      Text("联系小龙哥").font(.subheadline)
+      FeedbackRequestPanelView()
     }
   }
 }

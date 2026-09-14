@@ -2,14 +2,14 @@ import Foundation
 
 /// 翻译执行路径。新安装默认 Apple 本机；自动模式保留给主动需要在线兜底的用户。
 enum TranslationBackendPreference: String, Codable, CaseIterable {
-    case automatic
     case appleLocal
     case onlineAPI
+    case automatic
 
     var displayName: String {
         switch self {
-        case .automatic: return "自动最快（本机优先）"
-        case .appleLocal: return "Apple 本机（离线）"
+        case .automatic: return "本机优先，在线备用"
+        case .appleLocal: return "Apple 本机（默认·免费）"
         case .onlineAPI: return "在线 API"
         }
     }
@@ -19,7 +19,7 @@ enum TranslationBackendPreference: String, Codable, CaseIterable {
         case .automatic:
             return "优先使用 Apple 本机模型；系统不支持或本机失败时才切换在线 API。"
         case .appleLocal:
-            return "免费且不需要账号；首次使用由 macOS 确认下载英中模型，之后完全离线。"
+            return "不需要账号或 API。首次使用按系统提示下载语言，完成后可离线翻译。"
         case .onlineAPI:
             return "跳过本机模型，始终使用下方配置的在线翻译服务。"
         }
