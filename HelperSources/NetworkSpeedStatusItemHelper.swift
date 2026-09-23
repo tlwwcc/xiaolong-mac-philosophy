@@ -99,14 +99,12 @@ private enum StatusMenuCommandID {
   static let imageTranslate = "youmu.imageTranslate"
   static let requestMenuSnapshot = "host.requestMenuSnapshot"
   static let phrases = "host.phrases"
-  static let inputMethod = "host.inputMethod"
   static let networkProbe = "host.networkProbe"
   static let keepAwake = "host.keepAwake"
   static let launcher = "host.launcher"
   static let shortcuts = "host.shortcuts"
   static let processViewer = "host.processViewer"
   static let pijuanPDF = "host.pijuanPDF"
-  static let aiPlayer = "host.aiPlayer"
   static let clipboardHistory = "host.clipboardHistory"
   static let pluginCenter = "host.pluginCenter"
   static let menuBarSettings = "host.menuBarSettings"
@@ -125,14 +123,12 @@ private enum StatusMenuCommandID {
     selectionReader,
     imageTranslate,
     phrases,
-    inputMethod,
     networkProbe,
     keepAwake,
     launcher,
     shortcuts,
     processViewer,
     pijuanPDF,
-    aiPlayer,
     clipboardHistory,
   ]
 }
@@ -667,11 +663,6 @@ private final class NetworkSpeedStatusItemApp: NSObject, NSApplicationDelegate {
         systemImage: "text.bubble"))
     menu.addItem(
       makeMenuItem(
-        id: StatusMenuCommandID.inputMethod,
-        title: "输入法管理",
-        systemImage: "character.cursor.ibeam"))
-    menu.addItem(
-      makeMenuItem(
         id: StatusMenuCommandID.networkProbe,
         title: "测试网速",
         systemImage: "gauge.with.dots.needle.67percent"))
@@ -700,12 +691,6 @@ private final class NetworkSpeedStatusItemApp: NSObject, NSApplicationDelegate {
         id: StatusMenuCommandID.pijuanPDF,
         title: "披卷",
         systemImage: "doc.richtext",
-        isHidden: true))
-    menu.addItem(
-      makeMenuItem(
-        id: StatusMenuCommandID.aiPlayer,
-        title: "听澜播放器",
-        systemImage: "headphones",
         isHidden: true))
     menu.addItem(
       makeMenuItem(
@@ -796,14 +781,12 @@ private final class NetworkSpeedStatusItemApp: NSObject, NSApplicationDelegate {
     ]
     let shortcutCommandIDs = [
       StatusMenuCommandID.phrases,
-      StatusMenuCommandID.inputMethod,
       StatusMenuCommandID.networkProbe,
       StatusMenuCommandID.keepAwake,
       StatusMenuCommandID.launcher,
       StatusMenuCommandID.shortcuts,
       StatusMenuCommandID.processViewer,
       StatusMenuCommandID.pijuanPDF,
-      StatusMenuCommandID.aiPlayer,
       StatusMenuCommandID.clipboardHistory,
     ]
     let hasVisibleYoumuItem = youmuCommandIDs.contains { commandID in

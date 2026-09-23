@@ -107,6 +107,7 @@ if lockFD == -1 || flock(lockFD, LOCK_EX | LOCK_NB) != 0 {
 
 MainActor.assumeIsolated {
   let app = NSApplication.shared
+  DockPresencePreference.migrateLegacyHiddenDefault()
   app.setActivationPolicy(
     DockPresencePreference.activationPolicy(
       forVisibleDockIcon: DockPresencePreference.isVisible()))

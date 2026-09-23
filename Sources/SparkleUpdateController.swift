@@ -141,6 +141,9 @@ final class SparkleUpdateController: NSObject, SPUUpdaterDelegate,
   private func startIfNeeded() -> Bool {
     guard !started else { return true }
     do {
+      // Version monitoring is part of the product default. Keep the published default active
+      // even when an older install carried an unset or stale Sparkle preference.
+      updater.automaticallyChecksForUpdates = true
       try updater.start()
       started = true
       stateHandler(.ready)

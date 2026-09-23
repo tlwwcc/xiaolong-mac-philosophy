@@ -392,8 +392,6 @@ enum XLGConfigImporter {
 
   static let allowlistedUserDefaultsKeys: Set<String> = [
     "capsCorePluginEnabledV1",
-    "inputMethodPluginEnabledV1",
-    "inputMethodLauncherRuleSeededV1",
     "deletedShortcutNamesV1",
     "deletedShortcutRecoveryIDsV1",
     "shortcutSemanticCapsSpaceChoiceFingerprintV1",
@@ -442,6 +440,7 @@ enum XLGConfigImporter {
 
   private static let acceptedUserDefaultsKeys =
     allowlistedUserDefaultsKeys.union(RetiredShiftInputSourcePreferences.keys)
+    .union(["inputMethodPluginEnabledV1", "inputMethodLauncherRuleSeededV1"])
 
   private static let karabinerRuleDescription = "小龙哥入口键：Caps Lock → Control+Option"
   private static let oldKarabinerRuleDescriptions: Set<String> = [
@@ -551,7 +550,6 @@ enum XLGConfigImporter {
       try write(importedShortcuts, to: request.shortcutsURL)
       try write(payload.app.phrases, to: request.phrasesURL)
       if replaceManagedConfiguration {
-        try writeJSONObject(["version": 1, "rules": []], to: request.inputMethodRulesURL)
         try writeJSONObject(
           payload.app.launcherPinned?.jsonObject ?? ["version": 1, "items": []],
           to: request.launcherPinnedURL)

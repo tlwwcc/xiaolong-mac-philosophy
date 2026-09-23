@@ -19,9 +19,70 @@ struct ReleaseNoteEntry: Equatable, Identifiable {
 
 enum ReleaseNotes {
   static let fallbackChangelogURL = URL(
-    string: "https://aixlg.com/mac/changelog/?v=20260914-image-language")!
+    string: "https://aixlg.com/mac/changelog/?v=20260923-window-controls")!
 
   static let bundled: [ReleaseNoteEntry] = [
+    ReleaseNoteEntry(
+      version: "1.0.13",
+      build: 229,
+      dateText: "2026-09-23",
+      title: "常用入口更少，分享一步就好",
+      summary: "安装后应用始终出现在程序坞，分享给朋友只需复制一段完整文案；版本监测默认开启，常用设置更清楚。",
+      highlights: [
+        "安装或升级后，应用直接出现在程序坞，也可以从菜单栏打开；不再需要额外切换。",
+        "点击“复制分享文案”，再粘贴到微信或飞书；文案会带上官网地址，朋友可以直接打开。",
+        "设置中移除旧版音频恢复入口和系统分享弹窗；版本监测默认开启，无需手动检查。",
+        "按 Caps + F 可直接恢复窗口；Caps + ⌘ + ↑ 保持普通窗口大小并居中，铺满时先恢复合适大小。",
+        "匿名统计继续默认开启，可在设置中随时关闭；登录后台时会稳定回到统计首页。",
+      ],
+      previousHighlights: ["应用中心保留个人快捷键、短语和启动器设置。"],
+      changelogURL: fallbackChangelogURL
+    ),
+    ReleaseNoteEntry(
+      version: "1.0.12",
+      build: 228,
+      dateText: "2026-09-19",
+      title: "使用量统计默认开启，随时可以关闭",
+      summary: "无需额外设置即可参与匿名设备统计；已经主动关闭或清除记录的选择会保留，不影响任何功能。",
+      highlights: [
+        "在设置 → 关于 → 使用量统计中随时关闭，或清除服务器中的统计记录。",
+        "只报告随机安装编号、版本和在线状态，不上传文件、剪贴板、截图或输入内容。",
+        "休眠暂停、失败退避；保留个人快捷键、短语、启动器和翻译设置。",
+      ],
+      previousHighlights: ["后台可查看此刻在线、今日新增与回访、历史趋势及设备明细。"],
+      changelogURL: fallbackChangelogURL
+    ),
+    ReleaseNoteEntry(
+      version: "1.0.11",
+      build: 227,
+      dateText: "2026-09-19",
+      title: "是否参与统计，由你选择",
+      summary: "新增可自愿开启的匿名设备统计，默认关闭；可随时关闭或清除统计记录，不影响免费使用和个人设置。",
+      highlights: [
+        "在设置 → 关于 → 使用量统计中查看说明，愿意参与时再开启。",
+        "只报告随机安装编号、版本和在线状态，不上传文件、剪贴板、截图或输入内容。",
+        "休眠时暂停，联网失败会降低频率；关闭不影响任何功能，清除失败会明确提示重试。",
+        "升级保留个人快捷键、短语、启动器和翻译设置；无需注册账号。",
+      ],
+      previousHighlights: ["保留软件快捷键引导与精简后的应用中心；所有功能永久免费。"],
+      changelogURL: fallbackChangelogURL
+    ),
+    ReleaseNoteEntry(
+      version: "1.0.10",
+      build: 226,
+      dateText: "2026-09-17",
+      title: "选好软件，直接设快捷键",
+      summary: "启动器右键直接带入软件，按下快捷键即可保存。应用中心更精简，菜单设置集中在设置页。",
+      highlights: [
+        "在启动器中右键软件，选择设置或修改快捷键；已有绑定直接编辑，不必再新增一次。",
+        "快捷键页也可添加软件：先选择，再录制；占用冲突会明确提示，取消不改原设置。",
+        "听澜与输入法管理移出主 App；媒体、播放记录和旧输入法规则保留，听澜后续独立提供。",
+        "自定义菜单栏在设置中统一管理；卸载软件继续从启动器右键进入。",
+        "升级保留个人配置；新安装包不携带作者的启动器固定软件、排序和偏好。",
+      ],
+      previousHighlights: ["所有功能永久免费，无需账号；官方签名与安全校验继续保留。"],
+      changelogURL: fallbackChangelogURL
+    ),
     ReleaseNoteEntry(
       version: "1.0.9",
       build: 225,
@@ -50,7 +111,7 @@ enum ReleaseNotes {
         "升级保留个人快捷键、设置和剪贴板历史。",
       ],
       previousHighlights: [
-        "所有功能永久免费，无需账号；官方签名、公证和更新安全校验继续保留。",
+        "所有功能永久免费，无需账号；官方签名、公证和更新安全校验继续保留。"
       ],
       changelogURL: fallbackChangelogURL,
     ),

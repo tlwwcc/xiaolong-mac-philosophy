@@ -23,7 +23,7 @@
 	<key>AIXLGLicenseEnforcementEnabled</key>
 	<false/>
 	<key>AIXLGReleasePublishedAt</key>
-	<string>2026-09-14T00:00:00+08:00</string>
+	<string>2026-09-23T00:00:00+08:00</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>zh_CN</string>
 	<key>CFBundleDisplayName</key>
@@ -69,33 +69,13 @@
 				<string>pdf</string>
 			</array>
 		</dict>
-		<dict>
-			<key>CFBundleTypeName</key>
-			<string>听澜支持的音频</string>
-			<key>CFBundleTypeRole</key>
-			<string>Viewer</string>
-			<key>LSHandlerRank</key>
-			<string>Alternate</string>
-			<key>LSItemContentTypes</key>
-			<array>
-				<string>public.mp3</string>
-				<string>public.mpeg-4-audio</string>
-				<string>com.microsoft.waveform-audio</string>
-			</array>
-			<key>CFBundleTypeExtensions</key>
-			<array>
-				<string>mp3</string>
-				<string>m4a</string>
-				<string>wav</string>
-			</array>
-		</dict>
 	</array>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.9</string>
+	<string>1.0.13</string>
 	<key>CFBundleVersion</key>
-	<string>225</string>
+	<string>229</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 	<key>NSAppleEventsUsageDescription</key>

@@ -220,11 +220,6 @@ final class AppModel: ObservableObject {
   @Published var capsCorePluginEnabled = false
   @Published var capsCoreEngineRunning = false
   @Published var capsCorePluginStatus: CapsCorePluginStatus = .stopped
-  @Published var inputMethodPluginEnabled = false
-  @Published var inputMethodSources: [InputMethodSourceDescriptor] = []
-  @Published var inputMethodRules: [InputMethodAppRule] = []
-  @Published var inputMethodRuleDiagnostics: [InputMethodRuleDiagnostic] = []
-  @Published var inputMethodPluginStatus: InputMethodPluginStatus = .stopped
   @Published var legacyScrollProfile = LegacyScrollProfile.empty
   @Published var scrollSettings = ScrollEngineSettings.defaults
   @Published var scrollEngineRunning = false
@@ -290,6 +285,7 @@ final class AppModel: ObservableObject {
   @Published var shortcutGuideFocusRequest = 0
   @Published var shortcutGuideRequestedCategory = "全部"
   @Published var shortcutGuideRequestedSearchText = ""
+  @Published var softwareShortcutRequest: SoftwareShortcutRequest?
   @Published var shortcutCreateRequestID = 0
   @Published var shortcutEditRequestID = 0
   @Published var shortcutSemanticMigrationMessage = ""
@@ -322,24 +318,8 @@ final class AppModel: ObservableObject {
   let launcherIndexURL: URL
   let launcherHistoryURL: URL
   let launcherPinnedURL: URL
-  let inputMethodRulesURL: URL
   let clipboardHistory: ClipboardHistoryController
   private var fileAssociationManagerStorage: FileAssociationManager?
-  private var aiPlayerStorage: AIPlayerController?
-  var aiPlayer: AIPlayerController {
-    if let aiPlayerStorage {
-      return aiPlayerStorage
-    }
-    let controller = AIPlayerController()
-    aiPlayerStorage = controller
-    return controller
-  }
-  var aiPlayerExtendedMediaAvailable: Bool {
-    FileManager.default.isExecutableFile(atPath: "/opt/homebrew/bin/mpv")
-  }
-  var aiPlayerCanUndoTrash: Bool {
-    aiPlayerStorage?.canUndoTrash ?? false
-  }
   var fileAssociationChangesAllowed: Bool {
     guard ProductReleaseIdentity.isFormalRelease, !runtimeIdentity.isInvalid else {
       return false
@@ -357,7 +337,6 @@ final class AppModel: ObservableObject {
   var showProcessViewerHandler: (() -> Void)?
   var showClipboardHistoryHandler: (() -> Void)?
   var showCodexNetworkProbeHandler: (() -> Void)?
-  var showAIPlayerHandler: (() -> Void)?
   var showYoumuFeatureHandler: (() -> Void)?
   var openYoumuControlCenterHandler: (() -> Void)?
   var showPijuanPDFFeatureHandler: (() -> Void)?
@@ -381,13 +360,6 @@ final class AppModel: ObservableObject {
     isScrollEngineSuspendedForLongScreenshot
   }
   private var capsCoreEngine: CapsCoreEngine?
-  var inputMethodPluginEngine: InputMethodPluginEngine?
-  var inputMethodStructuralDiagnostics: [InputMethodRuleDiagnostic] = []
-  var inputMethodManualSelection: InputMethodSourceSelectionOperation?
-  var launcherInputMethodSelection: InputMethodSourceSelectionOperation?
-  var launcherInputMethodOverrideActive = false
-  var launcherInputMethodPreviousSelectionID: String?
-  var launcherInputMethodTargetSelectionID: String?
   private var classicTabSwitcher: ClassicTabSwitcher?
   private var authorizationReloadWorkItem: DispatchWorkItem?
   private var authorizationRepairOpenedSettingsService: AuthorizationRepairService?
@@ -568,7 +540,6 @@ final class AppModel: ObservableObject {
     launcherIndexURL = base.appendingPathComponent("launcher-index.json")
     launcherHistoryURL = base.appendingPathComponent("launcher-history.json")
     launcherPinnedURL = base.appendingPathComponent("launcher-pinned.json")
-    inputMethodRulesURL = base.appendingPathComponent("input-method-rules.json")
     var initialConfigurationError: String?
     do {
       _ = try XLGConfigImporter.installBundledConfigurationIfNeeded(
@@ -596,9 +567,6 @@ final class AppModel: ObservableObject {
     menuBarVisibleItemIDs = MenuBarCatalog.loadVisibleItemIDs()
     capsCorePluginEnabled = UserDefaults.standard.bool(
       forKey: Self.capsCorePluginEnabledDefaultsKey)
-    inputMethodPluginEnabled = UserDefaults.standard.bool(
-      forKey: Self.inputMethodPluginEnabledDefaultsKey)
-    loadInputMethodRules()
     Self.ensureNetworkSpeedPrimaryEntryEnabled()
     networkSpeedPluginEnabled = true
     Self.migrateNetworkSpeedDisplayOptionsIfNeeded()
@@ -726,8 +694,6 @@ final class AppModel: ObservableObject {
     reloadHotkeys()
     reloadPhraseExpander()
     reloadCapsCorePlugin(requestPermission: false)
-    seedLauncherInputMethodRuleIfNeeded()
-    reloadInputMethodPlugin()
     reloadScrollEngine()
     reloadClassicTabSwitcher()
     verifyAuthorizationHotReloadAfterRelaunchIfNeeded()
@@ -759,18 +725,11 @@ final class AppModel: ObservableObject {
     hotkeyManager?.suspendAll()
     phraseExpander?.stop()
     capsCoreEngine?.stop(reason: "appShutdown")
-    restoreInputMethodAfterLauncher()
-    inputMethodManualSelection?.cancel()
-    inputMethodManualSelection = nil
-    launcherInputMethodSelection?.cancel()
-    launcherInputMethodSelection = nil
-    inputMethodPluginEngine?.stop()
     scrollEngine?.stop()
     stopSystemMonitor()
     stopKeepAwake(resetStatus: false)
     classicTabSwitcher?.stop()
     stopShortcutTriggerRecording(reloadHotkeys: false)
-    aiPlayerStorage?.stop()
     clipboardHistory.stop()
     globalInputLease.release()
   }
@@ -1532,7 +1491,7 @@ final class AppModel: ObservableObject {
   }
 
   var dockIdentityText: String {
-    dockIconVisible ? "程序坞已显示" : "仅菜单栏"
+    "程序坞已显示"
   }
 
   var scrollEngineText: String {
@@ -1640,17 +1599,14 @@ final class AppModel: ObservableObject {
   }
 
   func setDockIconVisible(_ visible: Bool) {
-    guard visible != dockIconVisible else { return }
-    guard DockPresencePreference.apply(visible: visible) else {
-      statusMessage = visible ? "暂时无法在程序坞显示图标。" : "暂时无法从程序坞隐藏图标。"
+    _ = visible
+    guard DockPresencePreference.apply(visible: true) else {
+      statusMessage = "暂时无法在程序坞显示图标。"
       return
     }
-    DockPresencePreference.save(visible)
-    dockIconVisible = visible
-    statusMessage =
-      visible
-      ? "已在程序坞显示图标；顶部菜单栏仍可使用。"
-      : "已从程序坞隐藏图标；可从顶部菜单栏打开或完全退出。"
+    DockPresencePreference.save(true)
+    dockIconVisible = true
+    statusMessage = "应用会一直显示在程序坞中。"
   }
 
   func isMenuBarCatalogItemVisible(_ itemID: MenuBarCatalogItemID) -> Bool {
@@ -1676,12 +1632,11 @@ final class AppModel: ObservableObject {
   func resetMenuBarCatalogVisibility() {
     let needsCatalogReset = menuBarVisibleItemIDs != MenuBarCatalog.defaultVisibleItemIDs
     let needsSleepItemReset = !sleepStatusItemVisible
-    let needsDockReset = dockIconVisible
     let needsStatusContentReset =
       !networkSpeedShowMemory
       || networkSpeedShowCPU
       || networkSpeedShowGPU
-    guard needsCatalogReset || needsSleepItemReset || needsDockReset || needsStatusContentReset
+    guard needsCatalogReset || needsSleepItemReset || needsStatusContentReset
     else {
       return
     }
@@ -1689,10 +1644,9 @@ final class AppModel: ObservableObject {
     MenuBarCatalog.saveVisibleItemIDs(menuBarVisibleItemIDs)
     sleepStatusItemVisible = true
     UserDefaults.standard.set(true, forKey: Self.sleepStatusItemVisibleDefaultsKey)
-    if needsDockReset, DockPresencePreference.apply(visible: false) {
-      DockPresencePreference.save(false)
-      dockIconVisible = false
-    }
+    _ = DockPresencePreference.apply(visible: true)
+    DockPresencePreference.save(true)
+    dockIconVisible = true
     networkSpeedShowMemory = true
     networkSpeedShowCPU = false
     networkSpeedShowGPU = false
@@ -1706,6 +1660,7 @@ final class AppModel: ObservableObject {
   }
 
   func presentMenuBarCustomization() {
+    showSettings(section: SettingsNavigationPolicy.general)
     isMenuBarCustomizationPresented = true
     presentWindowHandler?()
   }
@@ -2196,19 +2151,6 @@ final class AppModel: ObservableObject {
     self.launcherOpenToken = nil
   }
 
-  func showAIPlayer() {
-    aiPlayer.start()
-    showAIPlayerHandler?()
-  }
-
-  func undoAIPlayerTrash() {
-    aiPlayerStorage?.undoTrash()
-  }
-
-  func stopAIPlayerIfLoaded() {
-    aiPlayerStorage?.stop()
-  }
-
   func showYoumuFeature() {
     guard hasGlobalInputOwnership else {
       statusMessage = globalInputOwnershipBlockedMessage
@@ -2257,14 +2199,6 @@ final class AppModel: ObservableObject {
     openPijuanPDFDocumentHandler(url.standardizedFileURL)
   }
 
-  func openAudioFilesInAIPlayer(_ urls: [URL]) {
-    let files = urls.map(\.standardizedFileURL)
-    guard !files.isEmpty else { return }
-    aiPlayer.start()
-    aiPlayer.addFiles(files, playFirst: true)
-    showAIPlayerHandler?()
-  }
-
   @MainActor
   func refreshFileAssociationStatus() {
     guard fileAssociationChangesAllowed else {
@@ -2294,6 +2228,7 @@ final class AppModel: ObservableObject {
 
   @MainActor
   func setAsDefaultApplication(for kind: AssociatedFileKind) {
+    guard kind == .pdf else { return }
     guard fileAssociationBusyKind == nil else { return }
     guard fileAssociationChangesAllowed else {
       refreshFileAssociationStatus()
@@ -2312,7 +2247,7 @@ final class AppModel: ObservableObject {
         case .pdf:
           manager.pdfRoute = .pijuanReading
         case .audio:
-          manager.audioRoute = .tinglan
+          manager.audioRoute = .keepSystemDefault
         }
         let result = try await manager.setAsDefault(for: kind)
         self.fileAssociationFeedbackText =
@@ -2449,7 +2384,7 @@ final class AppModel: ObservableObject {
     let collection = LauncherPinnedCollection.load(from: launcherPinnedURL)
     var seenIDs = Set<String>()
     launcherPinnedRecords = collection.items.filter { record in
-      !record.id.isEmpty && seenIDs.insert(record.id).inserted
+      !record.isAIPlayer && !record.id.isEmpty && seenIDs.insert(record.id).inserted
     }
   }
 
@@ -2463,36 +2398,6 @@ final class AppModel: ObservableObject {
   func isLauncherAppPinned(_ app: LauncherApp) -> Bool {
     let id = LauncherPinnedRecord.stableAppID(for: app)
     return launcherPinnedRecords.contains(where: { $0.id == id })
-  }
-
-  var isAIPlayerPinnedInLauncher: Bool {
-    launcherPinnedRecords.contains(where: { $0.id == LauncherPinnedRecord.aiPlayerBuiltInID })
-  }
-
-  @discardableResult
-  func pinAIPlayerInLauncher() -> Bool {
-    var collection = launcherPinnedCollection
-    switch collection.insert(.aiPlayer) {
-    case .alreadyPresent:
-      announceLauncherPinnedStatus("听澜播放器已在快捷栏。")
-      return true
-    case .maximumReached:
-      announceLauncherPinnedStatus("最多固定 8 项，请先取消一个。")
-      return false
-    case .inserted(let position):
-      launcherPinnedRecords = collection.items
-      saveLauncherPinnedItems()
-      announceLauncherPinnedStatus("已添加听澜播放器，第 \(position) 项。")
-      return true
-    }
-  }
-
-  func setAIPlayerPinnedInLauncher(_ pinned: Bool) {
-    if pinned {
-      _ = pinAIPlayerInLauncher()
-    } else {
-      unpinLauncherItem(id: LauncherPinnedRecord.aiPlayerBuiltInID)
-    }
   }
 
   @discardableResult
@@ -2621,26 +2526,41 @@ final class AppModel: ObservableObject {
     saveLauncherUsageHistory()
   }
 
+  func existingSoftwareShortcut(for target: String) -> ShortcutItem? {
+    let normalized = normalizedOpenAppTarget(target) ?? target
+    guard let index = launcherShortcutItemIndex(forNormalizedTarget: normalized) else { return nil }
+    return items[index]
+  }
+
   func openLauncherShortcutManager(for app: LauncherApp) {
     let target = launcherTarget(for: app)
     let normalizedTarget = normalizedOpenAppTarget(target) ?? target
-    let requestedSearchText: String
     if let index = launcherShortcutItemIndex(forNormalizedTarget: normalizedTarget) {
-      selectedID = items[index].id
-      requestedSearchText = items[index].name
+      presentSoftwareShortcutEditor(item: items[index])
     } else {
-      selectedID = nil
-      requestedSearchText = app.name
+      presentSoftwareShortcutEditor(
+        choice: AppChoice(
+          id: target, name: app.name, target: target, source: "应用程序"))
     }
+  }
+
+  func presentSoftwareShortcutEditor(item: ShortcutItem? = nil, choice: AppChoice? = nil) {
+    cancelRecordingIfNeeded()
+    let draft =
+      item
+      ?? ShortcutItem(
+        id: UUID().uuidString,
+        name: choice.map { "打开 \($0.name)" } ?? "",
+        scope: "App", key: "", modifiers: [], action: .openApp,
+        target: choice?.target ?? "", enabled: true,
+        note: "按一下打开或置前，再按一下隐藏。")
+    if let item { selectedID = item.id }
     selectedModuleName = "功能快捷键"
     shortcutGuideRequestedCategory = "软件类"
-    shortcutGuideRequestedSearchText = requestedSearchText
+    shortcutGuideRequestedSearchText = ""
     shortcutGuideFocusRequest &+= 1
     presentWindowHandler?()
-    statusMessage =
-      selectedID == nil
-      ? "已打开功能快捷键；点“新增快捷键”为 \(app.name) 添加规则。"
-      : "已在功能快捷键中找到 \(app.name) 的规则。"
+    softwareShortcutRequest = SoftwareShortcutRequest(itemID: item?.id, draft: draft)
   }
 
   func chooseAppForPermanentUninstall() {
@@ -5318,13 +5238,10 @@ final class AppModel: ObservableObject {
     setDiagnosticsEnabled(UserDefaults.standard.bool(forKey: "diagnosticsEnabled"))
     load()
     loadPhrases()
-    loadInputMethodRules()
     loadLauncherPinnedItems()
     loadKeepAwakeSettings()
     capsCorePluginEnabled = UserDefaults.standard.bool(
       forKey: Self.capsCorePluginEnabledDefaultsKey)
-    inputMethodPluginEnabled = UserDefaults.standard.bool(
-      forKey: Self.inputMethodPluginEnabledDefaultsKey)
     sleepStatusItemVisible = Self.boolDefaultingTrue(
       forKey: Self.sleepStatusItemVisibleDefaultsKey)
     menuBarVisibleItemIDs = MenuBarCatalog.loadVisibleItemIDs()
@@ -5339,18 +5256,14 @@ final class AppModel: ObservableObject {
     launcherSearchEngine = Self.loadLauncherSearchEngine()
     launcherPluginEnabled = Self.boolDefaultingTrue(
       forKey: Self.launcherPluginEnabledDefaultsKey)
-    let restoredDockVisibility = DockPresencePreference.isVisible()
-    if restoredDockVisibility != dockIconVisible,
-      DockPresencePreference.apply(visible: restoredDockVisibility)
-    {
-      dockIconVisible = restoredDockVisibility
-    }
+    _ = DockPresencePreference.apply(visible: true)
+    DockPresencePreference.save(true)
+    dockIconVisible = true
     scrollSettings = loadScrollSettings()
     saveScrollSettings()
     reloadHotkeys()
     reloadPhraseExpander()
     reloadScrollEngine()
-    reloadInputMethodPlugin()
     notifySleepStatusItemChanged()
     NotificationCenter.default.post(name: .menuBarConfigurationChanged, object: nil)
     NotificationCenter.default.post(name: .networkSpeedPluginVisibilityChanged, object: nil)
@@ -7196,7 +7109,6 @@ final class AppModel: ObservableObject {
     reloadHotkeys()
     reloadPhraseExpander()
     reloadCapsCorePlugin(requestPermission: false)
-    reloadInputMethodPlugin()
     reloadScrollEngine()
     reloadClassicTabSwitcher()
   }
@@ -10097,6 +10009,18 @@ final class AppModel: ObservableObject {
       statusMessage = "没有找到可控制的窗口。"
       return
     }
+    let appName = app.localizedName ?? app.bundleIdentifier ?? "当前 App"
+    let restoreKey = maximizeRestoreKey(for: window, app: app)
+    AppDiagnostics.log(
+      "window_preset_start",
+      [
+        "app": appName,
+        "bundle": app.bundleIdentifier ?? "",
+        "preset": preset.rawValue,
+        "title": axWindowTitle(window),
+        "window": restoreKey,
+      ])
+    prepareWindowForControl(window)
     if preset == .minimize {
       let result = AXUIElementSetAttributeValue(
         window, kAXMinimizedAttribute as CFString, kCFBooleanTrue)
@@ -10107,15 +10031,22 @@ final class AppModel: ObservableObject {
       toggleWindowMaximize(window, app: app)
       return
     }
-    guard let frame = targetFrame(for: preset, window: window) else {
+    guard let frame = targetFrame(
+      for: preset,
+      window: window,
+      restoreFrame: maximizeRestoreFrame(for: restoreKey)
+    ) else {
       statusMessage = "无法计算窗口位置。"
       return
     }
-    let restoreKey = maximizeRestoreKey(for: window, app: app)
     pendingMaximizeRestoreKeys.remove(restoreKey)
-    removeMaximizeRestoreFrame(for: restoreKey)
     setWindow(window, frame: frame, app: app) { [weak self] succeeded in
-      if !succeeded { self?.statusMessage = "窗口位置调整失败。" }
+      guard let self else { return }
+      if succeeded { self.removeMaximizeRestoreFrame(for: restoreKey) }
+      self.statusMessage = succeeded ? "窗口已调整。" : "窗口位置调整失败。"
+      AppDiagnostics.log(
+        "window_preset_finished",
+        ["app": appName, "preset": preset.rawValue, "success": "\(succeeded)"])
     }
   }
 
@@ -10148,33 +10079,22 @@ final class AppModel: ObservableObject {
     }
 
     if current.isVisuallyMaximized(in: visible) {
-      if let previous = maximizeRestoreFrame(for: restoreKey) {
-        pendingMaximizeRestoreKeys.remove(restoreKey)
-        let restored = clampedRestoreFrame(previous)
-        guard !restored.isVisuallyMaximized(in: visible) || restored != visible else {
-          removeMaximizeRestoreFrame(for: restoreKey)
-          statusMessage = "窗口已是窗口化全屏。"
-          return
-        }
-        setWindow(window, frame: restored, app: app) { [weak self] succeeded in
-          guard let self else { return }
-          if succeeded {
-            self.removeMaximizeRestoreFrame(for: restoreKey)
-            self.statusMessage = "已恢复窗口。"
-          } else {
-            self.statusMessage = "窗口恢复失败，已保留原恢复位置。"
-          }
-        }
+      let restored = clampedRestoreFrame(
+        maximizeRestoreFrame(for: restoreKey) ?? defaultRestoreFrame(in: visible))
+      guard !restored.isVisuallyMaximized(in: visible) || restored != visible else {
+        statusMessage = "窗口已是窗口化全屏。"
         return
       }
-      if current.overfillsWorkArea(in: visible) {
-        setWindow(window, frame: visible, app: app, visualMaximizeFrame: visible) {
-          [weak self] succeeded in
-          self?.statusMessage = succeeded ? "已调整为窗口化全屏。" : "窗口调整失败。"
+      pendingMaximizeRestoreKeys.remove(restoreKey)
+      setWindow(window, frame: restored, app: app) { [weak self] succeeded in
+        guard let self else { return }
+        if succeeded {
+          self.removeMaximizeRestoreFrame(for: restoreKey)
+          self.statusMessage = "已恢复窗口。"
+        } else {
+          self.statusMessage = "窗口恢复失败，已保留原恢复位置。"
         }
-        return
       }
-      statusMessage = "窗口已是窗口化全屏。"
       return
     }
 
@@ -10195,7 +10115,11 @@ final class AppModel: ObservableObject {
     }
   }
 
-  private func targetFrame(for preset: WindowPreset, window: AXUIElement) -> CGRect? {
+  private func targetFrame(
+    for preset: WindowPreset,
+    window: AXUIElement,
+    restoreFrame: CGRect? = nil
+  ) -> CGRect? {
     let current = windowFrame(window) ?? .zero
     let screen = screen(containing: current) ?? NSScreen.main
     guard let screen, let visible = visibleAXFrame(for: screen) else { return nil }
@@ -10221,10 +10145,10 @@ final class AppModel: ObservableObject {
     case .maximize:
       return visible
     case .center:
-      let width = min(current.width, visible.width)
-      let height = min(current.height, visible.height)
-      return CGRect(
-        x: visible.midX - width / 2, y: visible.midY - height / 2, width: width, height: height)
+      return WindowControlGeometry.centeredFrame(
+        current: current,
+        restoreFrame: restoreFrame,
+        visible: visible)
     case .minimize:
       return nil
     }
@@ -10289,6 +10213,36 @@ final class AppModel: ObservableObject {
       let visible = visibleAXFrame(for: restoreScreen)
     else { return frame }
     return AXWindowGeometry.clamped(frame, to: visible)
+  }
+
+  private func defaultRestoreFrame(in visible: CGRect) -> CGRect {
+    WindowControlGeometry.defaultRestoreFrame(in: visible)
+  }
+
+  private func prepareWindowForControl(_ window: AXUIElement) {
+    let wasMinimized = isWindowMinimized(window)
+    let unminimize = AXUIElementSetAttributeValue(
+      window,
+      kAXMinimizedAttribute as CFString,
+      kCFBooleanFalse)
+    let main = AXUIElementSetAttributeValue(
+      window,
+      kAXMainAttribute as CFString,
+      kCFBooleanTrue)
+    let focused = AXUIElementSetAttributeValue(
+      window,
+      kAXFocusedAttribute as CFString,
+      kCFBooleanTrue)
+    let raised = AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+    AppDiagnostics.log(
+      "window_prepare",
+      [
+        "wasMinimized": "\(wasMinimized)",
+        "unminimize": "\(unminimize.rawValue)",
+        "main": "\(main.rawValue)",
+        "focused": "\(focused.rawValue)",
+        "raise": "\(raised.rawValue)",
+      ])
   }
 
   private func setWindow(
@@ -10437,8 +10391,11 @@ final class AppModel: ObservableObject {
     else {
       return
     }
+    // Shrink before moving so the old large size cannot clamp the new origin to a screen edge.
+    AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, windowSize)
     AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, position)
     AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, windowSize)
+    AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, position)
   }
 
   private func systemEventsWindowIndex(for window: AXUIElement, pid: pid_t) -> Int? {
@@ -10469,14 +10426,18 @@ final class AppModel: ObservableObject {
   private func controllableWindow(for appElement: AXUIElement) -> AXUIElement? {
     let windows = axWindows(for: appElement)
     let focused = focusedWindow(for: appElement)
-    if let focused, isControllableWindow(focused) {
-      return focused
+    let main = mainWindow(for: appElement)
+    var candidates: [AXUIElement] = []
+    for candidate in [focused, main].compactMap({ $0 }) + windows {
+      guard !candidates.contains(where: { CFEqual($0, candidate) }) else { continue }
+      candidates.append(candidate)
     }
-    return
-      windows
-      .filter(isControllableWindow)
-      .max { windowScore($0) < windowScore($1) }
+    if let preferred = candidates.first(where: isControllableWindow) {
+      return preferred
+    }
+    return candidates.first(where: { !isWindowMinimized($0) && windowFrame($0) != nil })
       ?? focused
+      ?? main
       ?? windows.first
   }
 
@@ -10563,11 +10524,6 @@ final class AppModel: ObservableObject {
     return CFBooleanGetValue(boolValue)
   }
 
-  private func windowScore(_ window: AXUIElement) -> CGFloat {
-    guard let frame = windowFrame(window) else { return 0 }
-    return frame.width * frame.height
-  }
-
   private func maximizeRestoreKey(for window: AXUIElement, app: NSRunningApplication) -> String {
     let appKey = app.bundleIdentifier ?? "pid:\(app.processIdentifier)"
     if let windowNumber = intAttribute("AXWindowNumber", from: window) {
@@ -10645,14 +10601,14 @@ final class AppModel: ObservableObject {
 }
 
 extension CGRect {
-  fileprivate func isNearlyEqual(to other: CGRect, tolerance: CGFloat = 6) -> Bool {
+  func isNearlyEqual(to other: CGRect, tolerance: CGFloat = 6) -> Bool {
     abs(origin.x - other.origin.x) <= tolerance
       && abs(origin.y - other.origin.y) <= tolerance
       && abs(size.width - other.size.width) <= tolerance
       && abs(size.height - other.size.height) <= tolerance
   }
 
-  fileprivate func isVisuallyMaximized(in visible: CGRect) -> Bool {
+  func isVisuallyMaximized(in visible: CGRect) -> Bool {
     let widthOK = width >= visible.width - 24
     let heightOK = height >= visible.height - 36
     let xOK = abs(minX - visible.minX) <= 24
@@ -10661,7 +10617,7 @@ extension CGRect {
     return widthOK && heightOK && xOK && (bottomOK || topOK)
   }
 
-  fileprivate func overfillsWorkArea(in visible: CGRect) -> Bool {
+  func overfillsWorkArea(in visible: CGRect) -> Bool {
     height > visible.height + 24 || maxY > visible.maxY + 24
   }
 }

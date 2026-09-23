@@ -13,14 +13,13 @@ enum ShortcutWindowTarget: String, CaseIterable, Hashable {
   case clipboardHistory
   case networkProbe
   case sleepManagement
-  case aiPlayer
 
   /// Logical routes that share one physical NSWindow must also share restoration ownership.
   var presentationSlot: ShortcutWindowTarget {
     switch self {
     case .main, .shortcutGuide, .settings:
       return .main
-    case .launcher, .processViewer, .clipboardHistory, .networkProbe, .sleepManagement, .aiPlayer:
+    case .launcher, .processViewer, .clipboardHistory, .networkProbe, .sleepManagement:
       return self
     }
   }

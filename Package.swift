@@ -29,6 +29,18 @@ let package = Package(
         .product(name: "Sparkle", package: "Sparkle"),
       ],
       path: "Sources",
+      exclude: [
+        "AIPlayerAVFoundationAudioEngine.swift",
+        "AIPlayerController.swift",
+        "AIPlayerIPC.swift",
+        "AIPlayerMPV.swift",
+        "AIPlayerModels.swift",
+        "AIPlayerPlaybackEngine.swift",
+        "AIPlayerStore.swift",
+        "AIPlayerView.swift",
+        "InputMethodPlugin.swift",
+        "InputMethodPluginLogic.swift",
+      ],
       linkerSettings: [
         .linkedFramework("AppKit"),
         .linkedFramework("ApplicationServices"),

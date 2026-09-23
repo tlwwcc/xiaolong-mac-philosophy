@@ -63,7 +63,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   private var clipboardHistoryReturnApplication: NSRunningApplication?
   private var codexNetworkProbeWindow: NSWindow?
   private var sleepManagementWindow: NSWindow?
-  private var aiPlayerWindow: NSWindow?
   private var integratedFeatureComposition: AnyObject?
   private var classicTabSwitcherWindow: NSPanel?
   private var sleepStatusItem: NSStatusItem?
@@ -121,7 +120,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   private let clipboardHistoryWindowSize = NSSize(width: 500, height: 680)
   private let codexNetworkProbeWindowSize = NSSize(width: 760, height: 520)
   private let sleepManagementWindowSize = NSSize(width: 560, height: 480)
-  private let aiPlayerWindowSize = NSSize(width: 980, height: 620)
   private let classicTabSwitcherWindowSize = NSSize(width: 780, height: 430)
 
   init(model: AppModel) {
@@ -147,9 +145,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     self.model.showSleepPanelHandler = { [weak self] in
       self?.presentShortcutWindow(.sleepManagement)
     }
-    self.model.showAIPlayerHandler = { [weak self] in
-      self?.presentShortcutWindow(.aiPlayer)
-    }
     self.model.classicTabSwitcherHUDHandler = { [weak self] state in
       self?.syncClassicTabSwitcherHUD(state)
     }
@@ -172,6 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   func bootstrapIfNeeded() {
     guard !didBootstrap else { return }
     didBootstrap = true
+    UsageStatistics.shared.start()
     _ = DockPresencePreference.apply(visible: DockPresencePreference.isVisible())
     NSApp.applicationIconImage = NSImage(named: "AppIcon")
     buildMainMenu()
@@ -228,7 +224,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     startPermissionPolling(reason: "becameActive")
     if launcherWindow?.isVisible == true {
-      model.activateInputMethodForLauncher()
     }
   }
 
@@ -245,7 +240,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     guard !urls.isEmpty,
       urls.allSatisfy({ FileAssociationManager.fileKind(for: $0) != nil })
     else {
-      model.statusMessage = "这个文件不是披卷或听澜当前支持的格式，未更改任何内容。"
+      model.statusMessage = "当前仅由披卷打开 PDF。请用相应软件打开其他文件，未更改任何内容。"
       sender.reply(toOpenOrPrint: .failure)
       return
     }
@@ -291,7 +286,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
           kind: kind,
           destination: kind == .pdf
             ? .pijuan
-            : (kind == .audio ? .tinglanAudio : .unsupported))
+            : (kind == .audio ? .keepSystemDefault : .unsupported))
       }
 
     var pdfURLs: [URL] = []
@@ -311,7 +306,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       model.openPijuanPDFDocument(firstPDF)
     }
     if !audioURLs.isEmpty {
-      model.openAudioFilesInAIPlayer(audioURLs)
+      model.statusMessage = "听澜已移出 Caps。请在访达用播放器打开音频；原音频打开方式可在设置中恢复。"
+      model.showSettings(section: SettingsNavigationPolicy.general)
+      presentShortcutWindow(.settings)
     }
     if !unsupportedNames.isEmpty {
       model.statusMessage = "暂不支持打开：\(unsupportedNames.joined(separator: "、"))"
@@ -322,7 +319,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     shortcutWindowToggleState.invalidate()
     pendingRestorationTickets.removeAll()
     if launcherWindow != nil {
-      model.restoreInputMethodAfterLauncher()
     }
     NotificationCenter.default.post(
       name: .clipboardHistoryWindowWillHide,
@@ -348,7 +344,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   func applicationDidResignActive(_ notification: Notification) {
     model.cancelRecordingIfNeeded()
     if launcherWindow?.isVisible == true {
-      model.restoreInputMethodAfterLauncher()
     }
   }
 
@@ -403,6 +398,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   private func performTerminationCleanup() {
+    UsageStatistics.shared.stop()
     guard !didPerformTerminationCleanup else { return }
     didPerformTerminationCleanup = true
     model.shutdown()
@@ -526,25 +522,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     panel.level = .normal
     panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     launcherWindow = panel
-  }
-
-  private func buildAIPlayerWindow() {
-    let root = AIPlayerView(controller: model.aiPlayer)
-    let hosting = NSHostingView(rootView: root)
-    let playerWindow = NSWindow(
-      contentRect: NSRect(origin: .zero, size: aiPlayerWindowSize),
-      styleMask: [.titled, .closable, .miniaturizable, .resizable],
-      backing: .buffered,
-      defer: false
-    )
-    playerWindow.title = "听澜播放器"
-    playerWindow.minSize = NSSize(width: 720, height: 480)
-    playerWindow.isReleasedWhenClosed = false
-    playerWindow.isRestorable = false
-    playerWindow.delegate = self
-    playerWindow.contentView = hosting
-    playerWindow.center()
-    aiPlayerWindow = playerWindow
   }
 
   private func buildProcessViewerWindow() {
@@ -1099,8 +1076,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       publishNetworkStatusMenuSnapshot()
     case "host.phrases":
       showPhraseWindowAction()
-    case "host.inputMethod":
-      showInputMethodManagementAction()
     case "host.networkProbe":
       showCodexNetworkProbeStatusAction()
     case "host.keepAwake":
@@ -1113,8 +1088,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       showProcessViewerStatusAction()
     case "host.pijuanPDF":
       model.showPijuanPDFFeature()
-    case "host.aiPlayer":
-      model.showAIPlayer()
     case "host.clipboardHistory":
       model.showClipboardHistory()
     case "host.pluginCenter":
@@ -1266,14 +1239,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     states.append(
       NetworkStatusMenuItemState(
-        id: "host.inputMethod",
-        title: "输入法管理",
-        isEnabled: true,
-        isHidden: !isVisible("host.inputMethod"),
-        toolTip: nil))
-
-    states.append(
-      NetworkStatusMenuItemState(
         id: "host.networkProbe",
         title: statusMenuTitle("测试网速", shortcutAction: .showCodexNetworkProbe),
         isEnabled: true,
@@ -1320,14 +1285,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         title: "披卷",
         isEnabled: true,
         isHidden: !isVisible("host.pijuanPDF"),
-        toolTip: nil))
-
-    states.append(
-      NetworkStatusMenuItemState(
-        id: "host.aiPlayer",
-        title: "听澜播放器",
-        isEnabled: true,
-        isHidden: !isVisible("host.aiPlayer"),
         toolTip: nil))
 
     states.append(
@@ -1687,7 +1644,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
   }
 
-
   private func configureSparkleUpdaterIfRequired() {
     guard model.usesSparkleUpdater, runtimeIdentity.allowsOnlineUpdates else { return }
     let controller = SparkleUpdateController { [weak model] state in
@@ -1745,23 +1701,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
   }
 
-  private func showAIPlayer() {
-    if aiPlayerWindow == nil {
-      buildAIPlayerWindow()
-    }
-    hideLauncherForDestinationSwitch()
-    hideProcessViewerWindow()
-    hideCodexNetworkProbeWindow()
-    hideClipboardHistoryWindow()
-    sleepManagementWindow?.orderOut(nil)
-    window?.orderOut(nil)
-    model.aiPlayer.start()
-    NSApp.unhide(nil)
-    aiPlayerWindow?.orderFrontRegardless()
-    aiPlayerWindow?.makeKeyAndOrderFront(nil)
-    NSApp.activate(ignoringOtherApps: true)
-  }
-
   private func presentMainWindow() {
     presentShortcutWindow(.main)
   }
@@ -1772,7 +1711,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     hideCodexNetworkProbeWindow()
     hideClipboardHistoryWindow()
     sleepManagementWindow?.orderOut(nil)
-    aiPlayerWindow?.orderOut(nil)
     showWindow(ticket: ticket)
   }
 
@@ -1849,7 +1787,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   private func completeShortcutWindowRestorationLifecycle(_ target: ShortcutWindowTarget) {
     switch target {
     case .launcher:
-      model.activateInputMethodForLauncher()
       model.markLauncherInteractive()
       model.markLauncherFirstResultsIfAvailable(source: "window_restore")
     case .processViewer:
@@ -1858,7 +1795,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         object: true)
     case .clipboardHistory:
       model.clipboardHistory.requestSearchFocus()
-    case .main, .shortcutGuide, .settings, .networkProbe, .sleepManagement, .aiPlayer:
+    case .main, .shortcutGuide, .settings, .networkProbe, .sleepManagement:
       break
     }
   }
@@ -1881,9 +1818,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     if let sleepManagementWindow, sleepManagementWindow !== targetWindow {
       sleepManagementWindow.orderOut(nil)
-    }
-    if let aiPlayerWindow, aiPlayerWindow !== targetWindow {
-      aiPlayerWindow.orderOut(nil)
     }
   }
 
@@ -1944,8 +1878,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       hideCodexNetworkProbeWindow()
     case .sleepManagement:
       sleepManagementWindow?.orderOut(nil)
-    case .aiPlayer:
-      aiPlayerWindow?.orderOut(nil)
     }
   }
 
@@ -1976,7 +1908,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     case .settings:
       return model.isSettingsPresented
     case .main, .launcher, .processViewer, .clipboardHistory, .networkProbe,
-      .sleepManagement, .aiPlayer:
+      .sleepManagement:
       return true
     }
   }
@@ -1988,7 +1920,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     case .shortcutGuide:
       model.selectedModuleName = "功能快捷键"
     case .main, .launcher, .processViewer, .clipboardHistory, .networkProbe,
-      .sleepManagement, .aiPlayer:
+      .sleepManagement:
       break
     }
   }
@@ -2007,8 +1939,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       return codexNetworkProbeWindow
     case .sleepManagement:
       return sleepManagementWindow
-    case .aiPlayer:
-      return aiPlayerWindow
     }
   }
 
@@ -2033,8 +1963,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       showCodexNetworkProbe()
     case .sleepManagement:
       showSleepManagementWindow()
-    case .aiPlayer:
-      showAIPlayer()
     }
   }
 
@@ -2054,9 +1982,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       hideCodexNetworkProbeWindow()
     case .sleepManagement:
       sleepManagementWindow?.orderOut(nil)
-    case .aiPlayer:
-      // A shortcut hides the player UI; playback is stopped only by an explicit close/stop action.
-      aiPlayerWindow?.orderOut(nil)
     }
   }
 
@@ -2068,8 +1993,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     hideCodexNetworkProbeWindow()
     hideClipboardHistoryWindow()
     sleepManagementWindow?.orderOut(nil)
-    aiPlayerWindow?.orderOut(nil)
-    model.activateInputMethodForLauncher()
     model.prepareLauncherPresentation()
     suppressMainWindowForLauncherUntil = ProcessInfo.processInfo.systemUptime + 1.4
     window?.orderOut(nil)
@@ -2097,7 +2020,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     hideCodexNetworkProbeWindow()
     hideClipboardHistoryWindow()
     sleepManagementWindow?.orderOut(nil)
-    aiPlayerWindow?.orderOut(nil)
     window?.orderOut(nil)
     processViewerWindow?.center()
     processViewerWindow?.makeKeyAndOrderFront(nil)
@@ -2115,7 +2037,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     hideProcessViewerWindow()
     hideCodexNetworkProbeWindow()
     sleepManagementWindow?.orderOut(nil)
-    aiPlayerWindow?.orderOut(nil)
     window?.orderOut(nil)
     NSApp.unhide(nil)
     model.clipboardHistory.requestSearchFocus()
@@ -2167,7 +2088,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     hideProcessViewerWindow()
     hideClipboardHistoryWindow()
     sleepManagementWindow?.orderOut(nil)
-    aiPlayerWindow?.orderOut(nil)
     window?.orderOut(nil)
     codexNetworkProbeWindow?.center()
     codexNetworkProbeWindow?.makeKeyAndOrderFront(nil)
@@ -2184,7 +2104,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     hideProcessViewerWindow()
     hideCodexNetworkProbeWindow()
     hideClipboardHistoryWindow()
-    aiPlayerWindow?.orderOut(nil)
     window?.orderOut(nil)
     sleepManagementWindow?.center()
     sleepManagementWindow?.makeKeyAndOrderFront(nil)
@@ -2201,7 +2120,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       suppressMainWindowForLauncherUntil = 0
       return
     }
-    model.restoreInputMethodAfterLauncher()
     launcherWindow.orderOut(nil)
     launcherWindow.alphaValue = 1
     suppressMainWindowForLauncherUntil = 0
@@ -2236,7 +2154,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     shortcutWindowToggleState.invalidate()
     settlePendingShortcutWindowRestorations()
     let hideGeneration = shortcutWindowToggleState.generation
-    model.restoreInputMethodAfterLauncher()
     suppressMainWindowForLauncherUntil = ProcessInfo.processInfo.systemUptime + 1.4
     launcherWindow.orderOut(nil)
     launcherWindow.alphaValue = 1
@@ -2373,9 +2290,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       hideClipboardHistoryWindow()
       return false
     }
-    if sender === aiPlayerWindow {
-      model.stopAIPlayerIfLoaded()
-    }
     sender.orderOut(nil)
     return false
   }
@@ -2386,9 +2300,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     if let minimizedWindow {
       removePendingShortcutWindowRestoration(for: minimizedWindow)
     }
-    if minimizedWindow === launcherWindow {
-      model.restoreInputMethodAfterLauncher()
-    } else if minimizedWindow === processViewerWindow {
+    if minimizedWindow === processViewerWindow {
       NotificationCenter.default.post(
         name: .processViewerWindowVisibilityChanged,
         object: false)
@@ -2497,13 +2409,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   @objc private func showPluginCenterAction() {
     model.selectedModuleName = "插件中心"
     presentMainWindow()
-  }
-
-  @objc private func showInputMethodManagementAction() {
-    model.selectPlugin(id: AppModel.inputMethodPluginID)
-    model.selectedModuleName = "插件中心"
-    presentMainWindow()
-    model.statusMessage = "已打开输入法管理。"
   }
 
   @objc private func showSleepManagementAction() {

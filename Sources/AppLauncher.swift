@@ -515,6 +515,52 @@ enum AXWindowGeometry {
   }
 }
 
+/// Pure window-control geometry used by the live AX path and its regression fixture.
+/// AX and AppKit use different vertical origins; callers pass frames that are already in the
+/// same AX coordinate space.
+enum WindowControlGeometry {
+  static func defaultRestoreFrame(in visible: CGRect) -> CGRect {
+    let width = min(visible.width, max(640, visible.width * 0.72))
+    let height = min(visible.height, max(480, visible.height * 0.72))
+    return CGRect(
+      x: visible.midX - width / 2,
+      y: visible.midY - height / 2,
+      width: width,
+      height: height)
+  }
+
+  static func centeredFrame(
+    current: CGRect,
+    restoreFrame: CGRect?,
+    visible: CGRect
+  ) -> CGRect {
+    let source =
+      isVisuallyMaximized(current, in: visible)
+      ? (restoreFrame ?? defaultRestoreFrame(in: visible))
+      : current
+    let fallbackWidth = min(visible.width, max(640, visible.width * 0.72))
+    let fallbackHeight = min(visible.height, max(480, visible.height * 0.72))
+    let width = source.width > 0 ? min(source.width, visible.width) : fallbackWidth
+    let height = source.height > 0 ? min(source.height, visible.height) : fallbackHeight
+    return AXWindowGeometry.clamped(
+      CGRect(
+        x: visible.midX - width / 2,
+        y: visible.midY - height / 2,
+        width: width,
+        height: height),
+      to: visible)
+  }
+
+  private static func isVisuallyMaximized(_ frame: CGRect, in visible: CGRect) -> Bool {
+    let widthOK = frame.width >= visible.width - 24
+    let heightOK = frame.height >= visible.height - 36
+    let xOK = abs(frame.minX - visible.minX) <= 24
+    let bottomOK = abs(frame.minY - visible.minY) <= 36
+    let topOK = abs(frame.maxY - visible.maxY) <= 36
+    return widthOK && heightOK && xOK && (bottomOK || topOK)
+  }
+}
+
 struct LauncherApp: Codable, Identifiable, Hashable {
   let id: String
   let name: String
@@ -1098,7 +1144,7 @@ struct ResolvedLauncherPinnedItem: Identifiable, Hashable {
   var id: String { record.id }
   var name: String { app?.name ?? record.displayName }
   var isAIPlayer: Bool { record.isAIPlayer }
-  var isAvailable: Bool { app != nil || isAIPlayer }
+  var isAvailable: Bool { app != nil }
   var kindLabel: String { isAIPlayer ? "内置功能" : "App" }
   var systemImageName: String? { isAIPlayer ? "play.square.stack.fill" : nil }
 }

@@ -333,6 +333,10 @@ struct RootView: View {
     }
     .frame(minWidth: 820, minHeight: 600)
     .background(AppBackdrop())
+    .sheet(item: $model.softwareShortcutRequest) { request in
+      SoftwareShortcutEditorSheet(request: request)
+        .environmentObject(model)
+    }
     .sheet(
       isPresented: Binding(
         get: { model.isCapturingShortcutAction },
@@ -1411,11 +1415,9 @@ private let moduleOrder = [
 
 private let applicationYoumuID = "youmu"
 private let applicationPijuanPDFID = "pijuan-pdf"
-private let applicationAIPlayerID = "ai-player"
 private let applicationFeatureShortcutsID = "feature-shortcuts"
 private let applicationPhrasesID = AppModel.phrasesPluginID
 private let applicationClipboardHistoryID = "clipboard-history"
-private let applicationPermanentUninstallID = "permanent-uninstall"
 private let applicationCenterItemCount = 16
 
 private func isApplicationCenterModule(_ module: String) -> Bool {
@@ -2175,7 +2177,8 @@ struct AppLauncherCard: View {
       Button {
         model.openLauncherShortcutManager(for: app)
       } label: {
-        Label("前往功能快捷键", systemImage: "keyboard")
+        Label(
+          model.launcherShortcut(for: app) == nil ? "设置快捷键…" : "修改快捷键…", systemImage: "keyboard")
       }
 
       Divider()
@@ -2749,10 +2752,7 @@ struct LauncherOverlayView: View {
               }
             },
             onOpen: { item in
-              if item.isAIPlayer {
-                model.showAIPlayer()
-                onClose()
-              } else if let app = item.app {
+              if let app = item.app {
                 onOpen(app)
               } else {
                 model.reportUnavailableLauncherPinnedItem(item)
@@ -3092,6 +3092,15 @@ private struct LauncherPinnedTile: View {
 
   @ViewBuilder
   private var pinnedMenuContent: some View {
+    if let app = item.app {
+      Button {
+        model.openLauncherShortcutManager(for: app)
+      } label: {
+        Label(
+          model.launcherShortcut(for: app) == nil ? "设置快捷键…" : "修改快捷键…", systemImage: "keyboard")
+      }
+      Divider()
+    }
     Button {
       model.unpinLauncherItem(id: item.id)
     } label: {
@@ -3262,7 +3271,8 @@ struct LauncherResultRow: View {
       Button {
         model.openLauncherShortcutManager(for: app)
       } label: {
-        Label("前往功能快捷键", systemImage: "keyboard")
+        Label(
+          model.launcherShortcut(for: app) == nil ? "设置快捷键…" : "修改快捷键…", systemImage: "keyboard")
       }
 
       Divider()
@@ -3382,7 +3392,8 @@ private struct LauncherResultGridItem: View {
       Button {
         model.openLauncherShortcutManager(for: app)
       } label: {
-        Label("前往功能快捷键", systemImage: "keyboard")
+        Label(
+          model.launcherShortcut(for: app) == nil ? "设置快捷键…" : "修改快捷键…", systemImage: "keyboard")
       }
 
       Divider()
@@ -3399,43 +3410,6 @@ private struct LauncherResultGridItem: View {
 struct OneClickOptimizePanelView: View {
   var body: some View {
     PluginCenterView()
-  }
-}
-
-struct AIPlayerPluginCard: View {
-  @EnvironmentObject private var model: AppModel
-
-  var body: some View {
-    HStack(spacing: 14) {
-      IconBadge(systemImage: "play.square.stack.fill", tint: violet, size: 48, iconSize: 20)
-
-      VStack(alignment: .leading, spacing: 6) {
-        HStack(spacing: 7) {
-          Text("听澜播放器")
-            .font(.system(size: 16, weight: .semibold))
-            .foregroundStyle(ink)
-          StatusPill(
-            text: model.aiPlayerExtendedMediaAvailable ? "音频与视频可播放" : "常用音频可播放",
-            color: teal)
-        }
-        Text("播放音频和视频，管理历史、收藏与自定义媒体库。")
-          .font(.system(size: 11, weight: .medium))
-          .foregroundStyle(muted)
-          .lineLimit(2)
-      }
-
-      Spacer(minLength: 12)
-
-      Button {
-        model.showAIPlayer()
-      } label: {
-        Label("打开播放器", systemImage: "play.fill")
-      }
-      .buttonStyle(GlassLabelButtonStyle(tint: violet, prominent: true))
-      .help("打开听澜播放器")
-      .accessibilityLabel("打开听澜播放器")
-    }
-    .frame(maxWidth: .infinity, minHeight: 88, alignment: .leading)
   }
 }
 
@@ -4369,21 +4343,6 @@ struct PluginCenterView: View {
         isEnabled: nil,
         isFeatured: true),
       ApplicationCenterItem(
-        id: applicationAIPlayerID,
-        name: "听澜",
-        purpose: "专注播放、收藏与复盘本地音视频",
-        valueDescription: "让课程、播客和视频在一处安静播放、继续收听。",
-        assetName: "TinglanAppIcon",
-        systemImage: "play.square.stack.fill",
-        tint: accent,
-        category: "核心应用",
-        mode: .launch,
-        statusText: nil,
-        statusImage: "arrow.up.right.square.fill",
-        statusColor: accent,
-        isEnabled: nil,
-        isFeatured: true),
-      ApplicationCenterItem(
         id: applicationFeatureShortcutsID,
         name: "功能快捷键",
         purpose: "把重复动作固定成顺手的一键",
@@ -4455,21 +4414,6 @@ struct PluginCenterView: View {
           get: { model.clipboardHistory.isEnabled },
           set: { model.clipboardHistory.setEnabled($0) })),
       ApplicationCenterItem(
-        id: AppModel.inputMethodPluginID,
-        name: "输入法管家",
-        purpose: "让指定 App 自动用对输入法",
-        valueDescription: "只按你明确设置的 App 规则切换；Shift 完全交给当前输入法。",
-        systemImage: "character.cursor.ibeam",
-        tint: teal,
-        category: "输入效率",
-        mode: .background,
-        statusText: inputMethodStatusText,
-        statusImage: "exclamationmark.triangle.fill",
-        statusColor: inputMethodStatusColor,
-        isEnabled: Binding(
-          get: { model.inputMethodPluginEnabled },
-          set: { model.setInputMethodPluginEnabled($0) })),
-      ApplicationCenterItem(
         id: "mouse-scroll",
         name: "鼠标滚动",
         purpose: "让外接鼠标滚动稳定、顺手",
@@ -4513,19 +4457,6 @@ struct PluginCenterView: View {
         statusColor: accent,
         isEnabled: nil),
       ApplicationCenterItem(
-        id: "network-speed",
-        name: "自定义菜单栏",
-        purpose: "在一处管理图标、系统健康与快捷入口",
-        valueDescription: "所有菜单栏选项集中在同一页，改完立即生效。",
-        systemImage: "speedometer",
-        tint: accent,
-        category: "系统与网络",
-        mode: .primaryEntry,
-        statusText: "主入口",
-        statusImage: "menubar.rectangle",
-        statusColor: teal,
-        isEnabled: nil),
-      ApplicationCenterItem(
         id: "codex-network-probe",
         name: "测试网速",
         purpose: "测试网络速度与 Codex 连通响应",
@@ -4551,19 +4482,6 @@ struct PluginCenterView: View {
         statusImage: "moon.zzz.fill",
         statusColor: teal,
         isEnabled: nil),
-      ApplicationCenterItem(
-        id: applicationPermanentUninstallID,
-        name: "彻底卸载",
-        purpose: "清理 App 和确认过的关联残留",
-        valueDescription: "先扫描可安全识别的范围，再由你确认是否永久删除。",
-        systemImage: "trash.slash.fill",
-        tint: ruby,
-        category: "维护",
-        mode: .action,
-        statusText: "扫描后确认",
-        statusImage: "checkmark.shield.fill",
-        statusColor: muted,
-        isEnabled: nil),
     ]
   }
 
@@ -4581,7 +4499,7 @@ struct PluginCenterView: View {
   }
 
   private var categories: [String] {
-    ["全部", "核心应用", "输入效率", "鼠标", "系统与网络", "维护"]
+    ["全部", "核心应用", "输入效率", "鼠标", "系统与网络"]
   }
 
   private var selectedItem: ApplicationCenterItem? {
@@ -4693,8 +4611,6 @@ struct PluginCenterView: View {
         YoumuApplicationDetailView()
       case applicationPijuanPDFID:
         PijuanApplicationDetailView()
-      case applicationAIPlayerID:
-        AIPlayerApplicationDetailView()
       case applicationFeatureShortcutsID:
         OnDemandApplicationDetailView(
           productName: item.name,
@@ -4714,8 +4630,6 @@ struct PluginCenterView: View {
           })
       case AppModel.launcherPluginID:
         LauncherPluginDetailView()
-      case AppModel.inputMethodPluginID:
-        InputMethodPluginDetailView()
       case "process-viewer":
         OnDemandApplicationDetailView(
           productName: item.name,
@@ -4730,8 +4644,6 @@ struct PluginCenterView: View {
           codexNetworkProbePluginEnabled = true
           model.showCodexNetworkProbe()
         }
-      case applicationPermanentUninstallID:
-        PermanentUninstallApplicationDetailView()
       default:
         ScrollView {
           Group {
@@ -4792,24 +4704,6 @@ struct PluginCenterView: View {
     }
   }
 
-  private var inputMethodStatusText: String? {
-    guard model.inputMethodPluginEnabled else { return nil }
-    switch model.inputMethodPluginStatus {
-    case .ready, .switched: return nil
-    case .stopped: return "需要处理"
-    case .noRules: return "未设置规则"
-    case .conflict: return "检测到同类工具"
-    case .failed: return "切换失败"
-    }
-  }
-
-  private var inputMethodStatusColor: Color {
-    switch model.inputMethodPluginStatus {
-    case .conflict, .failed: return ruby
-    default: return amber
-    }
-  }
-
   private var mouseScrollStatusText: String? {
     guard model.scrollSettings.enabled, !model.scrollEngineRunning else { return nil }
     return model.advancedListeningAuthorized ? "需要处理" : "需要授权"
@@ -4851,271 +4745,6 @@ struct PluginCenterView: View {
     }
     if model.clipboardHistory.pendingDeletionBytes > 0 { return amber }
     return amber
-  }
-}
-
-private struct InputMethodPluginDetailView: View {
-  @EnvironmentObject private var model: AppModel
-
-  var body: some View {
-    Form {
-      Section {
-        Toggle(
-          "按 App 自动切换",
-          isOn: Binding(
-            get: { model.inputMethodPluginEnabled },
-            set: { model.setInputMethodPluginEnabled($0) })
-        )
-        .toggleStyle(.switch)
-
-        LabeledContent("状态", value: model.inputMethodPluginStatus.displayText)
-        Text(model.inputMethodPluginStatus.detailText)
-          .font(.caption)
-          .foregroundStyle(statusColor)
-      } header: {
-        Label("输入法管家", systemImage: "character.cursor.ibeam")
-      } footer: {
-        Text("默认关闭。只在前台 App 真正发生切换时执行；未设置的 App 保持当前输入法。")
-      }
-
-      Section {
-        if model.inputMethodRules.isEmpty {
-          VStack(spacing: 8) {
-            Image(systemName: "keyboard")
-              .font(.system(size: 26))
-              .foregroundStyle(.secondary)
-            Text("还没有 App 规则")
-              .font(.headline)
-            Text("先添加一个 App，再选择它应使用的输入法。")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
-          .frame(maxWidth: .infinity, minHeight: 120)
-        } else {
-          ForEach(model.inputMethodRules) { rule in
-            inputMethodRuleRow(rule)
-          }
-        }
-
-        HStack {
-          Menu {
-            ForEach(model.inputMethodCandidateApps) { app in
-              Button {
-                model.addInputMethodRule(app)
-              } label: {
-                InputMethodCandidateMenuLabel(candidate: app)
-              }
-            }
-            if !model.inputMethodCandidateApps.isEmpty {
-              Divider()
-            }
-            Button("从应用程序选择…") {
-              model.chooseInputMethodRuleApp()
-            }
-          } label: {
-            Label("添加 App", systemImage: "plus")
-          }
-
-          Spacer()
-
-          Button("刷新输入法") {
-            model.refreshInputMethodSources()
-          }
-        }
-      } header: {
-        Text("App 规则")
-      } footer: {
-        Text("每个 App 只保留一条规则；启动器等内置窗口也可单独设置。")
-      }
-
-      if !model.inputMethodRuleDiagnostics.isEmpty {
-        Section("规则健康") {
-          ForEach(model.inputMethodRuleDiagnostics) { diagnostic in
-            Label {
-              VStack(alignment: .leading, spacing: 2) {
-                Text(diagnostic.appName)
-                  .font(.body.weight(.medium))
-                Text(diagnostic.detailText)
-                  .font(.caption)
-                  .foregroundStyle(.secondary)
-              }
-            } icon: {
-              Image(systemName: diagnosticIcon(diagnostic.kind))
-                .foregroundStyle(diagnosticColor(diagnostic.kind))
-            }
-          }
-
-          if model.inputMethodRuleDiagnostics.contains(where: \.isRepairable) {
-            Button("清理重复或空规则") {
-              model.repairInputMethodRules()
-            }
-          }
-        }
-      }
-
-      Section("备份与恢复") {
-        HStack {
-          Button("导出规则…") {
-            model.exportInputMethodRules()
-          }
-          Button("导入规则…") {
-            model.importInputMethodRules()
-          }
-          Spacer()
-          Button("打开备份文件夹") {
-            model.openInputMethodRulesBackupFolder()
-          }
-        }
-        Text("导入前会校验格式和版本，并请你确认；替换前自动保存当前规则，旧版规则也可直接导入。")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
-
-      Section("立即测试") {
-        Menu {
-          ForEach(model.inputMethodSources) { source in
-            Button(source.name) {
-              model.testInputMethodSource(selectionID: source.selectionID)
-            }
-          }
-        } label: {
-          Label("切换到指定输入法", systemImage: "arrow.left.arrow.right")
-        }
-        .disabled(model.inputMethodSources.isEmpty)
-
-        LabeledContent("系统当前输入法", value: InputMethodSourceController.currentSourceName())
-      }
-
-      Section("稳定性保护") {
-        Label("只监听 App 激活，不轮询、不监听每次点击。", systemImage: "checkmark.shield")
-        Label("目标已是当前输入法时不重复切换。", systemImage: "checkmark.shield")
-        Label("切换后会确认结果；未生效时最多重试一次。", systemImage: "checkmark.shield")
-        Label("启动器收起时恢复之前的输入法。", systemImage: "checkmark.shield")
-        Label("发现同类自动切换工具运行时，自动让位。", systemImage: "checkmark.shield")
-        Label("规则只存本机；不读取输入内容，也不记录按键或网站。", systemImage: "hand.raised")
-        Text("为避免打断中文组词，本功能不会根据输入框或网站频繁切换输入法。")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
-    }
-    .formStyle(.grouped)
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-  }
-
-  @ViewBuilder
-  private func inputMethodRuleRow(_ rule: InputMethodAppRule) -> some View {
-    HStack(spacing: 10) {
-      Toggle(
-        "",
-        isOn: Binding(
-          get: {
-            model.inputMethodRules.first(where: { $0.id == rule.id })?.enabled ?? false
-          },
-          set: { model.setInputMethodRuleEnabled(id: rule.id, enabled: $0) })
-      )
-      .labelsHidden()
-      .toggleStyle(.switch)
-      .accessibilityLabel("启用 \(rule.appName) 输入法规则")
-
-      Image(nsImage: model.inputMethodAppIcon(rule: rule))
-        .resizable()
-        .scaledToFit()
-        .frame(width: 30, height: 30)
-        .accessibilityHidden(true)
-
-      VStack(alignment: .leading, spacing: 2) {
-        Text(rule.appName)
-          .font(.body.weight(.medium))
-          .lineLimit(1)
-        Text(rule.bundleIdentifier)
-          .font(.caption2)
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-      }
-
-      Spacer(minLength: 8)
-
-      Picker(
-        "输入法",
-        selection: Binding(
-          get: {
-            model.inputMethodRules.first(where: { $0.id == rule.id })?.sourceSelectionID
-              ?? rule.sourceSelectionID
-          },
-          set: { model.setInputMethodRuleSource(id: rule.id, selectionID: $0) })
-      ) {
-        if !model.inputMethodSources.contains(where: {
-          $0.selectionID == rule.sourceSelectionID
-        }) {
-          Text("输入法不可用").tag(rule.sourceSelectionID)
-        }
-        ForEach(model.inputMethodSources) { source in
-          Text(source.name).tag(source.selectionID)
-        }
-      }
-      .labelsHidden()
-      .frame(width: 170)
-      .accessibilityLabel("\(rule.appName) 使用的输入法")
-
-      Button(role: .destructive) {
-        model.removeInputMethodRule(id: rule.id)
-      } label: {
-        Image(systemName: "trash")
-      }
-      .buttonStyle(.borderless)
-      .help("删除规则")
-      .accessibilityLabel("删除 \(rule.appName) 输入法规则")
-    }
-  }
-
-  private var statusColor: Color {
-    switch model.inputMethodPluginStatus {
-    case .conflict, .failed: return ruby
-    default: return .secondary
-    }
-  }
-
-  private func diagnosticIcon(_ kind: InputMethodRuleDiagnosticKind) -> String {
-    switch kind {
-    case .emptyRule: return "exclamationmark.triangle"
-    case .duplicateApplication: return "square.on.square"
-    case .unavailableInputSource: return "keyboard.badge.ellipsis"
-    }
-  }
-
-  private func diagnosticColor(_ kind: InputMethodRuleDiagnosticKind) -> Color {
-    switch kind {
-    case .unavailableInputSource: return .orange
-    case .emptyRule, .duplicateApplication: return .red
-    }
-  }
-}
-
-private struct InputMethodCandidateMenuLabel: View {
-  let candidate: InputMethodAppCandidate
-
-  private var appIcon: NSImage {
-    let source =
-      FileManager.default.fileExists(atPath: candidate.path)
-      ? NSWorkspace.shared.icon(forFile: candidate.path)
-      : (NSImage(named: NSImage.applicationIconName) ?? NSImage())
-    let icon = (source.copy() as? NSImage) ?? source
-    icon.size = NSSize(width: 16, height: 16)
-    icon.isTemplate = false
-    return icon
-  }
-
-  var body: some View {
-    if candidate.bundleIdentifier == InputMethodBuiltInTarget.launcherIdentifier {
-      Label(candidate.name, systemImage: "magnifyingglass")
-    } else {
-      Label {
-        Text(candidate.name)
-      } icon: {
-        Image(nsImage: appIcon)
-          .renderingMode(.original)
-      }
-    }
   }
 }
 
@@ -5546,64 +5175,6 @@ private struct YoumuApplicationDetailView: View {
   }
 }
 
-private struct AIPlayerApplicationDetailView: View {
-  @EnvironmentObject private var model: AppModel
-
-  var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 16) {
-        VStack(alignment: .leading, spacing: 7) {
-          Text("播放本地音视频")
-            .font(.title3.weight(.semibold))
-            .foregroundStyle(ink)
-          Text("课程、播客和视频集中播放，自动保留进度。")
-            .font(.body)
-            .foregroundStyle(muted)
-            .fixedSize(horizontal: false, vertical: true)
-        }
-
-        Label(
-          "MP3、M4A、WAV 使用 macOS 原生引擎，无需安装播放插件",
-          systemImage: "checkmark.circle.fill"
-        )
-        .font(.callout.weight(.medium))
-        .foregroundStyle(teal)
-
-        ApplicationWindowOpenButton(productName: "听澜播放器") {
-          model.showAIPlayer()
-        }
-
-        FileAssociationControlCard(
-          kind: .audio,
-          title: "双击音频直接进入听澜",
-          detail: "主动设置后，MP3、M4A、WAV 可从访达直接进入听澜播放；这些格式无需额外插件。",
-          systemImage: "waveform.circle.fill",
-          tint: accent)
-
-        if model.aiPlayerCanUndoTrash {
-          Divider()
-          VStack(alignment: .leading, spacing: 8) {
-            Text("刚才删除错了？")
-              .font(.headline)
-              .foregroundStyle(ink)
-            Button {
-              model.undoAIPlayerTrash()
-            } label: {
-              Label("撤销播放器刚才的删除", systemImage: "arrow.uturn.backward")
-            }
-            .buttonStyle(.bordered)
-            .tint(teal)
-            .accessibilityLabel("撤销播放器刚才移到废纸篓的文件")
-          }
-        }
-      }
-      .padding(22)
-      .frame(maxWidth: 680, alignment: .topLeading)
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-  }
-}
-
 private struct PijuanApplicationDetailView: View {
   @EnvironmentObject private var model: AppModel
 
@@ -5864,20 +5435,10 @@ private struct LauncherPluginDetailView: View {
 
       Section("固定项目") {
         LabeledContent("已固定", value: "\(model.launcherPinnedRecords.count)/8")
-        HStack {
-          Label("听澜播放器", systemImage: "play.square.stack.fill")
-          Spacer()
-          Button(model.isAIPlayerPinnedInLauncher ? "取消固定" : "添加到快捷栏") {
-            model.setAIPlayerPinnedInLauncher(!model.isAIPlayerPinnedInLauncher)
-          }
-          .accessibilityLabel(
-            model.isAIPlayerPinnedInLauncher
-              ? "从启动器快捷栏移除听澜播放器"
-              : "将听澜播放器添加到启动器快捷栏")
-        }
-        Text("固定、排序和移除仍在启动器对象菜单中完成。")
+        Text("固定、排序和移除仍在启动器对象菜单中完成。对任意 App 右键，还可以直接设置它的快捷键。")
           .font(.caption)
           .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
       }
 
       if needsAttention {
@@ -7447,11 +7008,12 @@ struct AboutPanelView: View {
     } message: {
       Text(
         "会先备份，再清空本 App 的旧配置，应用 \(XLGConfigImporter.bundledConfigurationDate) 的小龙哥配置，不与旧设置合并。"
-          + "自定义短语和输入法规则会清空；个人文件、使用历史、钥匙串和系统权限保留。")
+          + "自定义短语会清空；听澜数据、旧输入法规则、个人文件、使用历史、钥匙串和系统权限保留。")
     }
     .onAppear {
       model.refreshAccessibilityStatus()
       model.refreshLaunchAtLoginStatus()
+      model.refreshFileAssociationStatus()
       model.checkForUpdatesIfNeeded()
       if SettingsArea(rawValue: model.selectedAboutSection) == nil {
         model.selectedAboutSection = SettingsArea.general.rawValue
@@ -7572,19 +7134,9 @@ struct AboutPanelView: View {
         .toggleStyle(.switch)
 
         Divider()
-
-        Toggle(
-          isOn: Binding(
-            get: { model.dockIconVisible },
-            set: { model.setDockIconVisible($0) })
-        ) {
-          SettingsToggleLabel(
-            title: "在程序坞显示图标",
-            detail: model.dockIconVisible
-              ? "主窗口可从程序坞和菜单栏打开。"
-              : "程序坞图标已隐藏，仍可从菜单栏打开或退出。")
-        }
-        .toggleStyle(.switch)
+        SettingsToggleLabel(
+          title: "程序坞入口",
+          detail: "安装后直接出现在程序坞，也可以从菜单栏打开。")
       }
 
       SettingsGroup(title: "防止误关") {
@@ -7781,6 +7333,10 @@ struct AboutPanelView: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("小龙哥 Mac 哲学。\(model.appVersionAccessibilityText)")
+      }
+
+      SettingsGroup(title: "使用量统计") {
+        UsageStatisticsSettingsView()
       }
 
       SettingsGroup(title: "帮助与隐私") {
@@ -8515,6 +8071,13 @@ struct ShortcutUnifiedPanelView: View {
 
   private var unifiedActions: some View {
     HStack(spacing: 8) {
+      Button {
+        model.presentSoftwareShortcutEditor()
+      } label: {
+        Label("添加软件快捷键", systemImage: "plus.app")
+      }
+      .buttonStyle(.borderedProminent)
+      .help("先选软件，再按下你想用的快捷键")
       if model.deletedDefaultShortcutCount > 0 {
         Button {
           model.restoreDeletedDefaultShortcuts()
@@ -8699,6 +8262,10 @@ struct ShortcutUnifiedPanelView: View {
 
   private func beginEditingShortcut(itemID: String) {
     guard let item = model.items.first(where: { $0.id == itemID }) else { return }
+    if item.action == .openApp, model.canChangeShortcutAction(id: itemID) {
+      model.presentSoftwareShortcutEditor(item: item)
+      return
+    }
     model.cancelRecordingIfNeeded()
     model.selectedID = itemID
     shortcutEditorPresentation = ShortcutEditorPresentation(itemID: itemID, draft: item)
@@ -9559,177 +9126,160 @@ private func shortcutRowMenuContent(
     Divider()
   }
 
-  Menu("打开 App / 文件 / 文件夹") {
-    Menu("运行中的程序") {
-      ForEach(Array(model.runningAppChoices().prefix(14))) { choice in
-        Button {
-          model.setOpenTarget(itemID: item.id, choice: choice)
-        } label: {
-          shortcutRowAppChoiceLabel(choice)
-        }
-      }
-    }
-    Menu("应用程序目录") {
-      ForEach(model.installedAppChoices(limit: 24)) { choice in
-        Button {
-          model.setOpenTarget(itemID: item.id, choice: choice)
-        } label: {
-          shortcutRowAppChoiceLabel(choice)
-        }
-      }
-    }
-    Divider()
-    Button {
-      model.browseOpenTarget(itemID: item.id)
-    } label: {
-      Label("从访达选择…", systemImage: "folder.badge.plus")
-    }
+  Button {
+    model.presentSoftwareShortcutEditor(item: item)
+  } label: {
+    Label("选择 / 更换软件…", systemImage: "app.badge")
   }
   .disabled(!model.canChangeShortcutAction(id: item.id))
   .help(model.shortcutActionChangeHelp(id: item.id))
 
-  Menu("窗口管理") {
-    ForEach(WindowPreset.allCases) { preset in
+  Button {
+    model.selectedID = item.id
+    model.startRecording(itemID: item.id)
+  } label: {
+    Label("重新录制快捷键…", systemImage: "keyboard")
+  }
+  Divider()
+
+  Menu("更多动作") {
+    Menu("窗口管理") {
+      ForEach(WindowPreset.allCases) { preset in
+        Button {
+          model.applyActionPreset(
+            itemID: item.id,
+            action: .windowPreset,
+            target: preset.rawValue,
+            name: preset.title,
+            note: "窗口管理")
+        } label: {
+          Label(preset.title, systemImage: windowPresetIcon(preset))
+        }
+      }
       Button {
         model.applyActionPreset(
           itemID: item.id,
-          action: .windowPreset,
-          target: preset.rawValue,
-          name: preset.title,
-          note: "窗口管理")
+          action: .nativeFullScreen,
+          target: "entireScreen",
+          name: "全屏",
+          note: "进入或退出全屏")
       } label: {
-        Label(preset.title, systemImage: windowPresetIcon(preset))
+        Label("进入 / 退出全屏", systemImage: "arrow.up.left.and.arrow.down.right")
       }
     }
-    Button {
-      model.applyActionPreset(
-        itemID: item.id,
-        action: .nativeFullScreen,
-        target: "entireScreen",
-        name: "全屏",
-        note: "进入或退出全屏")
-    } label: {
-      Label("进入 / 退出全屏", systemImage: "arrow.up.left.and.arrow.down.right")
-    }
-  }
-  .disabled(!model.canChangeShortcutAction(id: item.id))
-  .help(model.shortcutActionChangeHelp(id: item.id))
+    .disabled(!model.canChangeShortcutAction(id: item.id))
+    .help(model.shortcutActionChangeHelp(id: item.id))
 
-  Button {
-    model.beginShortcutActionCapture(itemID: item.id)
-  } label: {
-    Label("发送按键...", systemImage: "keyboard.badge.ellipsis")
-  }
-  .disabled(!model.canChangeShortcutAction(id: item.id))
-  .help(model.shortcutActionChangeHelp(id: item.id))
+    Button {
+      model.beginShortcutActionCapture(itemID: item.id)
+    } label: {
+      Label("发送按键...", systemImage: "keyboard.badge.ellipsis")
+    }
+    .disabled(!model.canChangeShortcutAction(id: item.id))
+    .help(model.shortcutActionChangeHelp(id: item.id))
 
-  Menu("应用中心") {
-    Button {
-      model.applyActionPreset(
-        itemID: item.id,
-        action: .showProcessViewer,
-        target: "process-viewer",
-        name: "打开进程查看器",
-        scope: "常用脚本",
-        note: "打开独立的进程查看器窗口。")
-    } label: {
-      Label("打开进程查看器", systemImage: "cpu")
+    Menu("应用中心") {
+      Button {
+        model.applyActionPreset(
+          itemID: item.id,
+          action: .showProcessViewer,
+          target: "process-viewer",
+          name: "打开进程查看器",
+          scope: "常用脚本",
+          note: "打开独立的进程查看器窗口。")
+      } label: {
+        Label("打开进程查看器", systemImage: "cpu")
+      }
+      Button {
+        model.applyActionPreset(
+          itemID: item.id,
+          action: .showCodexNetworkProbe,
+          target: "codex-network-probe",
+          name: "打开测试网速",
+          scope: "常用脚本",
+          note: "一个球测下载、上传、延迟和抖动，一个球测 Codex 四轮连通与响应。")
+      } label: {
+        Label("打开测试网速", systemImage: "gauge.with.dots.needle.67percent")
+      }
+      Button {
+        model.applyActionPreset(
+          itemID: item.id,
+          action: .openURL,
+          target: item.target.hasPrefix("http") ? item.target : "https://aixlg.com/",
+          note: "网页链接")
+      } label: {
+        Label("打开网址", systemImage: "safari")
+      }
+      Button {
+        model.applyActionPreset(
+          itemID: item.id,
+          action: .insertText,
+          target: item.target.isEmpty ? "小龙哥Mac哲学" : item.target,
+          name: item.name.isEmpty ? "输入文本" : item.name,
+          note: "把目标文本输入到前台光标位置")
+      } label: {
+        Label("输入文本", systemImage: "text.cursor")
+      }
+      Button {
+        model.applyActionPreset(
+          itemID: item.id,
+          action: .sendShortcut,
+          target: "⌃ ⌘ Space",
+          name: "打开 Emoji 与符号",
+          scope: "常用脚本",
+          note: "打开系统 Emoji 与符号面板。")
+      } label: {
+        Label("打开 Emoji 与符号", systemImage: "face.smiling")
+      }
+      Button {
+        model.applyActionPreset(
+          itemID: item.id,
+          action: .runShell,
+          target: "plugin:mic-toggle.sh",
+          name: "切换麦克风",
+          scope: "常用脚本",
+          note: "Studio Display / DJI 麦克风切换。")
+      } label: {
+        Label("切换麦克风", systemImage: "mic.fill")
+      }
+      Button {
+        model.applyActionPreset(
+          itemID: item.id,
+          action: .runShell,
+          target: "osascript -e 'tell application \"System Events\" to sleep'",
+          name: "休眠",
+          scope: "常用脚本",
+          note: "让 Mac 进入睡眠。")
+      } label: {
+        Label("休眠", systemImage: "moon.zzz.fill")
+      }
+      Button {
+        model.applyActionPreset(
+          itemID: item.id,
+          action: .runShell,
+          target: "pmset displaysleepnow",
+          name: "息屏",
+          scope: "常用脚本",
+          note: "立即关闭屏幕，不退出 App。")
+      } label: {
+        Label("息屏", systemImage: "display")
+      }
+      Button {
+        model.applyActionPreset(
+          itemID: item.id,
+          action: .showSleepPanel,
+          target: "sleep-panel",
+          name: "保持唤醒",
+          scope: "常用脚本",
+          note: "打开睡眠管理，选择不睡机时长。")
+      } label: {
+        Label("保持唤醒", systemImage: "bolt.fill")
+      }
     }
-    Button {
-      model.applyActionPreset(
-        itemID: item.id,
-        action: .showCodexNetworkProbe,
-        target: "codex-network-probe",
-        name: "打开测试网速",
-        scope: "常用脚本",
-        note: "一个球测下载、上传、延迟和抖动，一个球测 Codex 四轮连通与响应。")
-    } label: {
-      Label("打开测试网速", systemImage: "gauge.with.dots.needle.67percent")
-    }
-    Button {
-      model.applyActionPreset(
-        itemID: item.id,
-        action: .openURL,
-        target: item.target.hasPrefix("http") ? item.target : "https://aixlg.com/",
-        note: "网页链接")
-    } label: {
-      Label("打开网址", systemImage: "safari")
-    }
-    Button {
-      model.applyActionPreset(
-        itemID: item.id,
-        action: .insertText,
-        target: item.target.isEmpty ? "小龙哥Mac哲学" : item.target,
-        name: item.name.isEmpty ? "输入文本" : item.name,
-        note: "把目标文本输入到前台光标位置")
-    } label: {
-      Label("输入文本", systemImage: "text.cursor")
-    }
-    Button {
-      model.applyActionPreset(
-        itemID: item.id,
-        action: .sendShortcut,
-        target: "⌃ ⌘ Space",
-        name: "打开 Emoji 与符号",
-        scope: "常用脚本",
-        note: "打开系统 Emoji 与符号面板。")
-    } label: {
-      Label("打开 Emoji 与符号", systemImage: "face.smiling")
-    }
-    Button {
-      model.applyActionPreset(
-        itemID: item.id,
-        action: .runShell,
-        target: "plugin:mic-toggle.sh",
-        name: "切换麦克风",
-        scope: "常用脚本",
-        note: "Studio Display / DJI 麦克风切换。")
-    } label: {
-      Label("切换麦克风", systemImage: "mic.fill")
-    }
-    Button {
-      model.applyActionPreset(
-        itemID: item.id,
-        action: .runShell,
-        target: "osascript -e 'tell application \"System Events\" to sleep'",
-        name: "休眠",
-        scope: "常用脚本",
-        note: "让 Mac 进入睡眠。")
-    } label: {
-      Label("休眠", systemImage: "moon.zzz.fill")
-    }
-    Button {
-      model.applyActionPreset(
-        itemID: item.id,
-        action: .runShell,
-        target: "pmset displaysleepnow",
-        name: "息屏",
-        scope: "常用脚本",
-        note: "立即关闭屏幕，不退出 App。")
-    } label: {
-      Label("息屏", systemImage: "display")
-    }
-    Button {
-      model.applyActionPreset(
-        itemID: item.id,
-        action: .showSleepPanel,
-        target: "sleep-panel",
-        name: "保持唤醒",
-        scope: "常用脚本",
-        note: "打开睡眠管理，选择不睡机时长。")
-    } label: {
-      Label("保持唤醒", systemImage: "bolt.fill")
-    }
-  }
-  .disabled(!model.canChangeShortcutAction(id: item.id))
-  .help(model.shortcutActionChangeHelp(id: item.id))
+    .disabled(!model.canChangeShortcutAction(id: item.id))
+    .help(model.shortcutActionChangeHelp(id: item.id))
 
-  Button {
-    model.startRecording(itemID: item.id)
-  } label: {
-    Label("重新录制触发方式…", systemImage: "keyboard.badge.ellipsis")
   }
-  .help("可按普通组合键，或连按左／右 Control、Shift、Option、Command 两次。")
 
   Divider()
 

@@ -7,14 +7,12 @@ import Foundation
 enum MenuBarCatalogItemID: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
   case youmu = "youmu"
   case phrases = "host.phrases"
-  case inputMethod = "host.inputMethod"
   case networkProbe = "host.networkProbe"
   case keepAwake = "host.keepAwake"
   case launcher = "host.launcher"
   case shortcuts = "host.shortcuts"
   case processViewer = "host.processViewer"
   case pijuanPDF = "host.pijuanPDF"
-  case aiPlayer = "host.aiPlayer"
   case clipboardHistory = "host.clipboardHistory"
 
   var id: String { rawValue }
@@ -46,12 +44,6 @@ enum MenuBarCatalog {
       title: "快捷短语",
       detail: "打开短语与文本扩展",
       systemImage: "text.bubble",
-      isVisibleByDefault: true),
-    MenuBarCatalogItemDescriptor(
-      id: .inputMethod,
-      title: "输入法管理",
-      detail: "管理按 App 切换输入法",
-      systemImage: "character.cursor.ibeam",
       isVisibleByDefault: true),
     MenuBarCatalogItemDescriptor(
       id: .networkProbe,
@@ -88,12 +80,6 @@ enum MenuBarCatalog {
       title: "披卷",
       detail: "打开 PDF 阅读器",
       systemImage: "doc.richtext",
-      isVisibleByDefault: false),
-    MenuBarCatalogItemDescriptor(
-      id: .aiPlayer,
-      title: "听澜播放器",
-      detail: "打开音频播放器",
-      systemImage: "headphones",
       isVisibleByDefault: false),
     MenuBarCatalogItemDescriptor(
       id: .clipboardHistory,
