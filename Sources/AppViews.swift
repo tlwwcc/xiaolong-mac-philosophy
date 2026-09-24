@@ -1,29 +1,26 @@
 import AppKit
 import SwiftUI
 
-private let accent = Color(red: 0.02, green: 0.36, blue: 0.95)
-private let teal = Color(red: 0.00, green: 0.49, blue: 0.42)
-private let amber = Color(red: 0.86, green: 0.52, blue: 0.10)
-private let ruby = Color(red: 0.86, green: 0.18, blue: 0.24)
-private let violet = Color(red: 0.42, green: 0.23, blue: 0.82)
-private let ink = Color(red: 0.07, green: 0.08, blue: 0.09)
-private let muted = Color(red: 0.40, green: 0.45, blue: 0.47)
-private let appBackground = Color(red: 0.94, green: 0.965, blue: 0.975)
-private let sidebarBackground = Color(red: 0.90, green: 0.95, blue: 0.965)
-private let surface = Color.white
-private let softSurface = Color(red: 0.97, green: 0.98, blue: 0.985)
-private let line = Color(red: 0.84, green: 0.87, blue: 0.88)
-private let indigo = Color(red: 0.12, green: 0.20, blue: 0.46)
-private let glowBlue = Color(red: 0.12, green: 0.46, blue: 1.00)
-private let glassLine = Color.white.opacity(0.72)
-private let chrome = Color(red: 0.925, green: 0.948, blue: 0.958)
-private let sidebarTint = Color(red: 0.885, green: 0.935, blue: 0.955)
-private let elevatedSurface = Color.white.opacity(0.88)
-private let hairline = Color.black.opacity(0.07)
-private let softShadow = Color.black.opacity(0.055)
-private let aixlgPurple = Color(red: 107 / 255, green: 35 / 255, blue: 142 / 255)
-private let aixlgMist = Color(red: 244 / 255, green: 240 / 255, blue: 248 / 255)
-private let aixlgPaper = Color(red: 252 / 255, green: 251 / 255, blue: 253 / 255)
+// Native semantic roles are shared with companion surfaces, not tied to brand pigment.
+private let accent = AppVisualStyle.accent
+private let teal = AppVisualStyle.success
+private let amber = AppVisualStyle.warning
+private let ruby = AppVisualStyle.danger
+private let violet = AppVisualStyle.accent
+private let ink = AppVisualStyle.textPrimary
+private let muted = AppVisualStyle.textSecondary
+private let appBackground = AppVisualStyle.background
+private let sidebarBackground = AppVisualStyle.background
+private let surface = AppVisualStyle.surface
+private let softSurface = AppVisualStyle.background
+private let line = AppVisualStyle.separator
+private let indigo = AppVisualStyle.accent
+private let glowBlue = AppVisualStyle.accent
+private let glassLine = AppVisualStyle.separator
+private let chrome = AppVisualStyle.background
+private let sidebarTint = AppVisualStyle.background
+private let elevatedSurface = AppVisualStyle.surface
+private let hairline = AppVisualStyle.separator
 
 private func symbolForPrimaryAction(_ title: String) -> String {
   if title.contains("新增") { return "plus" }
@@ -43,64 +40,29 @@ private func symbolForPrimaryAction(_ title: String) -> String {
 
 struct AppBackdrop: View {
   var body: some View {
-    ZStack {
-      LinearGradient(
-        colors: [
-          Color(red: 0.968, green: 0.976, blue: 0.980),
-          Color(red: 0.936, green: 0.950, blue: 0.958),
-          Color(red: 0.958, green: 0.962, blue: 0.958),
-        ],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-      )
-
-      VStack(spacing: 0) {
-        Rectangle()
-          .fill(
-            LinearGradient(
-              colors: [glowBlue.opacity(0.055), teal.opacity(0.040), Color.clear],
-              startPoint: .topLeading,
-              endPoint: .bottomTrailing
-            )
-          )
-          .frame(height: 96)
-        Spacer()
-      }
-    }
-    .ignoresSafeArea()
+    AppVisualStyle.background.ignoresSafeArea()
   }
 }
 
 private struct PremiumPanel: ViewModifier {
   let radius: CGFloat
-  let shadowRadius: CGFloat
-  let shadowY: CGFloat
 
   func body(content: Content) -> some View {
     content
       .background(
-        LinearGradient(
-          colors: [elevatedSurface, Color.white.opacity(0.66)],
-          startPoint: .topLeading,
-          endPoint: .bottomTrailing
-        ),
+        AppVisualStyle.surface,
         in: RoundedRectangle(cornerRadius: radius, style: .continuous)
       )
       .overlay(
         RoundedRectangle(cornerRadius: radius, style: .continuous)
-          .stroke(Color.white.opacity(0.78), lineWidth: 1)
+          .stroke(AppVisualStyle.separator, lineWidth: 1)
       )
-      .shadow(color: softShadow, radius: shadowRadius, x: 0, y: shadowY)
   }
 }
 
 extension View {
-  fileprivate func premiumPanel(
-    radius: CGFloat = 16, shadowRadius: CGFloat = 14, shadowY: CGFloat = 8
-  )
-    -> some View
-  {
-    modifier(PremiumPanel(radius: radius, shadowRadius: shadowRadius, shadowY: shadowY))
+  fileprivate func premiumPanel(radius: CGFloat = 16) -> some View {
+    modifier(PremiumPanel(radius: radius))
   }
 }
 
@@ -117,30 +79,11 @@ struct IconBadge: View {
       .symbolRenderingMode(.hierarchical)
       .foregroundStyle(filled ? .white : tint)
       .frame(width: size, height: size)
-      .background(backgroundShape)
-      .overlay(
-        RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
-          .stroke(Color.white.opacity(filled ? 0.28 : 0.78), lineWidth: 1)
-      )
-      .shadow(
-        color: filled ? tint.opacity(0.20) : Color.black.opacity(0.025), radius: 9, x: 0, y: 5
+      .background(
+        filled ? tint : AppVisualStyle.background,
+        in: RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
       )
       .accessibilityHidden(true)
-  }
-
-  private var backgroundShape: some ShapeStyle {
-    if filled {
-      return LinearGradient(
-        colors: [tint.opacity(0.96), indigo.opacity(0.94)],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-      )
-    }
-    return LinearGradient(
-      colors: [Color.white.opacity(0.94), tint.opacity(0.09)],
-      startPoint: .topLeading,
-      endPoint: .bottomTrailing
-    )
   }
 }
 
@@ -152,43 +95,23 @@ struct GlassLabelButtonStyle: ButtonStyle {
 
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
-      .font(.system(size: 12, weight: .medium))
-      .foregroundStyle(prominent ? Color.white : (isEnabled ? tint : muted.opacity(0.55)))
+      .font(AppVisualStyle.controlFont)
+      .foregroundStyle(prominent ? Color.white : (isEnabled ? tint : muted))
       .padding(.horizontal, 12)
       .frame(height: 34)
       .background(
-        LinearGradient(
-          colors: backgroundColors(isPressed: configuration.isPressed),
-          startPoint: .topLeading,
-          endPoint: .bottomTrailing
-        ),
+        prominent ? tint : AppVisualStyle.surface,
         in: RoundedRectangle(cornerRadius: 10, style: .continuous)
       )
       .overlay(
         RoundedRectangle(cornerRadius: 10, style: .continuous)
-          .stroke(prominent ? Color.white.opacity(0.26) : Color.white.opacity(0.74), lineWidth: 1)
+          .fill(configuration.isPressed ? Color.primary.opacity(0.07) : Color.clear)
       )
-      .shadow(
-        color: isEnabled ? tint.opacity(prominent ? 0.18 : 0.07) : Color.clear,
-        radius: configuration.isPressed ? 3 : 8,
-        x: 0,
-        y: configuration.isPressed ? 1 : 4
+      .overlay(
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+          .stroke(prominent ? Color.clear : AppVisualStyle.separator, lineWidth: 1)
       )
-      .scaleEffect(configuration.isPressed ? 0.985 : 1)
       .opacity(isEnabled ? 1 : 0.52)
-      .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
-  }
-
-  private func backgroundColors(isPressed: Bool) -> [Color] {
-    if !isEnabled {
-      return [Color.white.opacity(0.50), chrome.opacity(0.52)]
-    }
-    if prominent {
-      return isPressed ? [indigo.opacity(0.98), tint.opacity(0.90)] : [tint, indigo]
-    }
-    return isPressed
-      ? [tint.opacity(0.14), Color.white.opacity(0.78)]
-      : [Color.white.opacity(0.96), tint.opacity(0.075)]
   }
 }
 
@@ -1550,7 +1473,7 @@ struct AppTopNavigationView: View {
           TopModuleButton(
             title: moduleTitle(module),
             systemImage: moduleIcon(module),
-            selectedTint: module == moduleOptimize ? aixlgPurple : accent,
+            selectedTint: accent,
             selected: module == moduleOptimize
               ? isApplicationCenterModule(selectedModule)
               : selectedModule == module
@@ -1568,9 +1491,8 @@ struct AppTopNavigationView: View {
       }
       .padding(3)
       .frame(maxWidth: .infinity)
-      .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
       .background(
-        Color.white.opacity(0.35),
+        AppVisualStyle.background,
         in: RoundedRectangle(cornerRadius: 12, style: .continuous)
       )
       .overlay(
@@ -1619,9 +1541,8 @@ struct TopModuleButton: View {
       .background(buttonBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
       .overlay(
         RoundedRectangle(cornerRadius: 12, style: .continuous)
-          .stroke(selected ? Color.white.opacity(0.82) : Color.clear, lineWidth: 1)
+          .stroke(selected ? AppVisualStyle.separator : Color.clear, lineWidth: 1)
       )
-      .shadow(color: selected ? Color.black.opacity(0.060) : Color.clear, radius: 7, x: 0, y: 3)
       .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
     .buttonStyle(.plain)
@@ -1630,19 +1551,8 @@ struct TopModuleButton: View {
     .animation(.easeOut(duration: 0.16), value: selected)
   }
 
-  private var buttonBackground: some ShapeStyle {
-    if selected {
-      return LinearGradient(
-        colors: [Color.white.opacity(0.97), Color.white.opacity(0.82)],
-        startPoint: .top,
-        endPoint: .bottom
-      )
-    }
-    return LinearGradient(
-      colors: [Color.white.opacity(0.01), Color.white.opacity(0.01)],
-      startPoint: .top,
-      endPoint: .bottom
-    )
+  private var buttonBackground: Color {
+    selected ? AppVisualStyle.surface : Color.clear
   }
 }
 
@@ -1685,7 +1595,7 @@ struct ScopeSidebarView: View {
         }
       }
       .padding(13)
-      .premiumPanel(radius: 18, shadowRadius: 11, shadowY: 6)
+      .premiumPanel(radius: 18)
       .padding(.top, 20)
       .padding(.horizontal, 10)
 
@@ -1728,7 +1638,7 @@ struct ScopeSidebarView: View {
         .controlSize(.small)
       }
       .padding(14)
-      .premiumPanel(radius: 16, shadowRadius: 10, shadowY: 5)
+      .premiumPanel(radius: 16)
       .padding(.horizontal, 12)
 
       HStack(spacing: 10) {
@@ -1995,7 +1905,7 @@ struct AppLauncherPanelView: View {
             .foregroundStyle(muted)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .premiumPanel(radius: 18, shadowRadius: 10, shadowY: 5)
+        .premiumPanel(radius: 18)
       } else if results.isEmpty && utilityItem == nil {
         VStack(spacing: 12) {
           Image(systemName: "app.dashed")
@@ -2012,7 +1922,7 @@ struct AppLauncherPanelView: View {
           .buttonStyle(GlassLabelButtonStyle(tint: accent, prominent: true))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .premiumPanel(radius: 18, shadowRadius: 10, shadowY: 5)
+        .premiumPanel(radius: 18)
       } else {
         ScrollView {
           VStack(spacing: 14) {
@@ -2560,7 +2470,7 @@ struct LauncherUtilityCard: View {
         .padding(.horizontal, 14)
         .frame(height: 58)
         .background(
-          isHovering ? Color.primary.opacity(0.05) : Color.clear,
+          isHovering ? AppVisualStyle.hover : Color.clear,
           in: RoundedRectangle(cornerRadius: 12, style: .continuous))
       } else {
         HStack(spacing: 15) {
@@ -2724,12 +2634,9 @@ struct LauncherOverlayView: View {
           .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
               .stroke(
-                searchFocused ? accent.opacity(0.48) : Color.primary.opacity(0.055),
+                searchFocused ? accent : AppVisualStyle.separator,
                 lineWidth: searchFocused ? 1.5 : 1)
           )
-          .shadow(
-            color: searchFocused ? accent.opacity(0.08) : Color.black.opacity(0.025),
-            radius: searchFocused ? 14 : 8, x: 0, y: 4)
 
         }
         .padding(.horizontal, 24)
@@ -3240,7 +3147,7 @@ struct LauncherResultRow: View {
       .padding(.horizontal, 12)
       .frame(height: 52)
       .background(
-        isHovering ? Color.primary.opacity(0.05) : Color.clear,
+        isHovering ? AppVisualStyle.hover : Color.clear,
         in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
     .buttonStyle(.plain)
@@ -4319,7 +4226,7 @@ struct PluginCenterView: View {
         valueDescription: "截图、钉图、OCR 与翻译，一步完成看见与理解。",
         assetName: "YoumuAppIcon",
         systemImage: "viewfinder.circle.fill",
-        tint: aixlgPurple,
+        tint: AppVisualStyle.accent,
         category: "核心应用",
         mode: .launch,
         statusText: nil,
@@ -4334,7 +4241,7 @@ struct PluginCenterView: View {
         valueDescription: "阅读、检索和整理长文档，不必再装一堆零散工具。",
         assetName: "PijuanAppIcon",
         systemImage: "doc.richtext.fill",
-        tint: aixlgPurple,
+        tint: AppVisualStyle.accent,
         category: "核心应用",
         mode: .launch,
         statusText: nil,
@@ -4834,17 +4741,17 @@ private struct ApplicationCenterOverviewRow: View {
     .padding(.vertical, 6)
     .frame(maxWidth: .infinity, minHeight: 56)
     .background(
-      selected ? aixlgMist : Color.clear,
+      selected ? AppVisualStyle.selection : Color.clear,
       in: RoundedRectangle(cornerRadius: 9, style: .continuous)
     )
     .overlay(
       RoundedRectangle(cornerRadius: 9, style: .continuous)
-        .stroke(selected ? aixlgPurple.opacity(0.12) : Color.clear, lineWidth: 1)
+        .stroke(selected ? AppVisualStyle.separator : Color.clear, lineWidth: 1)
     )
     .overlay(alignment: .leading) {
       if selected {
         Capsule()
-          .fill(aixlgPurple)
+          .fill(AppVisualStyle.accent)
           .frame(width: 3, height: 24)
           .padding(.leading, 2)
           .accessibilityHidden(true)
@@ -4866,22 +4773,18 @@ private struct ApplicationCenterOverviewView: View {
 
   var body: some View {
     ZStack {
-      LinearGradient(
-        colors: [aixlgPaper, aixlgMist.opacity(0.78), aixlgPaper],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-      )
+      AppVisualStyle.background
 
       ScrollView {
         VStack(alignment: .leading, spacing: 16) {
           VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 7) {
               Circle()
-                .fill(aixlgPurple)
+                .fill(AppVisualStyle.accent)
                 .frame(width: 6, height: 6)
               Text("应用中心")
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(aixlgPurple)
+                .foregroundStyle(AppVisualStyle.accent)
             }
 
             Text("先试一个最有感的功能")
@@ -4942,12 +4845,12 @@ private struct ApplicationCenterOverviewView: View {
             }
           }
           .background(
-            aixlgPaper.opacity(0.92),
+            AppVisualStyle.surface.opacity(0.92),
             in: RoundedRectangle(cornerRadius: 13, style: .continuous)
           )
           .overlay(
             RoundedRectangle(cornerRadius: 13, style: .continuous)
-              .stroke(aixlgPurple.opacity(0.09), lineWidth: 1)
+              .stroke(AppVisualStyle.separator, lineWidth: 1)
           )
         }
         .padding(24)
@@ -4962,7 +4865,7 @@ private struct ApplicationCenterOverviewView: View {
     ApplicationCenterFirstWinButton(
       systemImage: "viewfinder.circle.fill",
       assetName: "YoumuAppIcon",
-      tint: aixlgPurple,
+      tint: AppVisualStyle.accent,
       title: "看懂屏幕外文",
       hint: "打开游目"
     ) {
@@ -5013,7 +4916,7 @@ private struct ApplicationCenterFirstWinButton: View {
       .padding(11)
       .frame(minWidth: 150, maxWidth: .infinity, minHeight: 88, alignment: .topLeading)
       .background(
-        aixlgPaper.opacity(0.88),
+        AppVisualStyle.surface.opacity(0.88),
         in: RoundedRectangle(cornerRadius: 11, style: .continuous)
       )
       .overlay(
@@ -5953,7 +5856,7 @@ struct PhrasePanelView: View {
           }
         }
       }
-      .premiumPanel(radius: 17, shadowRadius: 14, shadowY: 8)
+      .premiumPanel(radius: 17)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .onAppear {
@@ -6253,7 +6156,7 @@ struct ScrollPanelView: View {
       }
     }
     .padding(16)
-    .premiumPanel(radius: 17, shadowRadius: 14, shadowY: 8)
+    .premiumPanel(radius: 17)
     .onAppear {
       model.refreshLegacyScrollProfile()
       model.reloadScrollEngine()
@@ -6290,7 +6193,7 @@ struct SystemStatusPanelView: View {
           StatusPill(text: snapshot.memory.pressure.title, color: memoryTint)
         }
         .padding(16)
-        .premiumPanel(radius: 17, shadowRadius: 12, shadowY: 6)
+        .premiumPanel(radius: 17)
 
         LazyVGrid(columns: metricColumns, spacing: 12) {
           SystemStatusMetricCard(
@@ -6349,7 +6252,7 @@ struct SystemStatusPanelView: View {
           }
         }
         .padding(16)
-        .premiumPanel(radius: 17, shadowRadius: 12, shadowY: 6)
+        .premiumPanel(radius: 17)
       }
       .padding(.top, 4)
       .padding(.bottom, 10)
@@ -6415,7 +6318,7 @@ struct SystemStatusMetricCard: View {
     }
     .padding(14)
     .frame(minHeight: 118, alignment: .leading)
-    .premiumPanel(radius: 16, shadowRadius: 10, shadowY: 5)
+    .premiumPanel(radius: 16)
   }
 }
 
@@ -6766,14 +6669,14 @@ struct KeepAwakeSheetView: View {
       HStack(spacing: 16) {
         ZStack {
           Circle()
-            .fill(aixlgMist)
+            .fill(AppVisualStyle.selection)
           Image(systemName: model.keepAwakeEnabled ? "moon.stars.fill" : "moon.zzz")
             .font(.system(size: 21, weight: .semibold))
             .symbolRenderingMode(.hierarchical)
-            .foregroundStyle(aixlgPurple)
+            .foregroundStyle(AppVisualStyle.accent)
         }
         .frame(width: 52, height: 52)
-        .overlay(Circle().stroke(aixlgPurple.opacity(0.10), lineWidth: 1))
+        .overlay(Circle().stroke(AppVisualStyle.accent.opacity(0.10), lineWidth: 1))
         .accessibilityHidden(true)
 
         VStack(alignment: .leading, spacing: 3) {
@@ -6783,7 +6686,7 @@ struct KeepAwakeSheetView: View {
               .frame(width: 6, height: 6)
             Text("保持唤醒")
               .font(.system(size: 11, weight: .bold))
-              .foregroundStyle(aixlgPurple)
+              .foregroundStyle(AppVisualStyle.accent)
           }
           Text(model.keepAwakeEnabled ? "正在保持唤醒" : "Mac 可以正常睡眠")
             .font(.system(size: 22, weight: .semibold))
@@ -6829,7 +6732,7 @@ struct KeepAwakeSheetView: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
     .frame(width: 560, height: 480)
-    .background(aixlgPaper)
+    .background(AppVisualStyle.surface)
   }
 
   private var statusDetail: String {
@@ -7495,10 +7398,10 @@ private struct SettingsToggleLabel: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 3) {
       Text(title)
-        .font(.system(size: 13, weight: .semibold))
+        .font(AppVisualStyle.labelFont)
         .foregroundStyle(.primary)
       Text(detail)
-        .font(.system(size: 11, weight: .medium))
+        .font(AppVisualStyle.detailFont)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
     }
@@ -7516,15 +7419,15 @@ private struct SettingsGroup<Content: View>: View {
         .foregroundStyle(.primary)
       content
     }
-    .padding(16)
+    .padding(AppVisualStyle.panelInset)
     .frame(maxWidth: .infinity, alignment: .topLeading)
     .background(
-      Color(nsColor: .windowBackgroundColor).opacity(0.78),
+      AppVisualStyle.surface,
       in: RoundedRectangle(cornerRadius: 13, style: .continuous)
     )
     .overlay(
       RoundedRectangle(cornerRadius: 13, style: .continuous)
-        .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+        .stroke(AppVisualStyle.separator, lineWidth: 1)
     )
   }
 }
@@ -7651,7 +7554,7 @@ struct KeepAwakeSettingsPanel: View {
           .disabled(model.keepAwakeCustomHours >= 12)
           .accessibilityLabel("增加自定义时长")
         }
-        .foregroundStyle(aixlgPurple)
+        .foregroundStyle(AppVisualStyle.accent)
         .background(Color.white, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
           RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -7670,11 +7573,11 @@ struct KeepAwakeSettingsPanel: View {
       }
       .padding(14)
       .background(
-        aixlgMist.opacity(0.68), in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+        AppVisualStyle.selection.opacity(0.68), in: RoundedRectangle(cornerRadius: 14, style: .continuous)
       )
       .overlay(
         RoundedRectangle(cornerRadius: 14, style: .continuous)
-          .stroke(aixlgPurple.opacity(0.08), lineWidth: 1)
+          .stroke(AppVisualStyle.accent.opacity(0.08), lineWidth: 1)
       )
       .padding(.top, 16)
 
@@ -7686,9 +7589,9 @@ struct KeepAwakeSettingsPanel: View {
       HStack(spacing: 12) {
         Image(systemName: "display")
           .font(.system(size: 14, weight: .semibold))
-          .foregroundStyle(aixlgPurple)
+          .foregroundStyle(AppVisualStyle.accent)
           .frame(width: 30, height: 30)
-          .background(aixlgMist, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+          .background(AppVisualStyle.selection, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
           .accessibilityHidden(true)
 
         VStack(alignment: .leading, spacing: 3) {
@@ -7711,7 +7614,7 @@ struct KeepAwakeSettingsPanel: View {
         )
         .labelsHidden()
         .toggleStyle(.switch)
-        .tint(aixlgPurple)
+        .tint(AppVisualStyle.accent)
         .accessibilityLabel("同时保持屏幕亮起")
         .accessibilityIdentifier("keepAwake.keepDisplayOn")
       }
@@ -7728,16 +7631,16 @@ private struct KeepAwakeDurationButtonStyle: ButtonStyle {
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
       .font(.system(size: 13, weight: .semibold))
-      .foregroundStyle(aixlgPurple)
+      .foregroundStyle(AppVisualStyle.accent)
       .frame(height: 42)
       .background(
-        configuration.isPressed ? aixlgMist : Color.white,
+        configuration.isPressed ? AppVisualStyle.selection : Color.white,
         in: RoundedRectangle(cornerRadius: 11, style: .continuous)
       )
       .overlay(
         RoundedRectangle(cornerRadius: 11, style: .continuous)
           .stroke(
-            configuration.isPressed ? aixlgPurple.opacity(0.32) : hairline,
+            configuration.isPressed ? AppVisualStyle.accent.opacity(0.32) : hairline,
             lineWidth: 1)
       )
       .scaleEffect(configuration.isPressed ? 0.985 : 1)
@@ -7753,7 +7656,7 @@ private struct KeepAwakePrimaryButtonStyle: ButtonStyle {
       .padding(.horizontal, 14)
       .frame(height: 36)
       .background(
-        configuration.isPressed ? aixlgPurple.opacity(0.84) : aixlgPurple,
+        configuration.isPressed ? AppVisualStyle.accent.opacity(0.84) : AppVisualStyle.accent,
         in: RoundedRectangle(cornerRadius: 10, style: .continuous)
       )
       .scaleEffect(configuration.isPressed ? 0.985 : 1)
@@ -8066,7 +7969,7 @@ struct ShortcutUnifiedPanelView: View {
     }
     .padding(.horizontal, 16)
     .padding(.vertical, 13)
-    .premiumPanel(radius: 17, shadowRadius: 13, shadowY: 7)
+    .premiumPanel(radius: 17)
   }
 
   private var unifiedActions: some View {
@@ -8106,7 +8009,7 @@ struct ShortcutUnifiedPanelView: View {
         } label: {
           Text("交流群")
             .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(aixlgPurple)
+            .foregroundStyle(AppVisualStyle.accent)
         }
         .buttonStyle(.plain)
         .help("显示交流群二维码")
@@ -8138,7 +8041,7 @@ struct ShortcutUnifiedPanelView: View {
       if isPijuanPDFCategory {
         HStack(spacing: 8) {
           Image(systemName: "doc.richtext")
-            .foregroundStyle(aixlgPurple)
+            .foregroundStyle(AppVisualStyle.accent)
           Text("披卷内置快捷键可点击改键，不能删除。")
             .font(.system(size: 12, weight: .medium))
             .foregroundStyle(muted)
@@ -8146,12 +8049,12 @@ struct ShortcutUnifiedPanelView: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 36)
-        .background(aixlgMist.opacity(0.66), in: RoundedRectangle(cornerRadius: 9))
+        .background(AppVisualStyle.selection.opacity(0.66), in: RoundedRectangle(cornerRadius: 9))
       } else {
         HStack(spacing: 9) {
           Image(systemName: "magnifyingglass")
             .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(searchFocused ? aixlgPurple : muted)
+            .foregroundStyle(searchFocused ? AppVisualStyle.accent : muted)
           TextField(searchPlaceholder, text: $searchText)
             .textFieldStyle(.plain)
             .font(.system(size: 15, weight: .semibold))
@@ -8176,13 +8079,13 @@ struct ShortcutUnifiedPanelView: View {
         )
         .overlay(
           RoundedRectangle(cornerRadius: 9)
-            .stroke(searchFocused ? aixlgPurple.opacity(0.34) : hairline, lineWidth: 1)
+            .stroke(searchFocused ? AppVisualStyle.accent : hairline, lineWidth: 1)
         )
       }
     }
     .padding(10)
     .background(
-      aixlgPaper,
+      AppVisualStyle.surface,
       in: RoundedRectangle(cornerRadius: 12, style: .continuous)
     )
     .overlay(RoundedRectangle(cornerRadius: 12).stroke(hairline, lineWidth: 1))
@@ -8197,12 +8100,12 @@ struct ShortcutUnifiedPanelView: View {
         } label: {
           Text(shortcutGuideCategoryDisplayName(category))
             .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(selected ? aixlgPurple : ink)
+            .foregroundStyle(ink)
             .lineLimit(1)
             .padding(.horizontal, 9)
             .frame(height: 28)
             .background(
-              selected ? aixlgMist : Color.clear,
+              selected ? AppVisualStyle.selection : Color.clear,
               in: RoundedRectangle(cornerRadius: 7, style: .continuous)
             )
             .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
@@ -8858,7 +8761,7 @@ struct HeaderRow: View {
       FlexHeaderCell("说明")
     }
     .frame(height: 38)
-    .background(aixlgPaper)
+    .background(AppVisualStyle.surface)
     .overlay(Rectangle().fill(hairline).frame(height: 1), alignment: .bottom)
   }
 }
@@ -8957,7 +8860,7 @@ struct ShortcutRow: View {
     .overlay(Rectangle().fill(line).frame(height: 1), alignment: .bottom)
     .overlay(
       Rectangle()
-        .fill(selected ? aixlgPurple : Color.clear)
+        .fill(selected ? AppVisualStyle.accent : Color.clear)
         .frame(width: 3),
       alignment: .leading
     )
@@ -8983,26 +8886,9 @@ struct ShortcutRow: View {
     .animation(.easeOut(duration: 0.12), value: hovering)
   }
 
-  private var rowBackground: some ShapeStyle {
-    if selected {
-      return LinearGradient(
-        colors: [aixlgMist.opacity(0.92), aixlgPaper],
-        startPoint: .leading,
-        endPoint: .trailing
-      )
-    }
-    if hovering {
-      return LinearGradient(
-        colors: [aixlgPaper, Color.white],
-        startPoint: .leading,
-        endPoint: .trailing
-      )
-    }
-    return LinearGradient(
-      colors: [surface, surface],
-      startPoint: .leading,
-      endPoint: .trailing
-    )
+  private var rowBackground: Color {
+    if selected { return AppVisualStyle.selection }
+    return hovering ? AppVisualStyle.hover : AppVisualStyle.surface
   }
 
   private var editAction: (() -> Void)? {
@@ -10121,6 +10007,6 @@ struct StatusFooterView: View {
     }
     .padding(.horizontal, 12)
     .frame(height: 38)
-    .premiumPanel(radius: 13, shadowRadius: 8, shadowY: 4)
+    .premiumPanel(radius: 13)
   }
 }

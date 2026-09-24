@@ -3,9 +3,10 @@ import SwiftUI
 
 struct FreeSoftwareSettingsView: View {
   private let shareCopy = """
-  发现一个真正顺手的 Mac 工具：小龙哥 Mac 哲学。
-  把截图、剪贴板、PDF、快捷键和常用工具收在一起，少找一步，少打断一次。
-  全部功能永久免费，无需注册，打开就能用。
+  小龙哥 Mac 哲学，把快捷键练成你的连招。
+  像 LOL 里的英雄连招：游戏里，伤害打满；Mac 上，效率拉满。
+  截图、切到微信、粘贴，一气呵成。用成习惯，把时间留给真正想做的事。
+  全部功能永久免费，无需注册。
   https://aixlg.com/mac/
   """
   @State private var copyStatus = ""
@@ -13,7 +14,7 @@ struct FreeSoftwareSettingsView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
       Label("所有功能，永久免费", systemImage: "heart.fill").font(.headline)
-      Text("无需登录，没有使用期限。把好用的 Mac 工具分享给朋友，让更多人认识小龙哥。")
+      Text("无需登录，没有使用期限。把快捷键串成连招，也把这份顺手分享给朋友。")
         .font(.subheadline).foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
       Button {

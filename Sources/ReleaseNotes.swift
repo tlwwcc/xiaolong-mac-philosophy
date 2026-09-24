@@ -19,9 +19,24 @@ struct ReleaseNoteEntry: Equatable, Identifiable {
 
 enum ReleaseNotes {
   static let fallbackChangelogURL = URL(
-    string: "https://aixlg.com/mac/changelog/?v=20260923-window-controls")!
+    string: "https://aixlg.com/mac/changelog/?v=1.0.14-230")!
 
   static let bundled: [ReleaseNoteEntry] = [
+    ReleaseNoteEntry(
+      version: "1.0.14",
+      build: 230,
+      dateText: "2026-09-24",
+      title: "常用界面更清楚，连招分享更省事",
+      summary: "应用中心、快捷键、启动器和剪贴板换上更清爽的原生界面，选中、焦点与提示更容易辨认；分享文案也能直接介绍快捷键连招。",
+      highlights: [
+        "打开应用中心或快捷键页，内容层级更清楚，按钮与选中项保持一致的呈现。",
+        "打开启动器或剪贴板，搜索焦点和选中项更好辨认；权限、错误和告警继续清楚提示。",
+        "点击“复制分享文案”，直接把 LOL 英雄连招的熟悉感带到 Mac：把动作连起来，让效率跟上思路。",
+        "保留个人快捷键、短语和启动器设置，常用操作方式保持不变。",
+      ],
+      previousHighlights: ["所有功能永久免费，无需账号；官方签名、公证和更新安全校验继续保留。"],
+      changelogURL: fallbackChangelogURL
+    ),
     ReleaseNoteEntry(
       version: "1.0.13",
       build: 229,

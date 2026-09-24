@@ -4,16 +4,16 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 private enum ClipboardHistoryPalette {
-  static let brand = Color(red: 107 / 255, green: 35 / 255, blue: 142 / 255)
-  static let brandMist = Color(red: 244 / 255, green: 240 / 255, blue: 248 / 255)
-  static let paper = Color(red: 252 / 255, green: 251 / 255, blue: 253 / 255)
-  static let ink = Color(red: 23 / 255, green: 19 / 255, blue: 28 / 255)
-  static let copy = Color(red: 81 / 255, green: 72 / 255, blue: 87 / 255)
-  static let muted = Color(red: 113 / 255, green: 104 / 255, blue: 120 / 255)
-  static let line = Color(red: 46 / 255, green: 34 / 255, blue: 53 / 255).opacity(0.14)
-  static let success = Color(red: 0.00, green: 0.49, blue: 0.42)
-  static let warning = Color(red: 0.86, green: 0.52, blue: 0.10)
-  static let danger = Color(red: 0.82, green: 0.17, blue: 0.23)
+  static let brand = AppVisualStyle.accent
+  static let brandMist = AppVisualStyle.selection
+  static let paper = AppVisualStyle.surface
+  static let ink = AppVisualStyle.textPrimary
+  static let copy = AppVisualStyle.textSecondary
+  static let muted = AppVisualStyle.textSecondary
+  static let line = AppVisualStyle.separator
+  static let success = AppVisualStyle.success
+  static let warning = AppVisualStyle.warning
+  static let danger = AppVisualStyle.danger
 }
 
 struct ClipboardHistoryApplicationDetailView: View {
@@ -324,19 +324,19 @@ struct ClipboardHistoryWindowView: View {
         } label: {
           Text(filter.title)
             .font(.caption.weight(selected ? .semibold : .medium))
-            .foregroundStyle(selected ? Color.white : ClipboardHistoryPalette.copy)
+            .foregroundStyle(selected ? AppVisualStyle.textPrimary : ClipboardHistoryPalette.copy)
             .padding(.horizontal, 8)
             .frame(height: 28)
             .background(
               selected
-                ? ClipboardHistoryPalette.brand
-                : ClipboardHistoryPalette.brandMist.opacity(0.46),
+                ? AppVisualStyle.selection
+                : AppVisualStyle.surface,
               in: Capsule()
             )
             .overlay(
               Capsule()
                 .stroke(
-                  selected ? Color.clear : ClipboardHistoryPalette.line,
+                  ClipboardHistoryPalette.line,
                   lineWidth: 1
                 )
             )
@@ -867,7 +867,7 @@ private struct ClipboardHistoryRow: View {
           Text(ClipboardHistoryFormatting.title(entry))
             .font(.callout.weight(.semibold))
             .foregroundStyle(
-              usesEmphasizedSelection ? Color.white : ClipboardHistoryPalette.ink
+              usesEmphasizedSelection ? AppVisualStyle.selectedText : ClipboardHistoryPalette.ink
             )
             .lineLimit(1)
 
@@ -875,7 +875,7 @@ private struct ClipboardHistoryRow: View {
             Image(systemName: "pin.fill")
               .font(.caption2)
               .foregroundStyle(
-                usesEmphasizedSelection ? Color.white : ClipboardHistoryPalette.brand
+                usesEmphasizedSelection ? AppVisualStyle.selectedText : ClipboardHistoryPalette.brand
               )
               .accessibilityHidden(true)
           }
@@ -886,7 +886,7 @@ private struct ClipboardHistoryRow: View {
             Text("×\(entry.copyCount)")
               .font(.caption2.weight(.semibold))
               .foregroundStyle(
-                usesEmphasizedSelection ? Color.white : ClipboardHistoryPalette.brand)
+                usesEmphasizedSelection ? AppVisualStyle.selectedText : ClipboardHistoryPalette.brand)
           }
 
           if entry.kind == .files {
@@ -897,7 +897,7 @@ private struct ClipboardHistoryRow: View {
               )
               .font(.callout)
               .foregroundStyle(
-                usesEmphasizedSelection ? Color.white : ClipboardHistoryPalette.brand
+                usesEmphasizedSelection ? AppVisualStyle.selectedText : ClipboardHistoryPalette.brand
               )
             }
             .buttonStyle(.borderless)
@@ -912,7 +912,7 @@ private struct ClipboardHistoryRow: View {
             .font(.caption)
             .foregroundStyle(
               usesEmphasizedSelection
-                ? Color.white.opacity(0.88) : ClipboardHistoryPalette.copy
+                ? AppVisualStyle.selectedText.opacity(0.88) : ClipboardHistoryPalette.copy
             )
             .lineLimit(2)
         }
@@ -921,7 +921,7 @@ private struct ClipboardHistoryRow: View {
           .font(.caption2)
           .foregroundStyle(
             usesEmphasizedSelection
-              ? Color.white.opacity(0.76) : ClipboardHistoryPalette.muted
+              ? AppVisualStyle.selectedText.opacity(0.76) : ClipboardHistoryPalette.muted
           )
           .lineLimit(1)
       }

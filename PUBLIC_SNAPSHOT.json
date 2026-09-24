@@ -447,7 +447,7 @@
     },
     "Resources/Info.plist": {
       "executable": false,
-      "sha256": "967d706cfadb7ee52bcfe65c1df95cf9a6bfadb82967dba141ec58c930090178",
+      "sha256": "b8478d913e5a8a8bce2ea657227a626149e47abfcfcfe3d00693fbc55cbdf462",
       "size": 2657
     },
     "Resources/PijuanAppIcon.png": {
@@ -552,8 +552,13 @@
     },
     "Sources/AppViews.swift": {
       "executable": false,
-      "sha256": "8004e00ce51931d24d48a61d9653a0eff7e7e7cd55d6e16c544cbe86291bee9e",
-      "size": 324101
+      "sha256": "dc2d79e14d57a8f426b1a0bb12cf982ad6859a60a084f72d8aa95947564316d5",
+      "size": 320114
+    },
+    "Sources/AppVisualStyle.swift": {
+      "executable": false,
+      "sha256": "e556513262eef9153b3f2ee6f3ea20e8076c6d21d0c92aa0c5d2688f00904eda",
+      "size": 1760
     },
     "Sources/AuthorizationDragGuide.swift": {
       "executable": false,
@@ -632,8 +637,8 @@
     },
     "Sources/ClipboardHistoryViews.swift": {
       "executable": false,
-      "sha256": "d501bb3ee83d88040e26aba2862d7ef09af0ed142fa3366d432de5e133bca13f",
-      "size": 59729
+      "sha256": "c119339d57b97195a7e1025b297d1f88c789e404cdaf497bf4f003ae9b3f5e36",
+      "size": 59504
     },
     "Sources/ClipboardReplayFeedback.swift": {
       "executable": false,
@@ -687,8 +692,8 @@
     },
     "Sources/FreeSoftwareSettingsView.swift": {
       "executable": false,
-      "sha256": "285e204ed9f25c0ce8062cf4b88c9aa361cd2c911cdddc76c91ec78f28ef0081",
-      "size": 1712
+      "sha256": "3c9fe739c56c01a4b0901e200a3e903e88eddfdbe628b6fa348e2e2a5bdd14ad",
+      "size": 1759
     },
     "Sources/GlobalInputLease.swift": {
       "executable": false,
@@ -772,13 +777,13 @@
     },
     "Sources/ProductReleasePolicy.swift": {
       "executable": false,
-      "sha256": "eae5b5be879f2901ca7b2c91c65f0a4dc9005cacabe67ccc502a28b72a2ed7b2",
+      "sha256": "0b1f1fa3063bdc8e22a08797bd41ea6a27842ff5f31c693a73876819240099e2",
       "size": 1752
     },
     "Sources/ReleaseNotes.swift": {
       "executable": false,
-      "sha256": "7eff983899cc84e0f6b4a0dd14f51f6185c94da4df2c28fbe26aac736b2b39d0",
-      "size": 107564
+      "sha256": "a0664c6947fd34734737cecfffa59a5b347f9ead8b971cc01cc5b7e504d06049",
+      "size": 108582
     },
     "Sources/RetiredShiftInputSourcePreferences.swift": {
       "executable": false,
@@ -913,5 +918,5 @@
   },
   "kind": "frozen",
   "schemaVersion": 1,
-  "sourceRevision": "7cbf01c22b35cb1b63816b41229afcc17ef2f3e8"
+  "sourceRevision": "d8d871e172fe3513669f4c4b2748b940f8210c30"
 }

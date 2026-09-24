@@ -1,7 +1,7 @@
 import Foundation
 
 enum ProductReleaseIdentity {
-  static let publishedAt = "2026-09-23T00:00:00+08:00"
+  static let publishedAt = "2026-09-24T00:00:00+08:00"
 
   static func matchesPublicationMetadata(_ value: String?) -> Bool {
     !isFormalRelease || value == publishedAt
