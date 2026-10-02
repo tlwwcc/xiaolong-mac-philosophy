@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Darwin
 import SwiftUI
 
@@ -43,6 +44,7 @@ private struct NetworkStatusMenuItemState: Codable {
 
 private struct NetworkStatusMenuSnapshot: Codable {
   let items: [NetworkStatusMenuItemState]
+  var availableUpdateVersion: String? = nil
 }
 
 private struct NetworkStatusHelperMessage: Codable {
@@ -83,6 +85,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   private var sleepStatusItemObserver: NSObjectProtocol?
   private var menuBarConfigurationObserver: NSObjectProtocol?
   private var sparkleUpdateController: SparkleUpdateController?
+  private var updateReminderSubscription: AnyCancellable?
+  private var updateMenuItem: NSMenuItem?
+  private var updateWakeObserver: NSObjectProtocol?
   private var closeWindowKeyMonitor: Any?
   private var networkSpeedHelperProcess: Process?
   private var networkSpeedHelperInputHandle: FileHandle?
@@ -216,6 +221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   func applicationDidBecomeActive(_ notification: Notification) {
+    sparkleUpdateController?.checkForUpdatesIfNeeded()
     _ = model.refreshGlobalInputOwnership(trigger: "becameActive")
     let changed = model.refreshAuthorizationAndReloadIfNeeded()
     model.refreshLaunchAtLoginStatus()
@@ -441,6 +447,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     if let volumeFeedbackObserver {
       NotificationCenter.default.removeObserver(volumeFeedbackObserver)
     }
+    updateReminderSubscription = nil
+    if let updateWakeObserver {
+      NSWorkspace.shared.notificationCenter.removeObserver(updateWakeObserver)
+      self.updateWakeObserver = nil
+    }
     let workspaceCenter = NSWorkspace.shared.notificationCenter
     if let workspaceLaunchObserver {
       workspaceCenter.removeObserver(workspaceLaunchObserver)
@@ -648,6 +659,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let update = NSMenuItem(
       title: "检查更新…", action: #selector(checkForUpdatesAction), keyEquivalent: "")
     update.target = self
+    updateMenuItem = update
 
     let open = NSMenuItem(
       title: "功能快捷键", action: #selector(showShortcutGuideAction), keyEquivalent: "")
@@ -1303,10 +1315,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         isHidden: false,
         toolTip: nil))
 
+    states.append(
+      NetworkStatusMenuItemState(
+        id: "host.checkUpdates", title: updateMenuTitle,
+        isEnabled: true, isHidden: false, toolTip: "查看版本与软件更新"))
+
     sendNetworkStatusHelperMessage(
       NetworkStatusHelperMessage(
         type: "snapshot",
-        snapshot: NetworkStatusMenuSnapshot(items: states),
+        snapshot: NetworkStatusMenuSnapshot(
+          items: states, availableUpdateVersion: model.availableUpdateVersion),
         volume: nil),
       inputHandle: networkSpeedHelperInputHandle)
   }
@@ -1655,7 +1673,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         controller?.checkForUpdates()
       }
     }
+    updateReminderSubscription = model.$sparkleUpdateReminder
+      .combineLatest(model.$latestUpdate, model.$isUpdateBusy)
+      .sink { [weak self] _ in
+        Task { @MainActor [weak self] in self?.refreshUpdateReminder() }
+      }
+    updateWakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+      forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+    ) { [weak controller] _ in
+      MainActor.assumeIsolated { controller?.checkForUpdatesIfNeeded() }
+    }
     controller.start()
+  }
+
+  private func refreshUpdateReminder() {
+    updateMenuItem?.title = updateMenuTitle
+    updateMenuItem?.toolTip = model.hasAvailableUpdate ? "查看新版并更新" : "检查是否有新版本"
+    publishNetworkStatusMenuSnapshot()
+  }
+
+  private var updateMenuTitle: String {
+    if model.isUpdateBusy { return "正在更新…" }
+    if let version = model.availableUpdateVersion { return "有可用更新 · \(version)…" }
+    return "检查更新…"
   }
 
   private func handleVolumeFeedback(volume: Double, source: String) {
@@ -2465,9 +2505,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   @objc private func checkForUpdatesAction() {
-    model.showSettings(section: "更新与创始会员")
+    model.showAvailableUpdate()
     presentMainWindow()
-    model.checkForUpdates()
+    if !model.hasAvailableUpdate || model.isUpdateBusy { model.checkForUpdates() }
   }
 
   @objc private func closeWindowAction() {

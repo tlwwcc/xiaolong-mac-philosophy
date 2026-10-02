@@ -6,8 +6,35 @@ enum SparkleUpdateState: Equatable {
   case checking
   case found(displayVersion: String)
   case current
+  case installing
+  case sessionFinished
   case aheadOfRelease(displayVersion: String?)
   case failed(message: String)
+}
+
+// Discovery stays visible until a definitive version result supersedes it. Looking at,
+// cancelling or failing an update does not make that version disappear.
+struct SparkleUpdateReminder: Equatable {
+  private(set) var availableVersion: String?
+
+  mutating func receive(_ state: SparkleUpdateState) {
+    switch state {
+    case .found(let version): availableVersion = version
+    case .current, .aheadOfRelease: availableVersion = nil
+    case .ready, .checking, .installing, .sessionFinished, .failed: break
+    }
+  }
+}
+
+enum AutomaticUpdateDiscoveryPolicy {
+  static let interval: TimeInterval = 60 * 60
+
+  static func isDue(now: Date, lastCheck: Date?, lastAttempt: Date?) -> Bool {
+    // Keep a local attempt timestamp too: offline failures must not retry on every activation.
+    let last = [lastCheck, lastAttempt].compactMap { $0 }.max()
+    guard let last else { return true }
+    return now.timeIntervalSince(last) >= interval
+  }
 }
 
 enum SparkleUpdateResultPolicy {
@@ -70,7 +97,7 @@ enum CustomerSparkleNoUpdateAlert {
     case .failed(let message):
       alert.messageText = "暂时没有可用更新"
       alert.informativeText = message
-    case .ready, .checking, .found:
+    case .ready, .checking, .found, .installing, .sessionFinished:
       alert.messageText = "暂时无法确认更新结果"
       alert.informativeText = "请稍后重新检查更新。"
     }
@@ -81,6 +108,13 @@ enum CustomerSparkleNoUpdateAlert {
 
 @MainActor
 final class CustomerSparkleUserDriver: SPUStandardUserDriver {
+  var updateStateHandler: ((SparkleUpdateState) -> Void)?
+
+  override func showDownloadInitiated(cancellation: @escaping () -> Void) {
+    updateStateHandler?(.installing)
+    super.showDownloadInitiated(cancellation: cancellation)
+  }
+
   override func showUpdateNotFoundWithError(
     _ error: any Error, acknowledgement: @escaping () -> Void
   ) {
@@ -127,6 +161,7 @@ final class SparkleUpdateController: NSObject, SPUUpdaterDelegate,
   private lazy var updater = SPUUpdater(
     hostBundle: .main, applicationBundle: .main, userDriver: userDriver, delegate: self)
   private var started = false
+  private var lastDiscoveryAttempt: Date?
 
   init(stateHandler: @escaping (SparkleUpdateState) -> Void) {
     self.stateHandler = stateHandler
@@ -134,7 +169,19 @@ final class SparkleUpdateController: NSObject, SPUUpdaterDelegate,
   }
 
   func start() {
-    startIfNeeded()
+    guard startIfNeeded() else { return }
+    lastDiscoveryAttempt = Date()
+    updater.checkForUpdateInformation()
+  }
+
+  func checkForUpdatesIfNeeded() {
+    guard started, !updater.sessionInProgress,
+      AutomaticUpdateDiscoveryPolicy.isDue(
+        now: Date(), lastCheck: updater.lastUpdateCheckDate, lastAttempt: lastDiscoveryAttempt)
+    else { return }
+    lastDiscoveryAttempt = Date()
+    // Information-only discovery never opens a window or starts a download.
+    updater.checkForUpdateInformation()
   }
 
   @discardableResult
@@ -144,6 +191,8 @@ final class SparkleUpdateController: NSObject, SPUUpdaterDelegate,
       // Version monitoring is part of the product default. Keep the published default active
       // even when an older install carried an unset or stale Sparkle preference.
       updater.automaticallyChecksForUpdates = true
+      updater.updateCheckInterval = AutomaticUpdateDiscoveryPolicy.interval
+      userDriver.updateStateHandler = stateHandler
       try updater.start()
       started = true
       stateHandler(.ready)
@@ -158,7 +207,8 @@ final class SparkleUpdateController: NSObject, SPUUpdaterDelegate,
     // Free base updates remain available while account recovery is unavailable. Release metadata
     // and the signed update are still checked immediately before installation.
     guard startIfNeeded() else { return }
-    stateHandler(.checking)
+    // A pending gentle reminder/download is brought into focus, not checked a second time.
+    if !updater.sessionInProgress { stateHandler(.checking) }
     updater.checkForUpdates()
   }
 
@@ -181,6 +231,25 @@ final class SparkleUpdateController: NSObject, SPUUpdaterDelegate,
     stateHandler(
       .found(
         displayVersion: CustomerVersionFormatter.updateVersion(item.displayVersionString)))
+  }
+
+  var supportsGentleScheduledUpdateReminders: Bool { true }
+
+  func standardUserDriverShouldHandleShowingScheduledUpdate(
+    _ update: SUAppcastItem, andInImmediateFocus immediateFocus: Bool
+  ) -> Bool {
+    false
+  }
+
+  func standardUserDriverWillHandleShowingUpdate(
+    _ handleShowingUpdate: Bool, forUpdate update: SUAppcastItem, state: SPUUserUpdateState
+  ) {
+    stateHandler(
+      .found(displayVersion: CustomerVersionFormatter.updateVersion(update.displayVersionString)))
+  }
+
+  func standardUserDriverWillFinishUpdateSession() {
+    stateHandler(.sessionFinished)
   }
 
   @objc(versionDisplayerForUpdater:)

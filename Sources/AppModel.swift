@@ -273,6 +273,7 @@ final class AppModel: ObservableObject {
   @Published private(set) var fileAssociationFeedbackKind: AssociatedFileKind?
   @Published private(set) var fileAssociationFeedbackText = ""
   @Published var codexNetworkProbeDefaultDirection: NetworkProbeDirection = .domestic
+  @Published private(set) var sparkleUpdateReminder = SparkleUpdateReminder()
   @Published var latestUpdate: AppUpdateManifest?
   @Published var updateServerVersionText = "未检查"
   @Published var updateStatusText = "未检查"
@@ -391,11 +392,8 @@ final class AppModel: ObservableObject {
   private var phraseSaveWorkItem: DispatchWorkItem?
   private var phraseSaveNeedsReload = false
   private var shortcutDefaultBaselineVersionCommitPending = false
-  private var maximizeRestoreFrames: [String: CGRect] = [:]
-  private var pendingMaximizeRestoreKeys = Set<String>()
-  private var windowOperationSequence: UInt64 = 0
-  private var windowOperationTokens: [String: UInt64] = [:]
-  private var fullScreenToggleGeneration: UInt64 = 0
+  private let windowArrangementController = WindowArrangementController()
+  private var windowArrangementScreenObserver: NSObjectProtocol?
   private var recentlyHiddenAppBundleIDs: [String: TimeInterval] = [:]
   private var appForegroundPendingUntil: [String: TimeInterval] = [:]
   private var appActivationSequence: UInt64 = 0
@@ -422,7 +420,6 @@ final class AppModel: ObservableObject {
   private var needsUpdateAuthorizationRecheck = false
 
   private var launchAgentID: String { runtimeIdentity.launchAgentIdentifier }
-  private let maximizeRestoreDefaultsKey = "windowMaximizeRestoreFramesV2"
   private let deletedShortcutNamesDefaultsKey = "deletedShortcutNamesV1"
   private let deletedShortcutRecoveryIDsDefaultsKey = "deletedShortcutRecoveryIDsV1"
   private let appRecentlyHiddenInterval: TimeInterval = 1.2
@@ -603,9 +600,14 @@ final class AppModel: ObservableObject {
     refreshLegacyScrollProfile()
     scrollSettings = loadScrollSettings()
     saveScrollSettings()
+    let windowController = windowArrangementController
+    windowArrangementScreenObserver = NotificationCenter.default.addObserver(
+      forName: NSApplication.didChangeScreenParametersNotification,
+      object: nil, queue: .main
+    ) { _ in windowController.cancel() }
     hotkeyManager = HotkeyManager(
       onTrigger: { [weak self] item, context in
-        Task { @MainActor [weak self] in
+        HotkeyActionDelivery.deliver { [weak self] in
           guard let self else { return }
           guard
             !item.usesChordTrigger
@@ -715,6 +717,11 @@ final class AppModel: ObservableObject {
   }
 
   func shutdown() {
+    windowArrangementController.cancel()
+    if let observer = windowArrangementScreenObserver {
+      NotificationCenter.default.removeObserver(observer)
+      windowArrangementScreenObserver = nil
+    }
     phraseSaveWorkItem?.cancel()
     shellExecutionGeneration &+= 1
     shellExecution?.cancel()
@@ -961,16 +968,27 @@ final class AppModel: ObservableObject {
     updateServerVersionText
   }
 
+  var availableUpdateVersion: String? {
+    sparkleUpdateReminder.availableVersion ?? latestUpdate?.displayVersion
+  }
+
+  var hasAvailableUpdate: Bool { availableUpdateVersion != nil }
+
+  func showAvailableUpdate() {
+    showSettings(section: SettingsNavigationPolicy.updates)
+    presentWindowHandler?()
+  }
+
   var updatePrimaryActionTitle: String {
     if isUpdateBusy {
       return "处理中"
     }
-    guard let latestUpdate else { return "检查更新" }
-    return "更新到 \(latestUpdate.displayVersion)"
+    guard let version = availableUpdateVersion else { return "检查更新" }
+    return "更新到 \(version)"
   }
 
   var updatePrimaryActionIcon: String {
-    latestUpdate == nil ? "arrow.clockwise" : "square.and.arrow.down"
+    hasAvailableUpdate ? "square.and.arrow.down" : "arrow.clockwise"
   }
 
   private var currentBuildNumber: Int {
@@ -1764,8 +1782,6 @@ final class AppModel: ObservableObject {
     if usesSparkleUpdater {
       latestUpdate = nil
       updateFailureMessage = nil
-      updateServerVersionText = "检查中"
-      updateStatusText = "正在检查更新..."
       guard let sparkleCheckForUpdatesHandler else {
         handleSparkleUpdateState(.failed(message: "更新组件尚未就绪，请稍后再试。"))
         return
@@ -1981,6 +1997,7 @@ final class AppModel: ObservableObject {
 
   func handleSparkleUpdateState(_ state: SparkleUpdateState) {
     guard usesSparkleUpdater else { return }
+    sparkleUpdateReminder.receive(state)
     latestUpdate = nil
     updateDownloadProgress = nil
     isUpdateBusy = false
@@ -1997,8 +2014,16 @@ final class AppModel: ObservableObject {
     case .found(let displayVersion):
       updateFailureMessage = nil
       updateServerVersionText = displayVersion
-      updateStatusText = "发现新版 \(displayVersion)，请在更新窗口中确认。"
+      updateStatusText = "发现新版 \(displayVersion)，点击“查看并更新”即可继续。"
       statusMessage = "发现新版 \(displayVersion)。"
+    case .installing:
+      isUpdateBusy = true
+      updateFailureMessage = nil
+      updateStatusText = "正在更新，请在更新窗口中查看进度。"
+    case .sessionFinished:
+      if updateFailureMessage == nil, let version = availableUpdateVersion {
+        updateStatusText = "新版 \(version) 随时可以继续更新。"
+      }
     case .aheadOfRelease(let displayVersion):
       updateFailureMessage = nil
       updateServerVersionText = displayVersion ?? "暂未确认"
@@ -2010,7 +2035,7 @@ final class AppModel: ObservableObject {
       updateStatusText = "已是最新版：当前 \(appVersionText)。"
       statusMessage = "当前已是最新版。"
     case .failed(let message):
-      updateServerVersionText = "暂不可用"
+      updateServerVersionText = availableUpdateVersion ?? "暂不可用"
       updateFailureMessage = message
       updateStatusText = message
       statusMessage = message
@@ -9800,107 +9825,11 @@ final class AppModel: ObservableObject {
   }
 
   private func toggleNativeFullScreen() {
-    fullScreenToggleGeneration &+= 1
-    let generation = fullScreenToggleGeneration
-    guard AXIsProcessTrusted() else {
-      statusMessage = "进入或退出全屏需要完成系统授权。"
-      presentAuthorizationCenter()
-      return
-    }
-    guard let app = NSWorkspace.shared.frontmostApplication else {
-      statusMessage = "没有找到当前前台 App。"
-      return
-    }
-    let appElement = AXUIElementCreateApplication(app.processIdentifier)
-    guard
-      let window = focusedWindow(for: appElement)
-        ?? mainWindow(for: appElement)
-        ?? controllableWindow(for: appElement)
-    else {
-      statusMessage = "没有找到可全屏的窗口。"
-      return
-    }
-
-    let appName = app.localizedName ?? app.bundleIdentifier ?? ""
-    let isFullScreen = axBool(window, attribute: "AXFullScreen" as CFString) ?? false
-    let nextValue: CFBoolean = isFullScreen ? kCFBooleanFalse! : kCFBooleanTrue!
-    let result = AXUIElementSetAttributeValue(window, "AXFullScreen" as CFString, nextValue)
-    AppDiagnostics.log(
-      "native_fullscreen_toggle",
-      [
-        "app": appName,
-        "from": "\(isFullScreen)",
-        "result": "\(result.rawValue)",
-      ])
-
-    let expected = !isFullScreen
-    let finish: (Bool) -> Void = { [weak self] succeeded in
-      guard let self, self.fullScreenToggleGeneration == generation else { return }
-      self.statusMessage =
-        succeeded
-        ? (isFullScreen ? "已退出全屏。" : "已进入全屏。")
-        : "全屏动作未观察到窗口状态变化，请检查该窗口是否支持 AXFullScreen。"
-    }
-    let tryKeyboardFallback: () -> Void = { [weak self] in
-      guard let self, self.fullScreenToggleGeneration == generation else { return }
-      self.sendShortcut("⌃ ⌘ F")
-      self.pollFullScreenState(
-        window,
-        expected: expected,
-        generation: generation,
-        deadline: ProcessInfo.processInfo.systemUptime + 0.45,
-        completion: finish)
-    }
-
-    guard result == .success else {
-      tryKeyboardFallback()
-      return
-    }
-    pollFullScreenState(
-      window,
-      expected: expected,
-      generation: generation,
-      deadline: ProcessInfo.processInfo.systemUptime + 0.45
-    ) { [weak self] succeeded in
-      guard let self, self.fullScreenToggleGeneration == generation else { return }
-      if succeeded {
-        finish(true)
-      } else {
-        AppDiagnostics.log(
-          "native_fullscreen_toggle_wait_miss",
-          ["app": appName, "from": "\(isFullScreen)", "to": "\(expected)"])
-        tryKeyboardFallback()
-      }
-    }
-  }
-
-  private func pollFullScreenState(
-    _ window: AXUIElement,
-    expected: Bool,
-    generation: UInt64,
-    deadline: TimeInterval,
-    completion: @escaping (Bool) -> Void
-  ) {
-    guard fullScreenToggleGeneration == generation else { return }
-    if axBool(window, attribute: "AXFullScreen" as CFString) == expected {
-      completion(true)
-      return
-    }
-    guard ProcessInfo.processInfo.systemUptime < deadline else {
-      completion(false)
-      return
-    }
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) { [weak self] in
-      self?.pollFullScreenState(
-        window,
-        expected: expected,
-        generation: generation,
-        deadline: deadline,
-        completion: completion)
-    }
+    submitWindowArrangement(.nativeFullScreen)
   }
 
   private func closeWindowSmart() {
+    windowArrangementController.cancel()
     let requestedApplication = NSWorkspace.shared.frontmostApplication
     let bundleID = requestedApplication?.bundleIdentifier ?? ""
     let browserName: String?
@@ -9991,166 +9920,51 @@ final class AppModel: ObservableObject {
   }
 
   private func applyWindowPreset(_ target: String) {
-    guard let preset = WindowPreset(rawValue: target) else {
+    guard WindowPreset(rawValue: target) != nil,
+      let action = WindowArrangementAction(rawValue: target)
+    else {
       statusMessage = "窗口动作无效：\(target)"
       return
     }
+    submitWindowArrangement(action)
+  }
+
+  private static func windowArrangementScreens() -> [WindowArrangementScreen] {
+    let screens = NSScreen.screens
+    let primaryTop = screens.first?.frame.maxY ?? 0
+    return screens.map {
+      WindowArrangementScreen(
+        frame: AXWindowGeometry.convertAppKitRectToAX($0.frame, primaryTop: primaryTop),
+        visibleFrame: AXWindowGeometry.convertAppKitRectToAX(
+          $0.visibleFrame, primaryTop: primaryTop))
+    }
+  }
+
+  private func submitWindowArrangement(_ action: WindowArrangementAction) {
     guard AXIsProcessTrusted() else {
+      windowArrangementController.cancel()
       statusMessage = "窗口管理需要完成系统授权。"
       presentAuthorizationCenter()
       return
     }
     guard let app = NSWorkspace.shared.frontmostApplication else {
+      windowArrangementController.cancel()
       statusMessage = "没有找到当前前台 App。"
       return
     }
-    let appElement = AXUIElementCreateApplication(app.processIdentifier)
-    guard let window = controllableWindow(for: appElement) else {
-      statusMessage = "没有找到可控制的窗口。"
-      return
-    }
-    let appName = app.localizedName ?? app.bundleIdentifier ?? "当前 App"
-    let restoreKey = maximizeRestoreKey(for: window, app: app)
+    let application = WindowArrangementApplication(
+      pid: app.processIdentifier,
+      launchTime: app.launchDate?.timeIntervalSince1970)
     AppDiagnostics.log(
       "window_preset_start",
-      [
-        "app": appName,
-        "bundle": app.bundleIdentifier ?? "",
-        "preset": preset.rawValue,
-        "title": axWindowTitle(window),
-        "window": restoreKey,
-      ])
-    prepareWindowForControl(window)
-    if preset == .minimize {
-      let result = AXUIElementSetAttributeValue(
-        window, kAXMinimizedAttribute as CFString, kCFBooleanTrue)
-      statusMessage = result == .success ? "已最小化窗口。" : "窗口最小化失败。"
-      return
-    }
-    if preset == .maximize {
-      toggleWindowMaximize(window, app: app)
-      return
-    }
-    guard let frame = targetFrame(
-      for: preset,
-      window: window,
-      restoreFrame: maximizeRestoreFrame(for: restoreKey)
-    ) else {
-      statusMessage = "无法计算窗口位置。"
-      return
-    }
-    pendingMaximizeRestoreKeys.remove(restoreKey)
-    setWindow(window, frame: frame, app: app) { [weak self] succeeded in
-      guard let self else { return }
-      if succeeded { self.removeMaximizeRestoreFrame(for: restoreKey) }
-      self.statusMessage = succeeded ? "窗口已调整。" : "窗口位置调整失败。"
+      ["preset": action.rawValue, "bundle": app.bundleIdentifier ?? ""])
+    windowArrangementController.submit(
+      action: action, application: application, screens: Self.windowArrangementScreens(),
+      screenProvider: { AppModel.windowArrangementScreens() }
+    ) { [weak self] result in
+      self?.statusMessage = result.message
       AppDiagnostics.log(
-        "window_preset_finished",
-        ["app": appName, "preset": preset.rawValue, "success": "\(succeeded)"])
-    }
-  }
-
-  private func toggleWindowMaximize(_ window: AXUIElement, app: NSRunningApplication) {
-    guard let current = windowFrame(window) else {
-      statusMessage = "无法读取当前窗口位置。"
-      return
-    }
-    let screen = screen(containing: current) ?? NSScreen.main
-    guard let screen, let visible = visibleAXFrame(for: screen) else {
-      statusMessage = "无法读取当前屏幕范围。"
-      return
-    }
-    let restoreKey = maximizeRestoreKey(for: window, app: app)
-
-    if pendingMaximizeRestoreKeys.remove(restoreKey) != nil,
-      let previous = maximizeRestoreFrame(for: restoreKey)
-    {
-      let restored = clampedRestoreFrame(previous)
-      setWindow(window, frame: restored, app: app) { [weak self] succeeded in
-        guard let self else { return }
-        if succeeded {
-          self.removeMaximizeRestoreFrame(for: restoreKey)
-          self.statusMessage = "已恢复窗口。"
-        } else {
-          self.statusMessage = "窗口恢复失败，已保留原恢复位置。"
-        }
-      }
-      return
-    }
-
-    if current.isVisuallyMaximized(in: visible) {
-      let restored = clampedRestoreFrame(
-        maximizeRestoreFrame(for: restoreKey) ?? defaultRestoreFrame(in: visible))
-      guard !restored.isVisuallyMaximized(in: visible) || restored != visible else {
-        statusMessage = "窗口已是窗口化全屏。"
-        return
-      }
-      pendingMaximizeRestoreKeys.remove(restoreKey)
-      setWindow(window, frame: restored, app: app) { [weak self] succeeded in
-        guard let self else { return }
-        if succeeded {
-          self.removeMaximizeRestoreFrame(for: restoreKey)
-          self.statusMessage = "已恢复窗口。"
-        } else {
-          self.statusMessage = "窗口恢复失败，已保留原恢复位置。"
-        }
-      }
-      return
-    }
-
-    storeMaximizeRestoreFrame(current, for: restoreKey)
-    pendingMaximizeRestoreKeys.insert(restoreKey)
-    setWindow(window, frame: visible, app: app, visualMaximizeFrame: visible) {
-      [weak self] succeeded in
-      guard let self else { return }
-      self.pendingMaximizeRestoreKeys.remove(restoreKey)
-      if succeeded {
-        self.statusMessage = "已窗口化全屏。"
-      } else {
-        if self.maximizeRestoreFrame(for: restoreKey) == current {
-          self.removeMaximizeRestoreFrame(for: restoreKey)
-        }
-        self.statusMessage = "窗口化全屏失败，未记入错误的恢复位置。"
-      }
-    }
-  }
-
-  private func targetFrame(
-    for preset: WindowPreset,
-    window: AXUIElement,
-    restoreFrame: CGRect? = nil
-  ) -> CGRect? {
-    let current = windowFrame(window) ?? .zero
-    let screen = screen(containing: current) ?? NSScreen.main
-    guard let screen, let visible = visibleAXFrame(for: screen) else { return nil }
-    let halfWidth = visible.width / 2
-    let halfHeight = visible.height / 2
-    switch preset {
-    case .leftHalf:
-      return CGRect(x: visible.minX, y: visible.minY, width: halfWidth, height: visible.height)
-    case .rightHalf:
-      return CGRect(x: visible.midX, y: visible.minY, width: halfWidth, height: visible.height)
-    case .topHalf:
-      return CGRect(x: visible.minX, y: visible.minY, width: visible.width, height: halfHeight)
-    case .bottomHalf:
-      return CGRect(x: visible.minX, y: visible.midY, width: visible.width, height: halfHeight)
-    case .topLeft:
-      return CGRect(x: visible.minX, y: visible.minY, width: halfWidth, height: halfHeight)
-    case .topRight:
-      return CGRect(x: visible.midX, y: visible.minY, width: halfWidth, height: halfHeight)
-    case .bottomLeft:
-      return CGRect(x: visible.minX, y: visible.midY, width: halfWidth, height: halfHeight)
-    case .bottomRight:
-      return CGRect(x: visible.midX, y: visible.midY, width: halfWidth, height: halfHeight)
-    case .maximize:
-      return visible
-    case .center:
-      return WindowControlGeometry.centeredFrame(
-        current: current,
-        restoreFrame: restoreFrame,
-        visible: visible)
-    case .minimize:
-      return nil
+        "window_preset_finished", ["preset": action.rawValue, "result": result.status.rawValue])
     }
   }
 
@@ -10178,249 +9992,6 @@ final class AppModel: ObservableObject {
     AXValueGetValue(positionValue, .cgPoint, &position)
     AXValueGetValue(sizeValue, .cgSize, &size)
     return CGRect(origin: position, size: size)
-  }
-
-  private func screen(containing frame: CGRect) -> NSScreen? {
-    let screens = NSScreen.screens
-    guard !screens.isEmpty else { return nil }
-    guard frame != .zero else { return NSScreen.main ?? screens.first }
-    let geometries = screens.map {
-      WindowScreenGeometry(frame: $0.frame, visibleFrame: $0.visibleFrame)
-    }
-    guard
-      let index = AXWindowGeometry.screenIndex(
-        containingAXFrame: frame,
-        screens: geometries,
-        primaryTop: primaryScreenTop(for: screens))
-    else { return NSScreen.main ?? screens.first }
-    return screens[index]
-  }
-
-  private func visibleAXFrame(for screen: NSScreen) -> CGRect? {
-    let visible = screen.visibleFrame
-    guard visible.width > 0, visible.height > 0 else { return nil }
-    return AXWindowGeometry.visibleAXFrame(
-      for: WindowScreenGeometry(frame: screen.frame, visibleFrame: visible),
-      primaryTop: primaryScreenTop(for: NSScreen.screens))
-  }
-
-  private func primaryScreenTop(for screens: [NSScreen]) -> CGFloat {
-    screens.first?.frame.maxY ?? NSScreen.main?.frame.maxY ?? 0
-  }
-
-  private func clampedRestoreFrame(_ frame: CGRect) -> CGRect {
-    guard let restoreScreen = screen(containing: frame),
-      let visible = visibleAXFrame(for: restoreScreen)
-    else { return frame }
-    return AXWindowGeometry.clamped(frame, to: visible)
-  }
-
-  private func defaultRestoreFrame(in visible: CGRect) -> CGRect {
-    WindowControlGeometry.defaultRestoreFrame(in: visible)
-  }
-
-  private func prepareWindowForControl(_ window: AXUIElement) {
-    let wasMinimized = isWindowMinimized(window)
-    let unminimize = AXUIElementSetAttributeValue(
-      window,
-      kAXMinimizedAttribute as CFString,
-      kCFBooleanFalse)
-    let main = AXUIElementSetAttributeValue(
-      window,
-      kAXMainAttribute as CFString,
-      kCFBooleanTrue)
-    let focused = AXUIElementSetAttributeValue(
-      window,
-      kAXFocusedAttribute as CFString,
-      kCFBooleanTrue)
-    let raised = AXUIElementPerformAction(window, kAXRaiseAction as CFString)
-    AppDiagnostics.log(
-      "window_prepare",
-      [
-        "wasMinimized": "\(wasMinimized)",
-        "unminimize": "\(unminimize.rawValue)",
-        "main": "\(main.rawValue)",
-        "focused": "\(focused.rawValue)",
-        "raise": "\(raised.rawValue)",
-      ])
-  }
-
-  private func setWindow(
-    _ window: AXUIElement,
-    frame: CGRect,
-    app: NSRunningApplication,
-    visualMaximizeFrame: CGRect? = nil,
-    completion: @escaping (Bool) -> Void
-  ) {
-    let operationKey = windowOperationKey(for: window, app: app)
-    windowOperationSequence &+= 1
-    let operationToken = windowOperationSequence
-    windowOperationTokens[operationKey] = operationToken
-    setWindowWithAccessibility(window, frame: frame)
-    scheduleWindowVerification(
-      window,
-      requestedFrame: frame,
-      visualMaximizeFrame: visualMaximizeFrame,
-      app: app,
-      operationKey: operationKey,
-      operationToken: operationToken,
-      attempt: 0,
-      delay: 0.05,
-      completion: completion)
-  }
-
-  private func scheduleWindowVerification(
-    _ window: AXUIElement,
-    requestedFrame: CGRect,
-    visualMaximizeFrame: CGRect?,
-    app: NSRunningApplication,
-    operationKey: String,
-    operationToken: UInt64,
-    attempt: Int,
-    delay: TimeInterval,
-    completion: @escaping (Bool) -> Void
-  ) {
-    DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak app] in
-      guard let self, let app,
-        self.windowOperationTokens[operationKey] == operationToken
-      else { return }
-      let fallbackFrame = visualMaximizeFrame ?? requestedFrame
-      if self.windowFrame(window).matchesRequestedFrame(
-        attempt == 0 ? requestedFrame : fallbackFrame,
-        visualMaximizeFrame: visualMaximizeFrame)
-      {
-        self.finishWindowOperation(
-          key: operationKey, token: operationToken, succeeded: true, completion: completion)
-        return
-      }
-
-      switch attempt {
-      case 0:
-        self.setWindowWithAccessibility(window, frame: fallbackFrame)
-        self.scheduleWindowVerification(
-          window,
-          requestedFrame: requestedFrame,
-          visualMaximizeFrame: visualMaximizeFrame,
-          app: app,
-          operationKey: operationKey,
-          operationToken: operationToken,
-          attempt: 1,
-          delay: 0.05,
-          completion: completion)
-      case 1:
-        guard let index = self.systemEventsWindowIndex(for: window, pid: app.processIdentifier)
-        else {
-          self.setWindowWithAccessibility(window, frame: fallbackFrame)
-          self.scheduleWindowVerification(
-            window,
-            requestedFrame: requestedFrame,
-            visualMaximizeFrame: visualMaximizeFrame,
-            app: app,
-            operationKey: operationKey,
-            operationToken: operationToken,
-            attempt: 3,
-            delay: 0.08,
-            completion: completion)
-          return
-        }
-        self.setWindowWithSystemEvents(
-          pid: app.processIdentifier,
-          windowIndex: index,
-          frame: fallbackFrame
-        ) { [weak self, weak app] _ in
-          guard let self, let app,
-            self.windowOperationTokens[operationKey] == operationToken
-          else { return }
-          self.scheduleWindowVerification(
-            window,
-            requestedFrame: requestedFrame,
-            visualMaximizeFrame: visualMaximizeFrame,
-            app: app,
-            operationKey: operationKey,
-            operationToken: operationToken,
-            attempt: 2,
-            delay: 0.08,
-            completion: completion)
-        }
-      case 2:
-        self.setWindowWithAccessibility(window, frame: fallbackFrame)
-        self.scheduleWindowVerification(
-          window,
-          requestedFrame: requestedFrame,
-          visualMaximizeFrame: visualMaximizeFrame,
-          app: app,
-          operationKey: operationKey,
-          operationToken: operationToken,
-          attempt: 3,
-          delay: 0.08,
-          completion: completion)
-      default:
-        self.finishWindowOperation(
-          key: operationKey, token: operationToken, succeeded: false, completion: completion)
-      }
-    }
-  }
-
-  private func finishWindowOperation(
-    key: String,
-    token: UInt64,
-    succeeded: Bool,
-    completion: (Bool) -> Void
-  ) {
-    guard windowOperationTokens[key] == token else { return }
-    windowOperationTokens.removeValue(forKey: key)
-    completion(succeeded)
-  }
-
-  private func windowOperationKey(
-    for window: AXUIElement,
-    app: NSRunningApplication
-  ) -> String {
-    let base = app.bundleIdentifier ?? "pid:\(app.processIdentifier)"
-    let identity =
-      intAttribute("AXWindowNumber", from: window).map(String.init)
-      ?? "element:\(CFHash(window))"
-    return "\(base)#\(identity)"
-  }
-
-  private func setWindowWithAccessibility(_ window: AXUIElement, frame: CGRect) {
-    var origin = frame.origin
-    var size = frame.size
-    guard let position = AXValueCreate(.cgPoint, &origin),
-      let windowSize = AXValueCreate(.cgSize, &size)
-    else {
-      return
-    }
-    // Shrink before moving so the old large size cannot clamp the new origin to a screen edge.
-    AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, windowSize)
-    AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, position)
-    AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, windowSize)
-    AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, position)
-  }
-
-  private func systemEventsWindowIndex(for window: AXUIElement, pid: pid_t) -> Int? {
-    let appElement = AXUIElementCreateApplication(pid)
-    return axWindows(for: appElement).firstIndex(where: { CFEqual($0, window) }).map { $0 + 1 }
-  }
-
-  private func setWindowWithSystemEvents(
-    pid: pid_t,
-    windowIndex: Int,
-    frame: CGRect,
-    completion: @escaping (Bool) -> Void
-  ) {
-    let script = """
-      tell application "System Events"
-        set matches to application processes whose unix id is \(pid)
-        if (count of matches) is 0 then error "process not found"
-        set targetProcess to item 1 of matches
-        if (count of windows of targetProcess) < \(windowIndex) then error "window not found"
-        set targetWindow to window \(windowIndex) of targetProcess
-        set size of targetWindow to {\(Int(frame.width)), \(Int(frame.height))}
-        set position of targetWindow to {\(Int(frame.minX)), \(Int(frame.minY))}
-      end tell
-      """
-    runAppleScript(script, timeout: 2, completion: completion)
   }
 
   private func controllableWindow(for appElement: AXUIElement) -> AXUIElement? {
@@ -10508,72 +10079,10 @@ final class AppModel: ObservableObject {
     return boolValue(from: rawMinimized)
   }
 
-  private func axBool(_ element: AXUIElement, attribute: CFString) -> Bool? {
-    var rawValue: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(element, attribute, &rawValue) == .success,
-      let rawValue
-    else {
-      return nil
-    }
-    return boolValue(from: rawValue)
-  }
-
   private func boolValue(from value: CFTypeRef) -> Bool {
     guard CFGetTypeID(value) == CFBooleanGetTypeID() else { return false }
     let boolValue = value as! CFBoolean
     return CFBooleanGetValue(boolValue)
-  }
-
-  private func maximizeRestoreKey(for window: AXUIElement, app: NSRunningApplication) -> String {
-    let appKey = app.bundleIdentifier ?? "pid:\(app.processIdentifier)"
-    if let windowNumber = intAttribute("AXWindowNumber", from: window) {
-      return "\(appKey)#window:\(windowNumber)"
-    }
-    // AXWindowNumber is not universal. The element hash is safe for this process lifetime but is
-    // deliberately not persisted because it has no identity meaning after relaunch.
-    return "\(appKey)#volatile:\(CFHash(window))"
-  }
-
-  private func storeMaximizeRestoreFrame(_ frame: CGRect, for key: String) {
-    maximizeRestoreFrames[key] = frame
-    guard !key.contains("#volatile:") else { return }
-    var stored = storedMaximizeRestoreFrames()
-    stored[key] = encodeFrame(frame)
-    UserDefaults.standard.set(stored, forKey: maximizeRestoreDefaultsKey)
-  }
-
-  private func maximizeRestoreFrame(for key: String) -> CGRect? {
-    if let frame = maximizeRestoreFrames[key] { return frame }
-    guard let rawFrame = storedMaximizeRestoreFrames()[key] else { return nil }
-    return decodeFrame(rawFrame)
-  }
-
-  private func removeMaximizeRestoreFrame(for key: String) {
-    maximizeRestoreFrames.removeValue(forKey: key)
-    guard !key.contains("#volatile:") else { return }
-    removeStoredMaximizeRestoreFrame(for: key)
-  }
-
-  private func removeStoredMaximizeRestoreFrame(for key: String) {
-    var stored = storedMaximizeRestoreFrames()
-    stored.removeValue(forKey: key)
-    UserDefaults.standard.set(stored, forKey: maximizeRestoreDefaultsKey)
-  }
-
-  private func storedMaximizeRestoreFrames() -> [String: String] {
-    UserDefaults.standard.dictionary(forKey: maximizeRestoreDefaultsKey) as? [String: String] ?? [:]
-  }
-
-  private func encodeFrame(_ frame: CGRect) -> String {
-    [frame.minX, frame.minY, frame.width, frame.height]
-      .map { String(format: "%.3f", Double($0)) }
-      .joined(separator: ",")
-  }
-
-  private func decodeFrame(_ value: String) -> CGRect? {
-    let parts = value.split(separator: ",").compactMap { Double($0) }
-    guard parts.count == 4, parts[2] > 0, parts[3] > 0 else { return nil }
-    return CGRect(x: parts[0], y: parts[1], width: parts[2], height: parts[3])
   }
 
   private func intAttribute(_ attribute: String, from element: AXUIElement) -> Int? {
@@ -10597,42 +10106,5 @@ final class AppModel: ObservableObject {
       return nil
     }
     return rawValue as? String
-  }
-}
-
-extension CGRect {
-  func isNearlyEqual(to other: CGRect, tolerance: CGFloat = 6) -> Bool {
-    abs(origin.x - other.origin.x) <= tolerance
-      && abs(origin.y - other.origin.y) <= tolerance
-      && abs(size.width - other.size.width) <= tolerance
-      && abs(size.height - other.size.height) <= tolerance
-  }
-
-  func isVisuallyMaximized(in visible: CGRect) -> Bool {
-    let widthOK = width >= visible.width - 24
-    let heightOK = height >= visible.height - 36
-    let xOK = abs(minX - visible.minX) <= 24
-    let bottomOK = abs(minY - visible.minY) <= 36
-    let topOK = abs(maxY - visible.maxY) <= 36
-    return widthOK && heightOK && xOK && (bottomOK || topOK)
-  }
-
-  func overfillsWorkArea(in visible: CGRect) -> Bool {
-    height > visible.height + 24 || maxY > visible.maxY + 24
-  }
-}
-
-extension Optional where Wrapped == CGRect {
-  fileprivate func matchesRequestedFrame(
-    _ frame: CGRect,
-    visualMaximizeFrame: CGRect?,
-    tolerance: CGFloat = 18
-  ) -> Bool {
-    guard let current = self else { return false }
-    if let visualMaximizeFrame {
-      return current.isVisuallyMaximized(in: visualMaximizeFrame)
-        && !current.overfillsWorkArea(in: visualMaximizeFrame)
-    }
-    return current.isNearlyEqual(to: frame, tolerance: tolerance)
   }
 }

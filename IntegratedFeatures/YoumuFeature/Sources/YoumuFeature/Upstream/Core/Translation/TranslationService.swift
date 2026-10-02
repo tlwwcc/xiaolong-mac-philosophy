@@ -10,7 +10,7 @@ struct TranslationBackendPolicy: Equatable {
             return TranslationBackendPolicy(triesAppleLocal: true, allowsOnline: true)
         case .appleLocal:
             return TranslationBackendPolicy(triesAppleLocal: true, allowsOnline: false)
-        case .onlineAPI:
+        case .onlineAPI, .sharedService:
             return TranslationBackendPolicy(triesAppleLocal: false, allowsOnline: true)
         }
     }
@@ -31,6 +31,13 @@ class TranslationService {
     /// 整段文本翻译（截图翻译弹窗用）
     func translate(text: String, targetLanguage: Language) async throws -> String {
         let settings = AppSettings.load()
+        if settings.translationBackend == .sharedService {
+            try await requireSharedConsent()
+            guard let translated = try await SharedTranslationClient().translate([text], target: targetLanguage).first else {
+                throw SharedTranslationError.invalidResponse
+            }
+            return translated
+        }
         let policy = TranslationBackendPolicy.resolve(settings.translationBackend)
 
         if policy.triesAppleLocal {
@@ -75,6 +82,11 @@ class TranslationService {
     ) async throws -> [NumberedBlockTranslation.BlockTranslation] {
         guard !blockTexts.isEmpty else { return [] }
         let settings = AppSettings.load()
+        if settings.translationBackend == .sharedService {
+            try await requireSharedConsent(systemPresentation: systemPresentation)
+            let translated = try await SharedTranslationClient().translate(blockTexts, target: targetLanguage)
+            return translated.enumerated().map { .init(index: $0.offset, text: $0.element, failed: false) }
+        }
         let policy = TranslationBackendPolicy.resolve(settings.translationBackend)
 
         if policy.triesAppleLocal {
@@ -100,7 +112,7 @@ class TranslationService {
         }
 
         let config = try loadValidConfig(from: settings)
-        try await requireOnlineConsent(for: config)
+        try await requireOnlineConsent(for: config, systemPresentation: systemPresentation)
         let translator = LLMTranslator(config: config)
 
         // 编号协议请求：system prompt 追加协议说明，user 消息带 ⟦n⟧ 前缀
@@ -163,6 +175,17 @@ class TranslationService {
 
     // MARK: - Private
 
+    private func requireSharedConsent(
+        systemPresentation: (@MainActor (Bool) -> Void)? = nil
+    ) async throws {
+        let allowed = try await OnlineDataConsentManager.shared.requestCancellable(
+            .sharedTranslation, endpoint: SharedTranslationClient.endpoint,
+            systemPresentation: systemPresentation
+        )
+        try Task.checkCancellation()
+        guard allowed else { throw TranslationError.onlineDataPermissionDenied }
+    }
+
     private func loadValidConfig(from settings: AppSettings) throws -> TranslationConfig {
         let config = try settings.translationConfig.normalizedForUse()
         guard !config.requiresAPIKey || !config.apiKey.isEmpty else {
@@ -171,12 +194,17 @@ class TranslationService {
         return config
     }
 
-    private func requireOnlineConsent(for config: TranslationConfig) async throws {
+    private func requireOnlineConsent(
+        for config: TranslationConfig,
+        systemPresentation: (@MainActor (Bool) -> Void)? = nil
+    ) async throws {
         let endpoint = try LLMTranslator.validatedEndpoint(config.apiEndpoint)
-        let allowed = OnlineDataConsentManager.shared.request(
+        let allowed = try await OnlineDataConsentManager.shared.requestCancellable(
             .translation,
-            endpoint: endpoint
+            endpoint: endpoint,
+            systemPresentation: systemPresentation
         )
+        try Task.checkCancellation()
         guard allowed else { throw TranslationError.onlineDataPermissionDenied }
     }
 }

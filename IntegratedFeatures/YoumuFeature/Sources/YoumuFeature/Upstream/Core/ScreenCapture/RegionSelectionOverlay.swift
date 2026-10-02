@@ -166,7 +166,7 @@ class RegionSelectionController {
                 onSelection: { [weak self] rect in
                     self?.finish(selection: rect, frozenScreen: frozenScreen)
                 },
-                onCancel: { [weak self] in self?.finish(selection: nil, frozenScreen: nil) }
+                onCancel: { [weak self] in self?.handleEscape() }
             )
             windows.append(overlay)
         }
@@ -198,7 +198,7 @@ class RegionSelectionController {
     func enterReviewMode(onReviewCancel: @escaping () -> Void) {
         reviewCancelHandler = onReviewCancel
         for window in windows {
-            (window.contentView as? SelectionView)?.onBlankClick = onReviewCancel
+            (window.contentView as? SelectionView)?.enterReviewMode(onCancel: onReviewCancel)
         }
     }
 
@@ -785,6 +785,12 @@ class SelectionView: NSView {
             width: currentRect.width,
             height: currentRect.height
         ))
+    }
+
+    /// Responder fallback must follow the current review owner after selection submission.
+    func enterReviewMode(onCancel: @escaping () -> Void) {
+        onBlankClick = onCancel
+        onEscape = onCancel
     }
 
     // MARK: - Keyboard

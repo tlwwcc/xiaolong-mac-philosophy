@@ -2,6 +2,22 @@ import AppKit
 import ApplicationServices
 import Carbon
 
+enum HotkeyActionDelivery {
+  static func deliver(_ action: @escaping @MainActor @Sendable () -> Void) {
+    // Carbon already delivers on the main thread. Keep its hardware safety check
+    // in that same turn, before a following modifier release can invalidate it.
+    if Thread.isMainThread {
+      MainActor.assumeIsolated {
+        action()
+      }
+    } else {
+      Task { @MainActor in
+        action()
+      }
+    }
+  }
+}
+
 struct HotkeyTriggerContext {
   let openAppActivateOnly: Bool
 

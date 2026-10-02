@@ -32,6 +32,12 @@ final class InPlaceTranslationController {
     private var didNotifyPresentationReady = false
     private var processingTask: Task<Void, Never>?
     private var processingRequestID = UUID()
+    private var processingTimeoutTask: Task<Void, Never>?
+    private let processingTimeout: TimeInterval
+    private let recognizeText: (CGImage) async throws -> [OCRTextBlock]
+    private let translateBlocks: ([String], Language, (@MainActor (Bool) -> Void)?) async throws -> [NumberedBlockTranslation.BlockTranslation]
+
+    var isActive: Bool { !tornDown }
 
     private var pixelScale: CGFloat = 2
     private var originalImage: CGImage?
@@ -54,18 +60,29 @@ final class InPlaceTranslationController {
         prefetchedImage: CGImage? = nil,
         overlayController: RegionSelectionController,
         onPresentationReady: @escaping () -> Bool,
-        onTeardownComplete: @escaping () -> Void
+        onTeardownComplete: @escaping () -> Void,
+        processingTimeout: TimeInterval = 45,
+        recognizeText: @escaping (CGImage) async throws -> [OCRTextBlock] = {
+            try await OCRService.shared.recognizeText(from: $0)
+        },
+        translateBlocks: @escaping ([String], Language, (@MainActor (Bool) -> Void)?) async throws -> [NumberedBlockTranslation.BlockTranslation] = {
+            try await TranslationService.shared.translateBlocks($0, targetLanguage: $1, systemPresentation: $2)
+        }
     ) {
         self.region = region
         self.prefetchedImage = prefetchedImage
         self.overlayController = overlayController
         self.onPresentationReady = onPresentationReady
         self.onTeardownComplete = onTeardownComplete
+        self.processingTimeout = processingTimeout
+        self.recognizeText = recognizeText
+        self.translateBlocks = translateBlocks
     }
 
     // MARK: - 启动（主线程）
 
     func start() {
+        guard !tornDown, processingTask == nil else { return }
         // Esc / 空白点击 → 退出评审
         overlayController.enterReviewMode { [weak self] in
             self?.teardown()
@@ -91,10 +108,11 @@ final class InPlaceTranslationController {
         processingTask?.cancel()
         let requestID = UUID()
         processingRequestID = requestID
+        startProcessingTimeout(requestID: requestID)
         processingTask = Task { [weak self] in
             guard let self = self else { return }
             do {
-                let ocrResults = try await OCRService.shared.recognizeText(from: image)
+                let ocrResults = try await self.recognizeText(image)
                 try Task.checkCancellation()
                 guard !ocrResults.isEmpty else {
                     await MainActor.run {
@@ -122,6 +140,7 @@ final class InPlaceTranslationController {
                             self.teardown()
                             return
                         }
+                        self.finishProcessing()
                         self.showHint(
                             text: "识别内容已是目标语言：\(targetLanguage.displayName)（可在设置中切换）",
                             isError: false
@@ -130,15 +149,18 @@ final class InPlaceTranslationController {
                     return
                 }
 
-                let results = try await TranslationService.shared.translateBlocks(
+                let results = try await self.translateBlocks(
                     toTranslate.map(\.element.text),
-                    targetLanguage: targetLanguage,
-                    systemPresentation: { [weak self] visible in
+                    targetLanguage,
+                    { [weak self] visible in
                         guard let self, !self.tornDown, self.processingRequestID == requestID else { return }
                         self.overlayController.setReviewSuspendedForSystemUI(visible)
                         if visible {
+                            self.processingTimeoutTask?.cancel()
+                            self.processingTimeoutTask = nil
                             self.hintPanel?.orderOut(nil)
                         } else if !Task.isCancelled {
+                            self.startProcessingTimeout(requestID: requestID)
                             self.showHint(text: "正在翻译…", isError: false)
                         }
                     }
@@ -155,7 +177,7 @@ final class InPlaceTranslationController {
                     if result.failed { failed.insert(originalIndex) }
                 }
 
-                let rendered = TranslatedImageRenderer.render(
+                let rendered = try await TranslatedImageRenderer.renderAsync(
                     original: image,
                     blocks: ocrResults,
                     translations: translations,
@@ -190,6 +212,7 @@ final class InPlaceTranslationController {
     // MARK: - 结果展示
 
     private func showResult(rendered: CGImage, failedCount: Int) {
+        finishProcessing()
         guard preparePresentationIfNeeded() else {
             teardown()
             return
@@ -314,24 +337,19 @@ final class InPlaceTranslationController {
         hintLabel = nil
 
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 1080
-        let hintSize = NSSize(width: min(max(region.width, 220), 480), height: 30)
-
-        // 优先选区上方（AppKit y 更高），出屏则放选区内顶部
         let screen = NSScreen.screens.first(where: {
             $0.frame.contains(NSPoint(x: region.midX, y: primaryHeight - region.midY))
         }) ?? NSScreen.main
-        let visibleMaxY = screen?.visibleFrame.maxY ?? .greatestFiniteMagnitude
-        var hintY = (primaryHeight - region.minY) + 8
-        if hintY + hintSize.height > visibleMaxY {
-            hintY = (primaryHeight - region.minY) - hintSize.height - 8 // 选区内顶部
-        }
+        let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1920, height: 1080)
+        let hintFrame = Self.hintFrame(for: region, visibleFrame: visible, primaryHeight: primaryHeight)
+        let hintSize = hintFrame.size
 
         let label = NSTextField(labelWithString: text)
         label.font = NSFont.systemFont(ofSize: 12, weight: .medium)
         label.textColor = .white
         label.alignment = .center
         label.lineBreakMode = .byTruncatingTail
-        label.frame = NSRect(x: 8, y: 0, width: hintSize.width - 16, height: hintSize.height)
+        label.frame = NSRect(x: 12, y: 0, width: hintSize.width - 104, height: hintSize.height)
 
         let container = NSView(frame: NSRect(origin: .zero, size: hintSize))
         container.wantsLayer = true
@@ -340,12 +358,14 @@ final class InPlaceTranslationController {
             : NSColor.black.withAlphaComponent(0.8).cgColor
         container.layer?.cornerRadius = hintSize.height / 2
         container.addSubview(label)
+        let cancel = CapsuleButton(title: "取消 · Esc", target: self, action: #selector(closeClicked))
+        cancel.frame = NSRect(x: hintSize.width - 88, y: 3, width: 80, height: 28)
+        cancel.keyEquivalent = "\u{1b}"
+        cancel.setAccessibilityLabel("取消翻译，恢复屏幕")
+        container.addSubview(cancel)
 
         let panel = NSPanel(
-            contentRect: NSRect(
-                x: region.midX - hintSize.width / 2, y: hintY,
-                width: hintSize.width, height: hintSize.height
-            ),
+            contentRect: hintFrame,
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered, defer: false
         )
@@ -353,7 +373,8 @@ final class InPlaceTranslationController {
         panel.backgroundColor = .clear
         panel.level = Self.controlWindowLevel
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        panel.ignoresMouseEvents = true
+        panel.ignoresMouseEvents = false
+        panel.identifier = NSUserInterfaceItemIdentifier("youmu-translation-progress")
         panel.hasShadow = false
         panel.isReleasedWhenClosed = false
         panel.contentView = container
@@ -363,7 +384,20 @@ final class InPlaceTranslationController {
         hintLabel = label
     }
 
+    static func hintFrame(for region: CGRect, visibleFrame: NSRect, primaryHeight: CGFloat) -> NSRect {
+        let width = min(max(region.width, 300), 540, visibleFrame.width - 8)
+        let height: CGFloat = 34
+        let preferredY = primaryHeight - region.minY + 8
+        let y = preferredY + height <= visibleFrame.maxY
+            ? preferredY : primaryHeight - region.minY - height - 8
+        return NSRect(
+            x: min(max(region.midX - width / 2, visibleFrame.minX + 4), visibleFrame.maxX - width - 4),
+            y: min(max(y, visibleFrame.minY + 4), visibleFrame.maxY - height - 4),
+            width: width, height: height)
+    }
+
     private func showFailure(_ message: String) {
+        finishProcessing()
         guard preparePresentationIfNeeded() else {
             teardown()
             return
@@ -441,6 +475,25 @@ final class InPlaceTranslationController {
         teardown()
     }
 
+    // A UI watchdog is independent of providers and their cancellation cooperation.
+    // User-owned system confirmations suspend it; returning starts a fresh processing budget.
+    private func startProcessingTimeout(requestID: UUID) {
+        processingTimeoutTask?.cancel()
+        processingTimeoutTask = Task { [weak self, processingTimeout] in
+            do { try await Task.sleep(nanoseconds: UInt64(max(0.001, processingTimeout) * 1_000_000_000)) }
+            catch { return }
+            guard !Task.isCancelled, let self, !self.tornDown, self.processingRequestID == requestID else { return }
+            self.teardown()
+            ToastWindow.show(message: "翻译等待超时，已恢复屏幕。请重试。")
+        }
+    }
+
+    private func finishProcessing() {
+        processingTimeoutTask?.cancel()
+        processingTimeoutTask = nil
+        processingTask = nil
+    }
+
     // MARK: - 退出
 
     /// 全部窗口 orderOut + 延迟释放（窗口安全约束）
@@ -448,6 +501,8 @@ final class InPlaceTranslationController {
         guard !tornDown else { return }
         tornDown = true
         processingRequestID = UUID()
+        processingTimeoutTask?.cancel()
+        processingTimeoutTask = nil
         processingTask?.cancel()
         processingTask = nil
 

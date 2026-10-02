@@ -32,6 +32,7 @@ private struct NetworkStatusMenuItemState: Codable {
 
 private struct NetworkStatusMenuSnapshot: Codable {
   let items: [NetworkStatusMenuItemState]
+  var availableUpdateVersion: String? = nil
 }
 
 private struct NetworkStatusHelperMessage: Codable {
@@ -80,9 +81,10 @@ private enum NetworkHelperProcessRunner {
     executableURL: URL,
     arguments: [String]
   ) -> (status: Int32, outputByteCount: Int)? {
-    guard let result = NetworkHelperProcessRunner.run(
-      executableURL: executableURL,
-      arguments: arguments)
+    guard
+      let result = NetworkHelperProcessRunner.run(
+        executableURL: executableURL,
+        arguments: arguments)
     else { return nil }
     return (result.status, result.output.count)
   }
@@ -416,7 +418,8 @@ private final class StatusItemRenderer {
   func image(
     network: NetworkSnapshot,
     metrics: [StatusMetric],
-    appearance: NSAppearance? = nil
+    appearance: NSAppearance? = nil,
+    updateAvailable: Bool = false
   ) -> NSImage {
     let upload = menuRateDisplay(network.uploadBytesPerSecond)
     let download = menuRateDisplay(network.downloadBytesPerSecond)
@@ -445,7 +448,8 @@ private final class StatusItemRenderer {
     }
     let metricsWidth = metricWidths.reduce(CGFloat(0), +)
     let metricsGap: CGFloat = metrics.isEmpty ? 0 : 5
-    let imageWidth = ceil(networkWidth + metricsGap + metricsWidth)
+    let contentWidth = ceil(networkWidth + metricsGap + metricsWidth)
+    let imageWidth = contentWidth + (updateAvailable ? 10 : 0)
     let imageSize = NSSize(width: imageWidth, height: 22)
     let image = NSImage(size: imageSize)
     image.isTemplate = false
@@ -478,6 +482,10 @@ private final class StatusItemRenderer {
         valueFont: rateValueFont,
         unitFont: rateUnitFont)
 
+      if updateAvailable {
+        NSColor.systemBlue.setFill()
+        NSBezierPath(ovalIn: NSRect(x: contentWidth + 3, y: 14, width: 6, height: 6)).fill()
+      }
       var x = networkWidth + metricsGap
       for (index, metric) in metrics.enumerated() {
         draw(
@@ -561,6 +569,7 @@ private final class NetworkSpeedStatusItemApp: NSObject, NSApplicationDelegate {
   private var statusItem: NSStatusItem?
   private var statusMenu: NSMenu?
   private var statusMenuItems: [String: NSMenuItem] = [:]
+  private var availableUpdateVersion: String?
   private var youmuSectionSeparator: NSMenuItem?
   private var managementSectionSeparator: NSMenuItem?
   private var isOpeningStatusMenu = false
@@ -821,7 +830,8 @@ private final class NetworkSpeedStatusItemApp: NSObject, NSApplicationDelegate {
     let image = renderer.image(
       network: network,
       metrics: metrics,
-      appearance: button?.effectiveAppearance)
+      appearance: button?.effectiveAppearance,
+      updateAvailable: availableUpdateVersion != nil)
     let desiredLength = image.size.width + 4
     if renderedStatusItemLength != desiredLength {
       statusItem?.length = desiredLength
@@ -830,9 +840,10 @@ private final class NetworkSpeedStatusItemApp: NSObject, NSApplicationDelegate {
     statusItem?.button?.imagePosition = .imageOnly
     statusItem?.button?.image = image
     statusItem?.button?.title = ""
-    statusItem?.button?.toolTip = tooltip(network: network, metrics: metrics)
+    let updateHint = availableUpdateVersion.map { "有可用更新 \($0)。打开菜单查看并更新。" } ?? ""
+    statusItem?.button?.toolTip = updateHint + tooltip(network: network, metrics: metrics)
     let accessibilityLabel =
-      "\(appDisplayName)主入口。\(tooltip(network: network, metrics: metrics))"
+      "\(appDisplayName)主入口。\(updateHint)\(tooltip(network: network, metrics: metrics))"
     statusItem?.button?.setAccessibilityLabel(accessibilityLabel)
   }
 
@@ -985,6 +996,9 @@ private final class NetworkSpeedStatusItemApp: NSObject, NSApplicationDelegate {
 
   private func applyMenuSnapshot(_ snapshot: NetworkStatusMenuSnapshot) {
     guard snapshot.items.count <= 32 else { return }
+    availableUpdateVersion = snapshot.availableUpdateVersion.flatMap {
+      $0.isEmpty || $0.count > 80 ? nil : $0
+    }
     for state in snapshot.items {
       guard state.title.count <= 160, let item = statusMenuItems[state.id] else { continue }
       item.title = state.title
@@ -997,6 +1011,7 @@ private final class NetworkSpeedStatusItemApp: NSObject, NSApplicationDelegate {
       }
     }
     refreshMenuSectionSeparators()
+    refreshStatusItem()
   }
 
   private func showVolumeFeedback(_ volume: Double) {

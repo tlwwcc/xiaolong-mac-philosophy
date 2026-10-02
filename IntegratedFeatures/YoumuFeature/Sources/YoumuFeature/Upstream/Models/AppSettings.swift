@@ -1,21 +1,25 @@
 import Foundation
 
-/// 翻译执行路径。新安装默认 Apple 本机；自动模式保留给主动需要在线兜底的用户。
+/// 新安装使用公司付费的共享翻译；已有用户保留自己的选择。
 enum TranslationBackendPreference: String, Codable, CaseIterable {
+    case sharedService
     case appleLocal
     case onlineAPI
     case automatic
 
     var displayName: String {
         switch self {
+        case .sharedService: return "共享翻译（默认·免费使用）"
         case .automatic: return "本机优先，在线备用"
-        case .appleLocal: return "Apple 本机（默认·免费）"
+        case .appleLocal: return "Apple 本机（离线）"
         case .onlineAPI: return "在线 API"
         }
     }
 
     var detail: String {
         switch self {
+        case .sharedService:
+            return "由我们承担模型费用，无需账号或密钥。首次同意后只发送所选文字，截图留在本机。"
         case .automatic:
             return "优先使用 Apple 本机模型；系统不支持或本机失败时才切换在线 API。"
         case .appleLocal:
@@ -53,8 +57,7 @@ enum SpeechBackendPreference: String, Codable, CaseIterable {
 
 struct AppSettings: Codable {
     var translationConfig: TranslationConfig = TranslationConfig()
-    /// 新安装默认使用 Apple 免费本机模型；模型缺失时由系统征得许可后下载。
-    var translationBackend: TranslationBackendPreference = .appleLocal
+    var translationBackend: TranslationBackendPreference = .sharedService
     var targetLanguage: Language = .zhHans
     /// 各平台预设记住的 API Key（预设名 → Key），切换预设时自动回填
     var presetKeys: [String: String] = [:]

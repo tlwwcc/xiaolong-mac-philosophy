@@ -331,7 +331,16 @@ private struct YoumuControlView: View {
         }
       }
 
-      if settings.translationBackend != .appleLocal {
+      if settings.translationBackend == .sharedService {
+        Section("共享翻译") {
+          Text("翻译由小龙哥 Mac 哲学服务转交智谱处理。匿名编号仅用于使用额度，不保存原文或译文。")
+            .font(.caption).foregroundStyle(.secondary)
+          Button("重新选择联网权限") {
+            OnlineDataConsentManager.shared.reset(.sharedTranslation)
+          }
+        }
+      }
+      if settings.translationBackend == .onlineAPI || settings.translationBackend == .automatic {
         Section("在线 API") {
           TextField("API 地址", text: $draftConfig.apiEndpoint,
                     prompt: Text("粘贴服务商的 API / Base URL"))

@@ -19,9 +19,55 @@ struct ReleaseNoteEntry: Equatable, Identifiable {
 
 enum ReleaseNotes {
   static let fallbackChangelogURL = URL(
-    string: "https://aixlg.com/mac/changelog/?v=1.0.14-230")!
+    string: "https://aixlg.com/mac/changelog/?v=1.0.17-233")!
 
   static let bundled: [ReleaseNoteEntry] = [
+    ReleaseNoteEntry(
+      version: "1.0.17",
+      build: 233,
+      dateText: "2026-10-02",
+      title: "免费翻译直接用，等待时按 Esc 退出",
+      summary: "新增免费共享翻译，无需注册或填写 API Key；等待时可按 Esc 或点击取消。左右分屏更稳定，有新版会主动提醒。",
+      highlights: [
+        "新安装无需注册即可使用共享翻译；已有用户在游目设置 → 翻译中选择“共享翻译”。费用由我们承担。",
+        "按 Caps + ⌘ + S 框选原图翻译；等待时可随时按 Esc、再次按快捷键或点取消退出，等待过久会自动恢复屏幕。",
+        "首次使用先确认联网；只上传选中文字，截图保留本机。仍可选择 Apple 本机翻译或自己的 API。",
+        "按 Caps 加左右方向键固定放到对应半屏，连续切换更稳定；菜单栏和主窗会主动提醒可用更新。",
+        "设置 → 关于可复制本机设备编号，方便反馈问题；保留个人快捷键与设置。",
+      ],
+      previousHighlights: ["所有功能永久免费，无需账号；官方签名、公证和更新安全校验继续保留。"],
+      changelogURL: fallbackChangelogURL
+    ),
+    ReleaseNoteEntry(
+      version: "1.0.16",
+      build: 232,
+      dateText: "2026-10-02",
+      title: "翻译等待时，也能随时退出",
+      summary: "原图翻译等待时可按 Esc 或点击取消；识字和绘制在后台完成，等待过久会自动收起并提示重试。",
+      highlights: [
+        "按 Caps + ⌘ + S 开始原图翻译；等待时按 Esc、再次按快捷键，或点“取消”即可退出。",
+        "首次在线翻译的允许或拒绝窗口清楚显示；取消只结束本次操作。",
+        "处理等待超过 45 秒会自动恢复屏幕；等待你确认许可或下载语言时不计时。",
+        "保留个人设置与上一版左右分屏改进。本版本用于本机体验，公共翻译服务尚未开通。",
+      ],
+      previousHighlights: ["Caps 加左右方向键固定放到对应半屏；有新版本时主动显示蓝色提醒。"],
+      changelogURL: fallbackChangelogURL
+    ),
+    ReleaseNoteEntry(
+      version: "1.0.15",
+      build: 231,
+      dateText: "2026-10-02",
+      title: "左右分屏更听使唤，新版提醒主动出现",
+      summary: "Caps 加左右方向键固定放到对应半屏，连续操作更稳定；有新版本时主动显示蓝色提醒，点击即可查看改进。",
+      highlights: [
+        "按 Caps + 左或右，把当前窗口放到对应半屏；同方向重复保持，快速交替以最后一次为准。",
+        "改善小窗口、应用最小尺寸和系统全屏过渡时的窗口控制；受应用限制时明确说明。",
+        "有新版本时，菜单栏和主窗主动提醒；点击进入软件更新，稍后仍可回来继续。",
+        "保留个人快捷键和设置。本版本用于本机体验，窗口手感与更新交互待本轮验证。",
+      ],
+      previousHighlights: ["所有功能永久免费，无需账号；官方签名与更新安全校验继续保留。"],
+      changelogURL: fallbackChangelogURL
+    ),
     ReleaseNoteEntry(
       version: "1.0.14",
       build: 230,

@@ -1,6 +1,6 @@
 import Foundation
 
-private final class TranslationStreamingResponseLoader: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+final class TranslationStreamingResponseLoader: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private let originalOrigin: OnlineDataOrigin
     private let lock = NSLock()
     private var continuation: CheckedContinuation<(Data, URLResponse), Error>?

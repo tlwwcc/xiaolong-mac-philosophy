@@ -2,54 +2,56 @@ import Vision
 import AppKit
 
 /// 基于 Apple Vision 框架的 OCR 服务，支持中英文混合识别
-final class OCRService: Sendable {
+nonisolated final class OCRService: Sendable {
     static let shared = OCRService()
+    private static let minimumConfidence: Float = 0.2
 
-    /// 识别语言：简中、繁中、英文、日语、韩语
-    private let recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US", "ja-JP", "ko-KR"]
-    private let minimumConfidence: VNConfidence = 0.2
+    typealias Recognition = @Sendable (CGImage, ImageProcessingCancellation) throws -> [OCRTextBlock]
+    private let recognition: Recognition
+
+    init(recognition: @escaping Recognition = { image, cancellation in
+        try OCRService.recognizeOnWorker(image: image, cancellation: cancellation)
+    }) {
+        self.recognition = recognition
+    }
 
     func recognizeText(from image: CGImage) async throws -> [OCRTextBlock] {
-        try await withCheckedThrowingContinuation { continuation in
-            let request = VNRecognizeTextRequest { request, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                    return
-                }
+        try await ImageProcessingWork.run { cancellation in
+            try self.recognition(image, cancellation)
+        }
+    }
 
-                guard let observations = request.results as? [VNRecognizedTextObservation] else {
-                    continuation.resume(returning: [])
-                    return
-                }
+    private static func recognizeOnWorker(
+        image: CGImage, cancellation: ImageProcessingCancellation
+    ) throws -> [OCRTextBlock] {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US", "ja-JP", "ko-KR"]
+        request.automaticallyDetectsLanguage = true
+        request.usesLanguageCorrection = true
+        let requestCancellation = VisionRequestCancellation(request)
+        cancellation.setHandler { requestCancellation.cancel() }
+        defer {
+            cancellation.setHandler(nil)
+            requestCancellation.close()
+        }
 
-                let blocks = observations.compactMap { observation -> OCRTextBlock? in
-                    guard let candidate = observation.topCandidates(1).first else { return nil }
-                    let text = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !text.isEmpty, candidate.confidence >= self.minimumConfidence else {
-                        return nil
-                    }
-                    return OCRTextBlock(
-                        text: text,
-                        boundingBox: observation.boundingBox,
-                        confidence: candidate.confidence
-                    )
-                }
-
-                continuation.resume(returning: blocks)
-            }
-
-            // 配置：精确模式 + 多语言
-            request.recognitionLevel = .accurate
-            request.recognitionLanguages = recognitionLanguages
-            request.automaticallyDetectsLanguage = true
-            request.usesLanguageCorrection = true
-
-            let handler = VNImageRequestHandler(cgImage: image, options: [:])
-            do {
-                try handler.perform([request])
-            } catch {
-                continuation.resume(throwing: error)
-            }
+        try cancellation.checkCancellation()
+        let handler = VNImageRequestHandler(cgImage: image, options: [:])
+        // perform is synchronous. Only the GCD worker runs it; cancellation resumes the
+        // caller independently, even if Vision has not returned or honoured cancel yet.
+        try handler.perform([request])
+        requestCancellation.close()
+        try cancellation.checkCancellation()
+        return (request.results ?? []).compactMap { observation -> OCRTextBlock? in
+            guard let candidate = observation.topCandidates(1).first else { return nil }
+            let text = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty, candidate.confidence >= self.minimumConfidence else { return nil }
+            return OCRTextBlock(
+                text: text,
+                boundingBox: observation.boundingBox,
+                confidence: candidate.confidence
+            )
         }
     }
 
@@ -187,5 +189,140 @@ final class OCRService: Sendable {
             (0x3000...0x303F).contains(scalar.value) ||   // CJK 标点
             (0xFF00...0xFF65).contains(scalar.value)      // 全角字符+半角片假名/韩文
         }
+    }
+}
+
+/// A narrowly scoped cross-thread handle for Vision's in-flight cancellation API.
+/// Configuration is finished before this handle is published. Only cancel() crosses
+/// threads; perform and result access stay on the original worker. Closing the handle
+/// serialises any in-flight cancel call before that worker reads request.results, and
+/// prevents an already-queued cancellation from changing the completed request later.
+/// This does not make VNRequest generally Sendable.
+nonisolated private final class VisionRequestCancellation: @unchecked Sendable {
+    private let request: VNRequest
+    private let lock = NSLock()
+    private var closed = false
+
+    init(_ request: VNRequest) {
+        self.request = request
+    }
+
+    func cancel() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !closed else { return }
+        request.cancel()
+    }
+
+    func close() {
+        lock.lock()
+        closed = true
+        lock.unlock()
+    }
+}
+
+/// Cancellation belongs to the caller, not to a potentially blocked native operation.
+/// All mutable state is protected by lock; a native cancellation hook is best-effort only.
+nonisolated final class ImageProcessingCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    private var handler: (@Sendable () -> Void)?
+
+    func checkCancellation() throws {
+        lock.lock()
+        let cancelled = self.cancelled
+        lock.unlock()
+        if cancelled { throw CancellationError() }
+    }
+
+    func setHandler(_ handler: (@Sendable () -> Void)?) {
+        lock.lock()
+        let alreadyCancelled = cancelled
+        self.handler = alreadyCancelled ? nil : handler
+        lock.unlock()
+        if alreadyCancelled, let handler {
+            DispatchQueue.global(qos: .userInitiated).async(execute: handler)
+        }
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        let handler = self.handler
+        self.handler = nil
+        lock.unlock()
+        if let handler {
+            DispatchQueue.global(qos: .userInitiated).async(execute: handler)
+        }
+    }
+}
+
+/// Serialises install/cancel/complete races without ever resuming a continuation twice.
+nonisolated private final class ImageProcessingResult<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value, Error>?
+    private var earlyResult: Result<Value, Error>?
+    private var finished = false
+
+    func install(_ continuation: CheckedContinuation<Value, Error>) -> Bool {
+        lock.lock()
+        if let earlyResult {
+            self.earlyResult = nil
+            lock.unlock()
+            continuation.resume(with: earlyResult)
+            return false
+        }
+        self.continuation = continuation
+        lock.unlock()
+        return true
+    }
+
+    func finish(_ result: Result<Value, Error>) {
+        lock.lock()
+        guard !finished else {
+            lock.unlock()
+            return
+        }
+        finished = true
+        let continuation = self.continuation
+        self.continuation = nil
+        if continuation == nil { earlyResult = result }
+        lock.unlock()
+        continuation?.resume(with: result)
+    }
+}
+
+/// Synchronous Vision and bitmap drawing must not inherit the package's MainActor or
+/// occupy a Swift cooperative executor. Each invocation owns its result and cancellation.
+nonisolated enum ImageProcessingWork {
+    static func run<Value: Sendable>(
+        _ operation: @escaping @Sendable (ImageProcessingCancellation) throws -> Value
+    ) async throws -> Value {
+        let result = ImageProcessingResult<Value>()
+        let cancellation = ImageProcessingCancellation()
+        let value = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard result.install(continuation) else { return }
+                DispatchQueue.global(qos: .userInitiated).async {
+                    autoreleasepool {
+                        do {
+                            try cancellation.checkCancellation()
+                            let value = try operation(cancellation)
+                            try cancellation.checkCancellation()
+                            result.finish(.success(value))
+                        } catch {
+                            result.finish(.failure(error))
+                        }
+                    }
+                }
+            }
+        } onCancel: {
+            // Resume before asking the framework to stop. A stuck native cancellation
+            // callback must not hold Esc or a replacement owner's operation hostage.
+            result.finish(.failure(CancellationError()))
+            cancellation.cancel()
+        }
+        try Task.checkCancellation()
+        return value
     }
 }

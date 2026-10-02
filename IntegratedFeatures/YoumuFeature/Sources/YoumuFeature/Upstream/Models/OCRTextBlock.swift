@@ -1,7 +1,7 @@
 import Foundation
 
 /// OCR 识别出的单个文字块
-struct OCRTextBlock {
+nonisolated struct OCRTextBlock: Sendable {
     let text: String
     /// Vision 归一化坐标 (0~1)，原点在左下角
     let boundingBox: CGRect

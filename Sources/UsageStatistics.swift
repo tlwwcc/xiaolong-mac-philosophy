@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 import SwiftUI
 
@@ -23,6 +24,7 @@ final class UsageStatistics: ObservableObject {
   @Published private(set) var enabled: Bool
   @Published private(set) var deleting = false
   @Published private(set) var deletionMessage: String?
+  @Published private(set) var deviceCode: String?
   private var policy = UsageReportingPolicy()
   private var timer: Timer?
   private var observers: [NSObjectProtocol] = []
@@ -37,6 +39,7 @@ final class UsageStatistics: ObservableObject {
 
   init(defaults: UserDefaults = .standard, session injectedSession: URLSession? = nil) {
     self.defaults = defaults
+    deviceCode = Self.deviceCode(for: defaults.string(forKey: Self.installationKey))
     enabled = defaults.object(forKey: Self.consentKey) == nil
       ? true : defaults.bool(forKey: Self.consentKey)
     let configuration = URLSessionConfiguration.ephemeral
@@ -47,6 +50,21 @@ final class UsageStatistics: ObservableObject {
     configuration.httpShouldSetCookies = false
     configuration.waitsForConnectivity = false
     session = injectedSession ?? URLSession(configuration: configuration, delegate: UsageNoRedirectDelegate(), delegateQueue: nil)
+  }
+
+  static func deviceCode(for installation: String?) -> String? {
+    guard let installation, installation.utf8.count == 64,
+      installation.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil
+    else { return nil }
+    let digest = SHA256.hash(data: Data(installation.utf8))
+    return String(digest.map { String(format: "%02x", $0) }.joined().prefix(12))
+  }
+
+  @discardableResult
+  func copyDeviceCode(to pasteboard: NSPasteboard = .general) -> Bool {
+    guard !deleting, let deviceCode else { return false }
+    pasteboard.clearContents()
+    return pasteboard.setString(deviceCode, forType: .string)
   }
 
   func start() {
@@ -146,6 +164,7 @@ final class UsageStatistics: ObservableObject {
     let value = (UUID().uuidString + UUID().uuidString).replacingOccurrences(of: "-", with: "").lowercased()
     defaults.set(value, forKey: Self.installationKey)
     defaults.removeObject(forKey: Self.sequenceKey)
+    deviceCode = Self.deviceCode(for: value)
     return value
   }
 
@@ -217,6 +236,7 @@ final class UsageStatistics: ObservableObject {
         guard Self.hasReceipt(data: data, response: response) else { throw URLError(.badServerResponse) }
         defaults.removeObject(forKey: Self.installationKey)
         defaults.removeObject(forKey: Self.sequenceKey)
+        deviceCode = nil
         defaults.synchronize()
         deletionMessage = "服务器中的统计记录已清除，统计保持关闭。"
       } catch {
@@ -226,9 +246,16 @@ final class UsageStatistics: ObservableObject {
   }
 }
 
+@MainActor
 struct UsageStatisticsSettingsView: View {
-  @ObservedObject private var statistics = UsageStatistics.shared
+  @ObservedObject private var statistics: UsageStatistics
   @State private var confirmsDeletion = false
+  @State private var copiedDeviceCode: String?
+  @State private var copyFailed = false
+
+  init(statistics: UsageStatistics? = nil) {
+    self.statistics = statistics ?? .shared
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -243,6 +270,31 @@ struct UsageStatisticsSettingsView: View {
       Text("每日记录保留一年；设备信息在一年未报告在线后清理。多台 Mac 分别计数，无需注册账号。")
         .font(.caption)
         .foregroundStyle(.secondary)
+      VStack(alignment: .leading, spacing: 6) {
+        ViewThatFits(in: .horizontal) {
+          HStack(spacing: 12) {
+            Text("本机设备编号").fixedSize()
+            deviceCodeControls
+          }
+          VStack(alignment: .leading, spacing: 6) {
+            Text("本机设备编号")
+            deviceCodeControls
+          }
+        }
+        Text(statistics.deviceCode == nil ? "开启统计并运行后显示，用于对照后台设备。" : "可复制给小龙哥，用于对照后台并备注这台 Mac。")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+        if copyFailed {
+          Text("未能复制，请选中编号后复制。")
+            .font(.caption)
+            .foregroundStyle(.red)
+        }
+      }
+      .onReceive(statistics.$deviceCode) { _ in
+        copiedDeviceCode = nil
+        copyFailed = false
+      }
       Button(statistics.deleting ? "正在清除…" : "清除统计记录并关闭") { confirmsDeletion = true }
         .disabled(statistics.deleting)
         .confirmationDialog("清除这台 Mac 的服务器统计记录？", isPresented: $confirmsDeletion) {
@@ -254,6 +306,32 @@ struct UsageStatisticsSettingsView: View {
         Text(message).font(.caption).foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
       }
+    }
+  }
+
+  private var deviceCodeControls: some View {
+    HStack(spacing: 12) {
+      Text(statistics.deviceCode ?? "尚未生成")
+        .font(.system(.body, design: .monospaced))
+        .textSelection(.enabled)
+        .fixedSize()
+        .accessibilityIdentifier("usageStatistics.deviceCode")
+      Spacer(minLength: 0)
+      Button {
+        if statistics.copyDeviceCode() {
+          copiedDeviceCode = statistics.deviceCode
+          copyFailed = false
+        } else {
+          copiedDeviceCode = nil
+          copyFailed = true
+        }
+      } label: {
+        Label(copiedDeviceCode != nil && copiedDeviceCode == statistics.deviceCode ? "已复制" : "复制",
+          systemImage: copiedDeviceCode != nil && copiedDeviceCode == statistics.deviceCode ? "checkmark" : "square.on.square")
+      }
+      .fixedSize()
+      .disabled(statistics.deviceCode == nil || statistics.deleting)
+      .accessibilityIdentifier("usageStatistics.copyDeviceCode")
     }
   }
 }

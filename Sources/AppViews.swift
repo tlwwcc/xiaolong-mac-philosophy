@@ -179,13 +179,13 @@ struct MainWindowTitlebarView: View {
 
       if showsUpdateEntry {
         HeaderUpdateButton(
-          title: "更新到新版本",
+          title: "有可用更新",
           isBusy: updateIsBusy,
           busyTitle: updateBusyTitle,
           helpText: updateHelpText,
           accessibilityLabel: updateAccessibilityLabel
         ) {
-          model.runPrimaryUpdateAction()
+          model.showAvailableUpdate()
         }
       }
     }
@@ -194,7 +194,7 @@ struct MainWindowTitlebarView: View {
   }
 
   private var showsUpdateEntry: Bool {
-    model.latestUpdate != nil || qaUpdateState != nil
+    model.hasAvailableUpdate || qaUpdateState != nil
   }
 
   private var updateIsBusy: Bool {
@@ -206,17 +206,17 @@ struct MainWindowTitlebarView: View {
   }
 
   private var updateHelpText: String {
-    guard let displayVersion = model.latestUpdate?.displayVersion else {
-      return "发现新版本，点击开始安全更新"
+    guard let displayVersion = model.availableUpdateVersion else {
+      return "有可用更新，点击查看新版并更新"
     }
-    return "发现 \(displayVersion)，点击开始安全更新"
+    return "发现 \(displayVersion)，点击查看新版并更新"
   }
 
   private var updateAccessibilityLabel: String {
-    guard let displayVersion = model.latestUpdate?.displayVersion else {
-      return "发现新版本，更新到新版本"
+    guard let displayVersion = model.availableUpdateVersion else {
+      return "有可用更新，查看新版并更新"
     }
-    return "发现新版本 \(displayVersion)，更新到新版本"
+    return "发现新版本 \(displayVersion)，查看新版并更新"
   }
 
   private var qaUpdateState: String? {
@@ -5653,14 +5653,13 @@ struct HeaderUpdateButton: View {
       )
       .font(.system(size: 11, weight: .semibold))
       .labelStyle(.titleAndIcon)
-      .foregroundStyle(accent)
+      .foregroundStyle(UpdateReminderAppearance.blue)
       .padding(.horizontal, 8)
       .frame(height: 24)
-      .background(accent.opacity(0.09), in: Capsule())
-      .overlay(Capsule().stroke(accent.opacity(0.24), lineWidth: 1))
+      .background(UpdateReminderAppearance.blue.opacity(0.09), in: Capsule())
+      .overlay(Capsule().stroke(UpdateReminderAppearance.blue.opacity(0.24), lineWidth: 1))
     }
     .buttonStyle(.plain)
-    .disabled(isBusy)
     .help(helpText)
     .accessibilityLabel(isBusy ? busyTitle : accessibilityLabel)
     .accessibilityIdentifier("titlebar.update")
@@ -6782,7 +6781,7 @@ struct AboutPanelView: View {
     if model.updateStatusText.hasPrefix("发现新版") {
       return model.updateStatusText
     }
-    if model.latestUpdate != nil {
+    if model.hasAvailableUpdate {
       return "有新版本可以安装。"
     }
     if model.updateStatusText.hasPrefix("运行身份无效") {
@@ -6805,7 +6804,7 @@ struct AboutPanelView: View {
 
   private var updateActionTitle: String {
     if model.isUpdateBusy { return "处理中" }
-    if model.latestUpdate != nil { return "立即更新" }
+    if model.hasAvailableUpdate { return "查看并更新" }
     if model.updateStatusText.hasPrefix("发现新版") { return "显示更新" }
     if model.updateStatusText == "未检查" { return "检查更新" }
     if model.updateStatusText == "自动检查已开启。" { return "检查更新" }
@@ -6817,12 +6816,12 @@ struct AboutPanelView: View {
 
   private var updateActionIcon: String {
     if model.isUpdateBusy { return "hourglass" }
-    return model.latestUpdate == nil ? "arrow.clockwise" : "square.and.arrow.down"
+    return !model.hasAvailableUpdate ? "arrow.clockwise" : "square.and.arrow.down"
   }
 
   private var updateStatusIcon: String {
     if model.updateFailureMessage != nil { return "exclamationmark.triangle.fill" }
-    if model.latestUpdate != nil { return "arrow.down.circle.fill" }
+    if model.hasAvailableUpdate { return "arrow.down.circle.fill" }
     if model.updateStatusText.hasPrefix("发现新版") { return "arrow.down.circle.fill" }
     if model.updateStatusText.hasPrefix("更新已安装") { return "checkmark.circle.fill" }
     if model.updateStatusText.contains("已是最新版") { return "checkmark.circle.fill" }
@@ -6833,7 +6832,7 @@ struct AboutPanelView: View {
 
   private var updateStatusColor: Color {
     if model.updateFailureMessage != nil { return .orange }
-    if model.latestUpdate != nil { return accent }
+    if model.hasAvailableUpdate { return UpdateReminderAppearance.blue }
     if model.updateStatusText.hasPrefix("发现新版") { return accent }
     if model.updateStatusText.hasPrefix("更新已安装") { return teal }
     if model.updateStatusText.contains("已是最新版") { return teal }
@@ -6865,10 +6864,8 @@ struct AboutPanelView: View {
   private var updateActionButton: some View {
     if model.updateStatusText.hasPrefix("运行身份无效") {
       EmptyView()
-    } else if model.latestUpdate != nil || model.updateStatusText.hasPrefix("发现新版") {
-      updateButton
-        .buttonStyle(.borderedProminent)
-        .tint(accent)
+    } else if model.hasAvailableUpdate {
+      EmptyView()
     } else {
       updateButton
         .buttonStyle(.bordered)
@@ -6955,6 +6952,11 @@ struct AboutPanelView: View {
             Text(area.rawValue)
               .font(.system(size: 13, weight: activeSettingsArea == area ? .semibold : .medium))
               .foregroundStyle(.primary)
+            if area == .updates, model.hasAvailableUpdate {
+              Image(systemName: "arrow.down.circle.fill")
+                .foregroundStyle(UpdateReminderAppearance.blue)
+                .accessibilityLabel("有可用更新")
+            }
             Spacer(minLength: 0)
           }
           .padding(.horizontal, 12)
@@ -6967,7 +6969,9 @@ struct AboutPanelView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("设置，\(area.rawValue)")
-        .accessibilityValue(activeSettingsArea == area ? "已选" : "未选")
+        .accessibilityValue(
+          (activeSettingsArea == area ? "已选" : "未选")
+            + (area == .updates && model.hasAvailableUpdate ? "，有可用更新" : ""))
         .overlay(alignment: .leading) {
           if activeSettingsArea == area {
             Capsule()
@@ -7164,9 +7168,14 @@ struct AboutPanelView: View {
   private var updateSettingsPage: some View {
     settingsPage(
       title: "软件更新",
-      subtitle: "所有功能永久免费；在这里查看版本、安装更新。",
+      subtitle: "自动发现新版，确认后更新。所有功能永久免费。",
       systemImage: "arrow.down.app"
     ) {
+      if let version = model.availableUpdateVersion {
+        AvailableUpdateCard(version: version, isBusy: model.isUpdateBusy) {
+          model.runPrimaryUpdateAction()
+        }
+      }
       SettingsGroup(title: "软件更新") {
         SettingsInfoLine(title: "当前版本", value: model.appVersionText)
         SettingsInfoLine(title: "可用版本", value: model.updateLatestVersionText)

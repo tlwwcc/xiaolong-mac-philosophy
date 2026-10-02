@@ -2,12 +2,28 @@ import AppKit
 
 /// 原图翻译渲染器：把译文盖回原图，输出全像素分辨率 CGImage。
 /// 纯渲染逻辑，不碰 UI，可独立编译自测。
-enum TranslatedImageRenderer {
+nonisolated enum TranslatedImageRenderer {
 
     private static let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)
         ?? CGColorSpaceCreateDeviceRGB()
 
     // MARK: - 主渲染入口
+
+    /// Bitmap contexts and all mutable drawing attributes are created and used on one
+    /// worker thread. No NSView/NSWindow or shared NSGraphicsContext is accessed.
+    /// Apple explicitly permits self-contained bitmap drawing on secondary threads:
+    /// https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/CocoaDrawingGuide/GraphicsContexts/GraphicsContexts.html
+    static func renderAsync(
+        original: CGImage,
+        blocks: [OCRTextBlock],
+        translations: [Int: String],
+        failedIndices: Set<Int> = []
+    ) async throws -> CGImage? {
+        try await ImageProcessingWork.run { cancellation in
+            try renderImage(original: original, blocks: blocks, translations: translations,
+                            failedIndices: failedIndices, cancellation: cancellation)
+        }
+    }
 
     /// - Parameters:
     ///   - original: 原始截图（像素域）
@@ -21,6 +37,18 @@ enum TranslatedImageRenderer {
         translations: [Int: String],
         failedIndices: Set<Int> = []
     ) -> CGImage? {
+        try? renderImage(original: original, blocks: blocks, translations: translations,
+                         failedIndices: failedIndices, cancellation: nil)
+    }
+
+    private static func renderImage(
+        original: CGImage,
+        blocks: [OCRTextBlock],
+        translations: [Int: String],
+        failedIndices: Set<Int>,
+        cancellation: ImageProcessingCancellation?
+    ) throws -> CGImage? {
+        try cancellation?.checkCancellation()
         let width = original.width
         let height = original.height
         guard width > 0, height > 0 else { return nil }
@@ -47,10 +75,12 @@ enum TranslatedImageRenderer {
         let nsContext = NSGraphicsContext(cgContext: ctx, flipped: true)
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = nsContext
+        defer { NSGraphicsContext.restoreGraphicsState() }
 
         let imageBounds = CGRect(x: 0, y: 0, width: width, height: height)
 
         for (index, block) in blocks.enumerated() {
+            try cancellation?.checkCancellation()
             guard let translated = translations[index],
                   !translated.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             else { continue }
@@ -75,7 +105,8 @@ enum TranslatedImageRenderer {
             drawText(translated, in: coverRect, color: textColor)
         }
 
-        NSGraphicsContext.restoreGraphicsState()
+        try cancellation?.checkCancellation()
+        nsContext.flushGraphics()
         return ctx.makeImage()
     }
 
