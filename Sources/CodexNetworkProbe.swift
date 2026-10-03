@@ -1566,14 +1566,12 @@ enum NetworkProbeVisualTone: Equatable {
 
   var color: Color {
     switch self {
-    case .brand: return Color(red: 107 / 255, green: 35 / 255, blue: 142 / 255)
-    case .latency: return Color(red: 23 / 255, green: 19 / 255, blue: 28 / 255)
-    case .download: return Color(red: 23 / 255, green: 105 / 255, blue: 224 / 255)
-    case .upload: return Color(red: 216 / 255, green: 86 / 255, blue: 79 / 255)
-    case .paused: return Color(red: 95 / 255, green: 88 / 255, blue: 102 / 255)
-    case .success: return Color(red: 35 / 255, green: 122 / 255, blue: 75 / 255)
-    case .warning: return Color(red: 164 / 255, green: 93 / 255, blue: 10 / 255)
-    case .failure: return Color(red: 179 / 255, green: 38 / 255, blue: 30 / 255)
+    case .brand, .download: return AppVisualStyle.accent
+    case .latency, .upload: return AppVisualStyle.textPrimary
+    case .paused: return AppVisualStyle.textSecondary
+    case .success: return AppVisualStyle.success
+    case .warning: return AppVisualStyle.warning
+    case .failure: return AppVisualStyle.danger
     }
   }
 }

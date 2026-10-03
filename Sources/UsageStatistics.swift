@@ -440,7 +440,7 @@ struct FriendProfileSettingsView: View {
       }
       if let message = statistics.profileMessage {
         Text(message).font(.caption)
-          .foregroundStyle(statistics.profileFailed ? Color.red : Color.secondary)
+          .foregroundStyle(statistics.profileFailed ? AppVisualStyle.danger : AppVisualStyle.textSecondary)
           .fixedSize(horizontal: false, vertical: true)
         if statistics.profileFailed {
           Button("重新同步") { statistics.refreshProfile() }
@@ -537,7 +537,7 @@ struct UsageStatisticsSettingsView: View {
         if copyFailed {
           Text("未能复制，请选中编号后复制。")
             .font(.caption)
-            .foregroundStyle(.red)
+            .foregroundStyle(AppVisualStyle.danger)
         }
       }
       .onReceive(statistics.$deviceCode) { _ in

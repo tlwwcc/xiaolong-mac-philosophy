@@ -77,7 +77,7 @@ struct IconBadge: View {
     Image(systemName: systemImage)
       .font(.system(size: iconSize, weight: .semibold))
       .symbolRenderingMode(.hierarchical)
-      .foregroundStyle(filled ? .white : tint)
+      .foregroundStyle(filled ? AppVisualStyle.onAccent : tint)
       .frame(width: size, height: size)
       .background(
         filled ? tint : AppVisualStyle.background,
@@ -96,7 +96,7 @@ struct GlassLabelButtonStyle: ButtonStyle {
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
       .font(AppVisualStyle.controlFont)
-      .foregroundStyle(prominent ? Color.white : (isEnabled ? tint : muted))
+      .foregroundStyle(prominent ? AppVisualStyle.onAccent : (isEnabled ? tint : muted))
       .padding(.horizontal, 12)
       .frame(height: 34)
       .background(
@@ -246,9 +246,28 @@ struct RootView: View {
       .zIndex(2)
 
       Rectangle()
-        .fill(Color.white.opacity(0.78))
+        .fill(AppVisualStyle.separator)
         .frame(height: 1)
         .zIndex(2)
+
+      if let message = model.configurationRecoveryMessage {
+        Label {
+          Text(message)
+            .font(.system(size: 12))
+            .foregroundStyle(AppVisualStyle.textPrimary)
+            .fixedSize(horizontal: false, vertical: true)
+            .textSelection(.enabled)
+        } icon: {
+          Image(systemName: "exclamationmark.shield")
+            .foregroundStyle(AppVisualStyle.warning)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppVisualStyle.warning.opacity(0.08))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("configuration.recovery.notice")
+      }
 
       ShortcutGridView(selectedModule: model.selectedModuleName)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -547,8 +566,8 @@ private func shortcutGuideCategoryIcon(_ category: String) -> String {
 private func shortcutGuideCategoryTint(_ category: String) -> Color {
   switch category {
   case "全部": return accent
-  case "软件类": return Color(red: 0.16, green: 0.42, blue: 0.76)
-  case "窗口类": return Color(red: 0.08, green: 0.50, blue: 0.45)
+  case "软件类": return accent
+  case "窗口类": return teal
   case "截图类": return amber
   case "PDF类": return accent
   case "系统级": return indigo
@@ -612,7 +631,7 @@ struct AccessibilityAuthorizationSheetView: View {
             .font(.system(size: 12, weight: .bold))
             .foregroundStyle(muted)
             .frame(width: 30, height: 30)
-            .background(Color.white.opacity(0.45), in: Circle())
+            .background(AppVisualStyle.surface.opacity(0.45), in: Circle())
             .overlay(Circle().stroke(line.opacity(0.54), lineWidth: 1))
         }
         .buttonStyle(.plain)
@@ -712,7 +731,7 @@ struct AccessibilityAuthorizationSheetView: View {
           .fixedSize(horizontal: false, vertical: true)
           .padding(10)
           .background(
-            Color.white.opacity(0.62),
+            AppVisualStyle.surface.opacity(0.62),
             in: RoundedRectangle(cornerRadius: 12, style: .continuous))
       }
     }
@@ -806,7 +825,7 @@ struct ShortcutGuideCategoryButton: View {
       HStack(spacing: 8) {
         Image(systemName: shortcutGuideCategoryIcon(title))
           .font(.system(size: 12, weight: .semibold))
-          .foregroundStyle(selected ? .white : tint)
+          .foregroundStyle(selected ? AppVisualStyle.onAccent : tint)
           .frame(width: 16)
 
         VStack(alignment: .leading, spacing: 2) {
@@ -817,26 +836,26 @@ struct ShortcutGuideCategoryButton: View {
 
             Text("\(count)")
               .font(.system(size: 10, weight: .bold, design: .rounded))
-              .foregroundStyle(selected ? .white.opacity(0.84) : tint.opacity(0.82))
+              .foregroundStyle(selected ? AppVisualStyle.onAccent.opacity(0.84) : tint.opacity(0.82))
               .padding(.horizontal, 5)
               .frame(height: 16)
               .background(
-                selected ? Color.white.opacity(0.16) : tint.opacity(0.10),
+                selected ? AppVisualStyle.surface.opacity(0.16) : tint.opacity(0.10),
                 in: Capsule()
               )
           }
 
           Text(shortcutGuideCategoryPreview(title))
             .font(.system(size: 9, weight: .bold, design: .rounded))
-            .foregroundStyle(selected ? .white.opacity(0.72) : muted.opacity(0.82))
+            .foregroundStyle(selected ? AppVisualStyle.onAccent.opacity(0.72) : muted.opacity(0.82))
             .lineLimit(1)
         }
       }
-      .foregroundStyle(selected ? .white : ink)
+      .foregroundStyle(selected ? AppVisualStyle.onAccent : ink)
       .padding(.horizontal, 11)
       .frame(height: 42)
       .background(
-        selected ? tint : Color.white.opacity(0.92),
+        selected ? tint : AppVisualStyle.surface.opacity(0.92),
         in: RoundedRectangle(cornerRadius: 12, style: .continuous)
       )
       .background(
@@ -845,7 +864,7 @@ struct ShortcutGuideCategoryButton: View {
       )
       .overlay(
         RoundedRectangle(cornerRadius: 12, style: .continuous)
-          .stroke(selected ? Color.white.opacity(0.22) : tint.opacity(0.18), lineWidth: 1)
+          .stroke(selected ? AppVisualStyle.surface.opacity(0.22) : tint.opacity(0.18), lineWidth: 1)
       )
     }
     .buttonStyle(.plain)
@@ -870,7 +889,7 @@ struct ShortcutFormTextField: View {
         .frame(maxWidth: .infinity)
         .frame(height: 36)
         .background(
-          Color.white.opacity(0.78), in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+          AppVisualStyle.surface.opacity(0.78), in: RoundedRectangle(cornerRadius: 12, style: .continuous)
         )
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(glassLine, lineWidth: 1))
     }
@@ -909,7 +928,7 @@ struct ShortcutGuideRow: View {
             colors: [accent.opacity(0.12), teal.opacity(0.055)], startPoint: .leading,
             endPoint: .trailing)
           : LinearGradient(
-            colors: [Color.white.opacity(0.96), Color.white.opacity(0.82)], startPoint: .leading,
+            colors: [AppVisualStyle.surface.opacity(0.96), AppVisualStyle.surface.opacity(0.82)], startPoint: .leading,
             endPoint: .trailing)
       )
       .overlay(Rectangle().fill(line.opacity(0.72)).frame(height: 1), alignment: .bottom)
@@ -938,12 +957,12 @@ struct ShortcutGuideActionBadge: View {
     }
     .frame(width: 34, height: 34)
     .background(
-      appIcon == nil ? tint.opacity(0.10) : Color.white.opacity(0.92),
+      appIcon == nil ? tint.opacity(0.10) : AppVisualStyle.surface.opacity(0.92),
       in: RoundedRectangle(cornerRadius: 10, style: .continuous)
     )
     .overlay(
       RoundedRectangle(cornerRadius: 10, style: .continuous)
-        .stroke(appIcon == nil ? tint.opacity(0.12) : Color.white.opacity(0.88), lineWidth: 1)
+        .stroke(appIcon == nil ? tint.opacity(0.12) : AppVisualStyle.surface.opacity(0.88), lineWidth: 1)
     )
   }
 
@@ -1076,9 +1095,88 @@ struct ShortcutGuideDetailBlock: View {
     .padding(12)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(
-      Color.white.opacity(0.70), in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+      AppVisualStyle.surface.opacity(0.70), in: RoundedRectangle(cornerRadius: 12, style: .continuous)
     )
     .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(glassLine, lineWidth: 1))
+  }
+}
+
+struct WorkspaceSearchField: View {
+  let placeholder: String
+  @Binding var text: String
+  var focus: FocusState<Bool>.Binding
+  var accessibilityName: String
+
+  var body: some View {
+    HStack(spacing: 8) {
+      Image(systemName: "magnifyingglass")
+        .font(.system(size: 13, weight: .medium))
+        .foregroundStyle(AppVisualStyle.textSecondary)
+        .accessibilityHidden(true)
+      TextField(placeholder, text: $text)
+        .textFieldStyle(.plain)
+        .font(.system(size: 13))
+        .foregroundStyle(AppVisualStyle.textPrimary)
+        .focused(focus)
+        .accessibilityLabel(accessibilityName)
+      if !text.isEmpty {
+        Button {
+          text = ""
+          focus.wrappedValue = true
+        } label: {
+          Image(systemName: "xmark.circle.fill")
+            .foregroundStyle(AppVisualStyle.textSecondary)
+            .frame(width: 24, height: 24)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("清除搜索")
+        .accessibilityLabel("清除\(accessibilityName)")
+      }
+    }
+    .padding(.horizontal, 10)
+    .frame(height: 34)
+    .background(AppVisualStyle.surface, in: RoundedRectangle(cornerRadius: 8))
+    .overlay(
+      RoundedRectangle(cornerRadius: 8)
+        .stroke(focus.wrappedValue ? AppVisualStyle.accent : AppVisualStyle.separator,
+          lineWidth: focus.wrappedValue ? 2 : 1)
+    )
+  }
+}
+
+struct WorkspaceEmptyState: View {
+  let systemImage: String
+  let title: String
+  let detail: String
+  var actionTitle: String? = nil
+  var action: (() -> Void)? = nil
+
+  var body: some View {
+    VStack(spacing: 12) {
+      Image(systemName: systemImage)
+        .font(.system(size: 28, weight: .regular))
+        .symbolRenderingMode(.hierarchical)
+        .foregroundStyle(AppVisualStyle.textSecondary)
+        .accessibilityHidden(true)
+      VStack(spacing: 5) {
+        Text(title)
+          .font(.system(size: 14, weight: .semibold))
+          .foregroundStyle(AppVisualStyle.textPrimary)
+        Text(detail)
+          .font(.system(size: 12))
+          .foregroundStyle(AppVisualStyle.textSecondary)
+          .multilineTextAlignment(.center)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      if let actionTitle, let action {
+        Button(actionTitle, action: action)
+          .buttonStyle(.bordered)
+      }
+    }
+    .padding(24)
+    .frame(maxWidth: .infinity, minHeight: 200)
+    .accessibilityElement(children: .contain)
   }
 }
 
@@ -1087,20 +1185,11 @@ struct ShortcutGuideEmptyState: View {
   let selectedCategory: String
 
   var body: some View {
-    VStack(spacing: 10) {
-      Image(systemName: "magnifyingglass")
-        .font(.system(size: 24, weight: .semibold))
-        .foregroundStyle(muted.opacity(0.70))
-      Text(
-        searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "这一类还没有快捷键" : "没有匹配结果"
-      )
-      .font(.system(size: 13, weight: .semibold))
-      .foregroundStyle(ink)
-      Text("列表读取当前 App 配置。")
-        .font(.system(size: 12, weight: .medium))
-        .foregroundStyle(muted)
-    }
-    .frame(maxWidth: .infinity, minHeight: 220)
+    WorkspaceEmptyState(
+      systemImage: "keyboard",
+      title: searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        ? "这一类还没有快捷键" : "没有匹配结果",
+      detail: "可从上方添加快捷键，或切换分类查看已有配置。")
   }
 }
 
@@ -1440,34 +1529,32 @@ struct AppTopNavigationView: View {
   @Binding var selectedModule: String
 
   var body: some View {
-    VStack(spacing: 9) {
-      HStack(spacing: 12) {
+    HStack(spacing: 24) {
+      HStack(spacing: 10) {
         Image(nsImage: brandIcon())
           .resizable()
           .interpolation(.high)
           .frame(width: 32, height: 32)
-          .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-          .shadow(color: Color.black.opacity(0.055), radius: 4, x: 0, y: 2)
+          .accessibilityHidden(true)
 
         VStack(alignment: .leading, spacing: 2) {
           Text("小龙哥 Mac 哲学")
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(.primary)
-            .fixedSize(horizontal: false, vertical: true)
+            .lineLimit(1)
           Text(model.appVersionText)
             .font(.caption)
             .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
+            .lineLimit(1)
         }
-        .layoutPriority(2)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("小龙哥 Mac 哲学，\(model.appVersionAccessibilityText)")
-
-        Spacer(minLength: 12)
       }
-      .frame(minHeight: 32)
+      .fixedSize(horizontal: true, vertical: false)
 
-      HStack(alignment: .center, spacing: 6) {
+      Spacer(minLength: 0)
+
+      HStack(spacing: 4) {
         ForEach(moduleOrder, id: \.self) { module in
           TopModuleButton(
             title: moduleTitle(module),
@@ -1488,8 +1575,8 @@ struct AppTopNavigationView: View {
           }
         }
       }
-      .padding(3)
-      .frame(maxWidth: .infinity)
+      .padding(4)
+      .frame(minWidth: 368, idealWidth: 420, maxWidth: 468)
       .background(
         AppVisualStyle.background,
         in: RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -1498,20 +1585,18 @@ struct AppTopNavigationView: View {
         RoundedRectangle(cornerRadius: 12, style: .continuous)
           .stroke(hairline, lineWidth: 1)
       )
+      .accessibilityElement(children: .contain)
+      .accessibilityLabel("主导航")
     }
     .padding(.horizontal, 24)
-    .padding(.top, 9)
-    .padding(.bottom, 9)
+    .padding(.vertical, 12)
     .background(.bar)
-    .overlay(alignment: .bottom) {
-      Rectangle()
-        .fill(hairline)
-        .frame(height: 1)
-    }
   }
 }
 
 struct TopModuleButton: View {
+  @State private var hovering = false
+
   let title: String
   let systemImage: String
   let selectedTint: Color
@@ -1532,26 +1617,27 @@ struct TopModuleButton: View {
           .font(.system(size: 12, weight: selected ? .semibold : .medium))
           .foregroundStyle(selected ? ink : Color.secondary)
           .lineLimit(1)
-          .minimumScaleFactor(0.86)
+          .fixedSize(horizontal: true, vertical: false)
       }
       .padding(.horizontal, 8)
       .frame(maxWidth: .infinity)
-      .frame(height: 34)
-      .background(buttonBackground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+      .frame(height: 32)
+      .background(buttonBackground, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
       .overlay(
-        RoundedRectangle(cornerRadius: 12, style: .continuous)
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
           .stroke(selected ? AppVisualStyle.separator : Color.clear, lineWidth: 1)
       )
-      .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+      .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
     .buttonStyle(.plain)
     .accessibilityLabel(title)
     .accessibilityValue(selected ? "已选" : "未选")
-    .animation(.easeOut(duration: 0.16), value: selected)
+    .accessibilityAddTraits(selected ? .isSelected : [])
+    .onHover { hovering = $0 }
   }
 
   private var buttonBackground: Color {
-    selected ? AppVisualStyle.surface : Color.clear
+    selected ? AppVisualStyle.surface : (hovering ? AppVisualStyle.hover : Color.clear)
   }
 }
 
@@ -1699,9 +1785,9 @@ struct ScopeButton: View {
         Image(systemName: systemImage)
           .font(.system(size: 14, weight: .bold))
           .frame(width: 29, height: 29)
-          .foregroundStyle(selected ? .white : accent)
+          .foregroundStyle(selected ? AppVisualStyle.onAccent : accent)
           .background(
-            selected ? Color.white.opacity(0.18) : glowBlue.opacity(0.08),
+            selected ? AppVisualStyle.surface.opacity(0.18) : glowBlue.opacity(0.08),
             in: RoundedRectangle(cornerRadius: 8, style: .continuous)
           )
         VStack(alignment: .leading, spacing: 2) {
@@ -1712,9 +1798,9 @@ struct ScopeButton: View {
         Spacer()
         Text("\(count)")
           .font(.system(size: 11, weight: .medium))
-          .foregroundStyle(selected ? .white.opacity(0.82) : muted)
+          .foregroundStyle(selected ? AppVisualStyle.onAccent.opacity(0.82) : muted)
       }
-      .foregroundStyle(selected ? .white : ink)
+      .foregroundStyle(selected ? AppVisualStyle.onAccent : ink)
       .padding(.horizontal, 12)
       .frame(height: 54)
       .background(
@@ -1725,7 +1811,7 @@ struct ScopeButton: View {
             endPoint: .bottomTrailing
           )
           : LinearGradient(
-            colors: [surface.opacity(0.74), Color.white.opacity(0.48)],
+            colors: [surface.opacity(0.74), AppVisualStyle.surface.opacity(0.48)],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
           ),
@@ -1733,7 +1819,7 @@ struct ScopeButton: View {
       )
       .overlay(
         RoundedRectangle(cornerRadius: 14, style: .continuous)
-          .stroke(selected ? Color.white.opacity(0.18) : glassLine, lineWidth: 1)
+          .stroke(selected ? AppVisualStyle.surface.opacity(0.18) : glassLine, lineWidth: 1)
       )
       .shadow(
         color: selected ? accent.opacity(0.20) : Color.black.opacity(0.018),
@@ -1783,8 +1869,12 @@ struct ShortcutGridView: View {
           .layoutPriority(2)
       }
     }
-    .padding(.horizontal, 18)
-    .padding(.vertical, 16)
+    .padding(.horizontal, usesSplitWorkspace ? 0 : 20)
+    .padding(.vertical, usesSplitWorkspace ? 0 : 16)
+  }
+
+  private var usesSplitWorkspace: Bool {
+    isApplicationCenterModule(selectedModule) || selectedModule == moduleAbout
   }
 }
 
@@ -1864,8 +1954,8 @@ struct AppLauncherPanelView: View {
         .background(
           LinearGradient(
             colors: [
-              Color.white.opacity(0.98),
-              Color.white.opacity(0.86),
+              AppVisualStyle.surface.opacity(0.98),
+              AppVisualStyle.surface.opacity(0.86),
             ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
@@ -1874,7 +1964,7 @@ struct AppLauncherPanelView: View {
         )
         .overlay(
           RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .stroke(searchFocused ? accent.opacity(0.36) : Color.white.opacity(0.82), lineWidth: 1)
+            .stroke(searchFocused ? accent.opacity(0.36) : AppVisualStyle.surface.opacity(0.82), lineWidth: 1)
         )
         .shadow(color: Color.black.opacity(0.030), radius: 9, x: 0, y: 4)
       }
@@ -1882,8 +1972,8 @@ struct AppLauncherPanelView: View {
       .background(
         LinearGradient(
           colors: [
-            Color.white.opacity(0.70),
-            Color(red: 0.945, green: 0.972, blue: 0.984).opacity(0.52),
+            AppVisualStyle.surface.opacity(0.70),
+            AppVisualStyle.background.opacity(0.52),
           ],
           startPoint: .topLeading,
           endPoint: .bottomTrailing
@@ -1892,7 +1982,7 @@ struct AppLauncherPanelView: View {
       )
       .overlay(
         RoundedRectangle(cornerRadius: 18, style: .continuous)
-          .stroke(Color.white.opacity(0.72), lineWidth: 1)
+          .stroke(AppVisualStyle.separator, lineWidth: 1)
       )
 
       if model.isLauncherScanning {
@@ -1951,8 +2041,8 @@ struct AppLauncherPanelView: View {
         .background(
           LinearGradient(
             colors: [
-              Color.white.opacity(0.68),
-              Color(red: 0.965, green: 0.98, blue: 0.985).opacity(0.76),
+              AppVisualStyle.surface.opacity(0.68),
+              AppVisualStyle.background.opacity(0.76),
             ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
@@ -1961,7 +2051,7 @@ struct AppLauncherPanelView: View {
         )
         .overlay(
           RoundedRectangle(cornerRadius: 24, style: .continuous)
-            .stroke(Color.white.opacity(0.82), lineWidth: 1)
+            .stroke(AppVisualStyle.separator, lineWidth: 1)
         )
         .shadow(color: Color.black.opacity(0.035), radius: 14, x: 0, y: 7)
       }
@@ -2001,7 +2091,7 @@ struct LauncherHeaderMetric: View {
     }
     .padding(.horizontal, 9)
     .frame(height: 28)
-    .background(Color.white.opacity(0.68), in: Capsule())
+    .background(AppVisualStyle.surface.opacity(0.68), in: Capsule())
     .overlay(Capsule().stroke(line.opacity(0.42), lineWidth: 1))
   }
 }
@@ -2125,22 +2215,22 @@ struct AppLauncherCard: View {
 
   private var cardColors: [Color] {
     if isHovering {
-      return [Color.white.opacity(1), accent.opacity(0.075)]
+      return [AppVisualStyle.surface.opacity(1), accent.opacity(0.075)]
     }
     if isRecordingShortcut {
-      return [Color.white.opacity(1), accent.opacity(0.14)]
+      return [AppVisualStyle.surface.opacity(1), accent.opacity(0.14)]
     }
     if shortcut != nil {
-      return [Color.white.opacity(0.98), teal.opacity(0.075)]
+      return [AppVisualStyle.surface.opacity(0.98), teal.opacity(0.075)]
     }
-    return [Color.white.opacity(0.96), softSurface.opacity(0.82)]
+    return [AppVisualStyle.surface.opacity(0.96), softSurface.opacity(0.82)]
   }
 
   private var cardStrokeColor: Color {
     if isHovering { return accent.opacity(0.24) }
     if isRecordingShortcut { return accent.opacity(0.44) }
     if shortcut != nil { return teal.opacity(0.26) }
-    return Color.white.opacity(0.88)
+    return AppVisualStyle.surface.opacity(0.88)
   }
 }
 
@@ -2247,7 +2337,7 @@ struct ClassicTabSwitcherHUDView: View {
     .background(.thickMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
     .overlay(
       RoundedRectangle(cornerRadius: 24, style: .continuous)
-        .stroke(Color.white.opacity(0.48), lineWidth: 1)
+        .stroke(AppVisualStyle.separator, lineWidth: 1)
     )
     .shadow(color: Color.black.opacity(0.22), radius: 42, x: 0, y: 22)
   }
@@ -2299,7 +2389,7 @@ struct ClassicTabSwitcherAppItem: View {
           .padding(5)
           .frame(width: 42, height: 42)
           .background(
-            Color.white.opacity(selected ? 0.58 : 0.42),
+            AppVisualStyle.surface.opacity(selected ? 0.58 : 0.42),
             in: RoundedRectangle(cornerRadius: 12, style: .continuous)
           )
           .opacity(selected ? 1 : 0.86)
@@ -2340,7 +2430,7 @@ struct ClassicTabSwitcherAppItem: View {
     .overlay(
       RoundedRectangle(cornerRadius: 14, style: .continuous)
         .stroke(
-          selected ? teal.opacity(0.70) : Color.white.opacity(0.24),
+          selected ? teal.opacity(0.70) : AppVisualStyle.surface.opacity(0.24),
           lineWidth: selected ? 1.4 : 1)
     )
     .shadow(color: selected ? Color.black.opacity(0.08) : Color.clear, radius: 8, x: 0, y: 4)
@@ -2384,7 +2474,7 @@ struct ClassicTabSwitcherAppItem: View {
   }
 
   private var cardBackground: some ShapeStyle {
-    selected ? AnyShapeStyle(.regularMaterial) : AnyShapeStyle(Color.white.opacity(0.14))
+    selected ? AnyShapeStyle(.regularMaterial) : AnyShapeStyle(AppVisualStyle.surface.opacity(0.14))
   }
 }
 
@@ -2399,7 +2489,7 @@ struct LauncherKeyPill: View {
       .background(accent.opacity(0.085), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
       .overlay(
         RoundedRectangle(cornerRadius: 9, style: .continuous)
-          .stroke(Color.white.opacity(0.78), lineWidth: 1)
+          .stroke(AppVisualStyle.separator, lineWidth: 1)
       )
   }
 }
@@ -2418,7 +2508,7 @@ struct LauncherShortcutPill: View {
       .padding(.horizontal, compact ? 5 : 7)
       .frame(height: compact ? 17 : 22)
       .background((active ? accent : teal).opacity(active ? 0.14 : 0.10), in: Capsule())
-      .overlay(Capsule().stroke(Color.white.opacity(0.82), lineWidth: 1))
+      .overlay(Capsule().stroke(AppVisualStyle.separator, lineWidth: 1))
   }
 }
 
@@ -2745,7 +2835,7 @@ struct LauncherOverlayView: View {
           .padding(.horizontal, 13)
           .frame(height: 32)
           .background(.regularMaterial, in: Capsule())
-          .overlay(Capsule().stroke(Color.white.opacity(0.58), lineWidth: 1))
+          .overlay(Capsule().stroke(AppVisualStyle.separator, lineWidth: 1))
           .shadow(color: Color.black.opacity(0.10), radius: 12, x: 0, y: 5)
           .padding(.bottom, 14)
           .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -3426,7 +3516,7 @@ struct CapsCorePluginCard: View {
         }
         .padding(10)
         .background(
-          Color.white.opacity(0.30),
+          AppVisualStyle.surface.opacity(0.30),
           in: RoundedRectangle(cornerRadius: 10, style: .continuous)
         )
         .overlay(
@@ -3677,7 +3767,7 @@ struct BuiltInWindowSwitchingPluginCard: View {
       }
       .padding(12)
       .background(
-        Color.white.opacity(0.50),
+        AppVisualStyle.surface.opacity(0.50),
         in: RoundedRectangle(
           cornerRadius: 14,
           style: .continuous
@@ -3685,7 +3775,7 @@ struct BuiltInWindowSwitchingPluginCard: View {
       )
       .overlay(
         RoundedRectangle(cornerRadius: 14)
-          .stroke(Color.white.opacity(0.72), lineWidth: 1))
+          .stroke(AppVisualStyle.separator, lineWidth: 1))
     }
     .frame(maxWidth: .infinity, alignment: .topLeading)
   }
@@ -3897,7 +3987,7 @@ private struct MenuBarCustomizationSheet: View {
             }
           }
           .padding(12)
-          .background(Color.white.opacity(0.62), in: RoundedRectangle(cornerRadius: 10))
+          .background(AppVisualStyle.surface.opacity(0.62), in: RoundedRectangle(cornerRadius: 10))
 
           Text("网速主入口始终保留；可选择同时显示的资源占用。")
             .font(.system(size: 11, weight: .medium))
@@ -3932,7 +4022,7 @@ private struct MenuBarCustomizationSheet: View {
               .toggleStyle(.checkbox)
               .padding(.horizontal, 12)
               .frame(minHeight: 44)
-              .background(Color.white.opacity(0.62), in: RoundedRectangle(cornerRadius: 10))
+              .background(AppVisualStyle.surface.opacity(0.62), in: RoundedRectangle(cornerRadius: 10))
               .accessibilityHint("勾选后立即出现在菜单栏的快捷菜单中")
             }
           }
@@ -4007,7 +4097,7 @@ private struct MenuBarCustomizationSheet: View {
     .disabled(locked)
     .padding(.horizontal, 12)
     .frame(minHeight: 48)
-    .background(Color.white.opacity(0.62), in: RoundedRectangle(cornerRadius: 10))
+    .background(AppVisualStyle.surface.opacity(0.62), in: RoundedRectangle(cornerRadius: 10))
   }
 
   private func menuBarCatalogLabel(
@@ -4127,9 +4217,9 @@ struct OptimizePrincipleCard: View {
     .padding(13)
     .frame(maxWidth: .infinity, minHeight: 82, alignment: .topLeading)
     .background(
-      Color.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 15, style: .continuous)
+      AppVisualStyle.surface.opacity(0.72), in: RoundedRectangle(cornerRadius: 15, style: .continuous)
     )
-    .overlay(RoundedRectangle(cornerRadius: 15).stroke(Color.white.opacity(0.78), lineWidth: 1))
+    .overlay(RoundedRectangle(cornerRadius: 15).stroke(AppVisualStyle.separator, lineWidth: 1))
   }
 }
 
@@ -4211,6 +4301,7 @@ struct PluginCenterView: View {
   @EnvironmentObject private var model: AppModel
   @AppStorage("processViewerPluginEnabledV1") private var processViewerPluginEnabled = true
   @AppStorage("codexNetworkProbePluginEnabledV1") private var codexNetworkProbePluginEnabled = true
+  @FocusState private var searchFocused: Bool
   @State private var searchText = ""
   @State private var category = "全部"
 
@@ -4403,7 +4494,7 @@ struct PluginCenterView: View {
   var body: some View {
     HStack(spacing: 0) {
       overviewList
-        .frame(minWidth: 260, idealWidth: 282, maxWidth: 300)
+        .frame(minWidth: 272, idealWidth: 288, maxWidth: 308)
       Divider()
       if let selectedItem {
         applicationDetail(item: selectedItem)
@@ -4434,52 +4525,72 @@ struct PluginCenterView: View {
 
   private var overviewList: some View {
     VStack(spacing: 0) {
-      HStack(spacing: 8) {
-        TextField("搜索应用或功能", text: $searchText)
-          .textFieldStyle(.roundedBorder)
-          .controlSize(.small)
-          .accessibilityLabel("搜索应用中心")
-
-        Picker("应用分类", selection: $category) {
-          ForEach(categories, id: \.self) { Text($0).tag($0) }
+      VStack(alignment: .leading, spacing: 12) {
+        HStack {
+          Text("应用中心")
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(.primary)
+          Spacer(minLength: 4)
+          Text("\(allItems.count) 项")
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(AppVisualStyle.textSecondary)
         }
-        .labelsHidden()
-        .controlSize(.small)
-        .frame(width: 96)
-        .accessibilityLabel("应用分类")
+        WorkspaceSearchField(
+          placeholder: "搜索应用或功能", text: $searchText,
+          focus: $searchFocused, accessibilityName: "搜索应用中心")
+        HStack {
+          Picker("应用分类", selection: $category) {
+            ForEach(categories, id: \.self) { Text($0).tag($0) }
+          }
+          .labelsHidden()
+          .controlSize(.small)
+          .accessibilityLabel("应用分类")
+          Spacer(minLength: 4)
+          if category != "全部" || !searchText.isEmpty {
+            Button("清除筛选") { clearFilters() }
+              .buttonStyle(.plain)
+              .font(.caption)
+              .foregroundStyle(AppVisualStyle.accent)
+          }
+        }
       }
-      .padding(8)
+      .padding(16)
 
       Divider()
 
       ScrollViewReader { reader in
         ScrollView {
           if visibleItems.isEmpty {
-            VStack(spacing: 8) {
-              Image(systemName: "magnifyingglass")
-                .font(.title2)
-                .foregroundStyle(.secondary)
-              Text("没有找到匹配的应用")
-                .font(.callout.weight(.medium))
-              Text("换个关键词或分类试试。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, minHeight: 180)
-            .accessibilityElement(children: .combine)
+            WorkspaceEmptyState(
+              systemImage: "magnifyingglass", title: "没有找到匹配的应用",
+              detail: "换个关键词，或查看全部应用。",
+              actionTitle: "查看全部应用", action: clearFilters)
           } else {
-            LazyVStack(spacing: 2) {
-              ForEach(visibleItems) { item in
-                ApplicationCenterOverviewRow(
-                  item: item,
-                  selected: model.selectedPluginID == item.id
-                ) {
-                  model.selectPlugin(id: item.id)
+            LazyVStack(alignment: .leading, spacing: 4) {
+              ForEach(categories.filter { $0 != "全部" }, id: \.self) { group in
+                let items = visibleItems.filter { $0.category == group }
+                if !items.isEmpty {
+                  Text(group)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(AppVisualStyle.textSecondary)
+                    .padding(.horizontal, 10)
+                    .padding(.top, 12)
+                    .padding(.bottom, 4)
+                    .accessibilityAddTraits(.isHeader)
+                  ForEach(items) { item in
+                    ApplicationCenterOverviewRow(
+                      item: item,
+                      selected: model.selectedPluginID == item.id
+                    ) {
+                      model.selectPlugin(id: item.id)
+                    }
+                    .id(item.id)
+                  }
                 }
-                .id(item.id)
               }
             }
-            .padding(6)
+            .padding(.horizontal, 8)
+            .padding(.bottom, 12)
           }
         }
         .onAppear {
@@ -4488,7 +4599,12 @@ struct PluginCenterView: View {
         }
       }
     }
-    .background(Color(nsColor: .windowBackgroundColor).opacity(0.72))
+    .background(AppVisualStyle.background)
+  }
+
+  private func clearFilters() {
+    searchText = ""
+    category = "全部"
   }
 
   @ViewBuilder
@@ -4663,6 +4779,8 @@ private struct SystemManagedPluginDetailView: View {
 }
 
 private struct ApplicationCenterOverviewRow: View {
+  @State private var hovering = false
+
   let item: ApplicationCenterItem
   let selected: Bool
   let action: () -> Void
@@ -4670,29 +4788,29 @@ private struct ApplicationCenterOverviewRow: View {
   var body: some View {
     HStack(spacing: 8) {
       Button(action: action) {
-        HStack(spacing: 9) {
-          ApplicationCenterIcon(item: item, size: 30)
+        HStack(spacing: 10) {
+          ApplicationCenterIcon(item: item, size: 32)
 
-          VStack(alignment: .leading, spacing: 2) {
+          VStack(alignment: .leading, spacing: 4) {
             Text(item.name)
               .font(.callout.weight(.semibold))
               .foregroundStyle(.primary)
               .lineLimit(1)
             Text(item.purpose)
-              .font(.caption2)
-              .foregroundStyle(.secondary)
+              .font(.system(size: 11))
+              .foregroundStyle(AppVisualStyle.textSecondary)
               .lineLimit(2)
               .help(item.purpose)
+            if let statusText = item.statusText {
+              Label(statusText, systemImage: item.statusImage)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(item.statusColor)
+                .lineLimit(2)
+            }
           }
+          .frame(maxWidth: .infinity, alignment: .leading)
 
           Spacer(minLength: 4)
-          if let statusText = item.statusText {
-            Label(statusText, systemImage: item.statusImage)
-              .font(.system(size: 9, weight: .semibold))
-              .foregroundStyle(item.statusColor)
-              .lineLimit(1)
-              .labelStyle(.titleAndIcon)
-          }
           Image(systemName: "chevron.right")
             .font(.caption2.weight(.semibold))
             .foregroundStyle(.tertiary)
@@ -4704,6 +4822,7 @@ private struct ApplicationCenterOverviewRow: View {
       .accessibilityElement(children: .ignore)
       .accessibilityLabel(accessibilityLabel)
       .accessibilityValue(selected ? "已选" : "未选")
+      .accessibilityAddTraits(selected ? .isSelected : [])
       .accessibilityHint("查看详情")
 
       if let isEnabled = item.isEnabled {
@@ -4715,11 +4834,11 @@ private struct ApplicationCenterOverviewRow: View {
           .accessibilityValue(isEnabled.wrappedValue ? "已打开" : "已关闭")
       }
     }
-    .padding(.horizontal, 8)
-    .padding(.vertical, 6)
+    .padding(.horizontal, 10)
+    .padding(.vertical, 10)
     .frame(maxWidth: .infinity, minHeight: 56)
     .background(
-      selected ? AppVisualStyle.selection : Color.clear,
+      selected ? AppVisualStyle.selection : (hovering ? AppVisualStyle.hover : Color.clear),
       in: RoundedRectangle(cornerRadius: 9, style: .continuous)
     )
     .overlay(
@@ -4735,6 +4854,7 @@ private struct ApplicationCenterOverviewRow: View {
           .accessibilityHidden(true)
       }
     }
+    .onHover { hovering = $0 }
   }
 
   private var accessibilityLabel: String {
@@ -4754,7 +4874,7 @@ private struct ApplicationCenterOverviewView: View {
       AppVisualStyle.background
 
       ScrollView {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 24) {
           VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 7) {
               Circle()
@@ -4789,16 +4909,16 @@ private struct ApplicationCenterOverviewView: View {
                 select(item.id)
               } label: {
                 HStack(spacing: 10) {
-                  ApplicationCenterIcon(item: item, size: 34)
+                  ApplicationCenterIcon(item: item, size: 44)
 
                   VStack(alignment: .leading, spacing: 2) {
                     Text(item.name)
                       .font(.callout.weight(.semibold))
                       .foregroundStyle(.primary)
-                    Text(item.purpose)
-                      .font(.caption)
+                    Text(item.valueDescription)
+                      .font(.system(size: 12))
                       .foregroundStyle(.secondary)
-                      .lineLimit(1)
+                      .fixedSize(horizontal: false, vertical: true)
                   }
 
                   Spacer(minLength: 8)
@@ -4807,8 +4927,8 @@ private struct ApplicationCenterOverviewView: View {
                     .foregroundStyle(.tertiary)
                     .accessibilityHidden(true)
                 }
-                .padding(.horizontal, 11)
-                .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+                .padding(16)
+                .frame(maxWidth: .infinity, minHeight: 76, alignment: .leading)
                 .contentShape(Rectangle())
               }
               .buttonStyle(.plain)
@@ -4818,7 +4938,7 @@ private struct ApplicationCenterOverviewView: View {
 
               if index < featuredItems.count - 1 {
                 Divider()
-                  .padding(.leading, 56)
+                  .padding(.leading, 70)
               }
             }
           }
@@ -4832,7 +4952,7 @@ private struct ApplicationCenterOverviewView: View {
           )
         }
         .padding(24)
-        .frame(maxWidth: 640, alignment: .topLeading)
+        .frame(maxWidth: 760, alignment: .topLeading)
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -4869,6 +4989,8 @@ private struct ApplicationCenterOverviewView: View {
 }
 
 private struct ApplicationCenterFirstWinButton: View {
+  @State private var hovering = false
+
   let systemImage: String
   var assetName: String? = nil
   let tint: Color
@@ -4891,21 +5013,22 @@ private struct ApplicationCenterFirstWinButton: View {
           .lineLimit(2)
           .fixedSize(horizontal: false, vertical: true)
       }
-      .padding(11)
-      .frame(minWidth: 150, maxWidth: .infinity, minHeight: 88, alignment: .topLeading)
+      .padding(16)
+      .frame(minWidth: 140, maxWidth: .infinity, minHeight: 108, alignment: .topLeading)
       .background(
         AppVisualStyle.surface.opacity(0.88),
         in: RoundedRectangle(cornerRadius: 11, style: .continuous)
       )
       .overlay(
         RoundedRectangle(cornerRadius: 11, style: .continuous)
-          .stroke(tint.opacity(0.10), lineWidth: 1)
+          .stroke(hovering ? AppVisualStyle.accent : AppVisualStyle.separator, lineWidth: 1)
       )
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
     .accessibilityElement(children: .ignore)
     .accessibilityLabel("\(title)。\(hint)")
+    .onHover { hovering = $0 }
   }
 
   @ViewBuilder
@@ -4916,8 +5039,6 @@ private struct ApplicationCenterFirstWinButton: View {
         .renderingMode(.original)
         .scaledToFit()
         .frame(width: 24, height: 24)
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .shadow(color: Color.black.opacity(0.10), radius: 2, x: 0, y: 1)
     } else {
       Image(systemName: systemImage)
         .font(.system(size: 16, weight: .semibold))
@@ -5002,7 +5123,7 @@ private struct ApplicationWindowOpenButton: View {
       Label("打开窗口", systemImage: "arrow.up.right.square")
     }
     .buttonStyle(.borderedProminent)
-    .tint(accent)
+    .tint(AppVisualStyle.emphasizedSelection)
     .controlSize(.large)
     .help("打开 \(productName) 窗口")
     .accessibilityLabel("打开 \(productName) 窗口")
@@ -5047,6 +5168,7 @@ private struct PijuanApplicationDetailView: View {
             Label("打开披卷", systemImage: "doc.richtext")
           }
           .buttonStyle(.borderedProminent)
+          .tint(AppVisualStyle.emphasizedSelection)
           Button {
             model.openPijuanPDFShortcutManager()
           } label: {
@@ -5124,7 +5246,7 @@ private struct FileAssociationControlCard: View {
           }
         }
         .buttonStyle(.borderedProminent)
-        .tint(tint)
+        .tint(AppVisualStyle.emphasizedSelection)
         .disabled(
           !model.fileAssociationChangesAllowed || coverage == .all
             || model.fileAssociationBusyKind != nil)
@@ -5310,6 +5432,7 @@ private struct LauncherPluginDetailView: View {
             Spacer()
             Button("改为启动器") { model.adoptCapsSpaceForLauncher() }
               .buttonStyle(.borderedProminent)
+              .tint(AppVisualStyle.emphasizedSelection)
           }
         }
       }
@@ -5408,7 +5531,7 @@ struct PluginToolCard: View {
         .padding(.horizontal, 10)
         .frame(height: 34)
         .background(
-          Color.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+          AppVisualStyle.surface.opacity(0.86), in: RoundedRectangle(cornerRadius: 9, style: .continuous)
         )
         .overlay(RoundedRectangle(cornerRadius: 9).stroke(line.opacity(0.72), lineWidth: 1))
       }
@@ -5430,7 +5553,7 @@ struct PluginToolCard: View {
       .padding(.horizontal, 10)
       .frame(height: 30)
       .background(
-        Color.white.opacity(0.62), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        AppVisualStyle.surface.opacity(0.62), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
     .frame(maxWidth: .infinity, alignment: .topLeading)
   }
@@ -5536,9 +5659,9 @@ struct SystemPreferredStrip: View {
     }
     .padding(13)
     .background(
-      Color.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 15, style: .continuous)
+      AppVisualStyle.surface.opacity(0.72), in: RoundedRectangle(cornerRadius: 15, style: .continuous)
     )
-    .overlay(RoundedRectangle(cornerRadius: 15).stroke(Color.white.opacity(0.78), lineWidth: 1))
+    .overlay(RoundedRectangle(cornerRadius: 15).stroke(AppVisualStyle.separator, lineWidth: 1))
   }
 }
 
@@ -5568,7 +5691,7 @@ struct ToolbarIconButton: View {
         )
         .overlay(
           RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .stroke(hovering ? tint.opacity(0.34) : Color.white.opacity(0.82), lineWidth: 1)
+            .stroke(hovering ? tint.opacity(0.34) : AppVisualStyle.surface.opacity(0.82), lineWidth: 1)
         )
         .shadow(
           color: isEnabled ? tint.opacity(hovering ? 0.16 : 0.07) : Color.clear, radius: 7, x: 0,
@@ -5585,12 +5708,12 @@ struct ToolbarIconButton: View {
 
   private var buttonColors: [Color] {
     if !isEnabled {
-      return [Color.white.opacity(0.46), chrome.opacity(0.36)]
+      return [AppVisualStyle.surface.opacity(0.46), chrome.opacity(0.36)]
     }
     if hovering {
-      return [Color.white.opacity(0.98), tint.opacity(0.15)]
+      return [AppVisualStyle.surface.opacity(0.98), tint.opacity(0.15)]
     }
-    return [Color.white.opacity(0.94), tint.opacity(0.08)]
+    return [AppVisualStyle.surface.opacity(0.94), tint.opacity(0.08)]
   }
 }
 
@@ -5661,13 +5784,13 @@ struct HeaderToolIconButton: View {
   }
 
   private var backgroundColor: Color {
-    guard isEnabled else { return Color.white.opacity(0.30) }
-    return hovering ? Color.white.opacity(0.78) : Color.white.opacity(0.48)
+    guard isEnabled else { return AppVisualStyle.surface.opacity(0.30) }
+    return hovering ? AppVisualStyle.surface.opacity(0.78) : AppVisualStyle.surface.opacity(0.48)
   }
 
   private var borderColor: Color {
-    if !isEnabled { return Color.white.opacity(0.30) }
-    return hovering ? iconColor.opacity(0.18) : Color.white.opacity(0.50)
+    if !isEnabled { return AppVisualStyle.surface.opacity(0.30) }
+    return hovering ? iconColor.opacity(0.18) : AppVisualStyle.surface.opacity(0.50)
   }
 }
 
@@ -5738,11 +5861,11 @@ struct GridHeaderView: View {
       }
       .padding(3)
       .background(
-        Color.white.opacity(0.24), in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        AppVisualStyle.surface.opacity(0.24), in: RoundedRectangle(cornerRadius: 12, style: .continuous)
       )
       .overlay(
         RoundedRectangle(cornerRadius: 12, style: .continuous)
-          .stroke(Color.white.opacity(0.46), lineWidth: 1)
+          .stroke(AppVisualStyle.separator, lineWidth: 1)
       )
     }
     .padding(.horizontal, 16)
@@ -5849,7 +5972,7 @@ struct PhraseTableHeader: View {
     .frame(height: 40)
     .background(
       LinearGradient(
-        colors: [chrome, Color.white.opacity(0.68)], startPoint: .leading, endPoint: .trailing)
+        colors: [chrome, AppVisualStyle.surface.opacity(0.68)], startPoint: .leading, endPoint: .trailing)
     )
   }
 }
@@ -5896,7 +6019,7 @@ struct PhraseCardRow: View {
       .foregroundStyle(accent)
       .padding(.horizontal, 10)
       .frame(width: 140, height: 38)
-      .background(Color.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 10))
+      .background(AppVisualStyle.surface.opacity(0.86), in: RoundedRectangle(cornerRadius: 10))
       .overlay(
         RoundedRectangle(cornerRadius: 10).stroke(
           selected ? accent.opacity(0.65) : line, lineWidth: 1)
@@ -5919,7 +6042,7 @@ struct PhraseCardRow: View {
       .padding(.horizontal, 8)
       .padding(.vertical, 6)
       .frame(minHeight: 70)
-      .background(Color.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 10))
+      .background(AppVisualStyle.surface.opacity(0.86), in: RoundedRectangle(cornerRadius: 10))
       .overlay(RoundedRectangle(cornerRadius: 10).stroke(line, lineWidth: 1))
     }
     .padding(10)
@@ -5927,7 +6050,7 @@ struct PhraseCardRow: View {
     .overlay(
       RoundedRectangle(cornerRadius: 14, style: .continuous)
         .stroke(
-          selected ? accent.opacity(0.45) : Color.white.opacity(0.70), lineWidth: selected ? 1.5 : 1
+          selected ? accent.opacity(0.45) : AppVisualStyle.surface.opacity(0.70), lineWidth: selected ? 1.5 : 1
         )
     )
     .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -5947,11 +6070,11 @@ struct PhraseCardRow: View {
     }
     if hovering {
       return LinearGradient(
-        colors: [glowBlue.opacity(0.045), Color.white.opacity(0.92)], startPoint: .leading,
+        colors: [glowBlue.opacity(0.045), AppVisualStyle.surface.opacity(0.92)], startPoint: .leading,
         endPoint: .trailing)
     }
     return LinearGradient(
-      colors: [surface.opacity(0.92), Color.white.opacity(0.72)], startPoint: .topLeading,
+      colors: [surface.opacity(0.92), AppVisualStyle.surface.opacity(0.72)], startPoint: .topLeading,
       endPoint: .bottomTrailing)
   }
 }
@@ -6431,7 +6554,7 @@ struct MosSliderRow: View {
             .font(.system(size: 13, weight: .bold, design: .rounded))
             .foregroundStyle(ink)
             .frame(width: 78, height: 32)
-            .background(.white, in: RoundedRectangle(cornerRadius: 8))
+            .background(AppVisualStyle.surface, in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(line, lineWidth: 1))
         }
 
@@ -6470,7 +6593,7 @@ struct ScrollModeButton: View {
         Image(systemName: systemImage)
           .font(.system(size: 16, weight: .semibold))
           .frame(width: 30, height: 30)
-          .foregroundStyle(selected ? .white : accent)
+          .foregroundStyle(selected ? AppVisualStyle.onAccent : accent)
           .background(
             selected ? accent : accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
         VStack(alignment: .leading, spacing: 2) {
@@ -6587,13 +6710,13 @@ struct StatusChip: View {
     .frame(height: 28)
     .background(
       LinearGradient(
-        colors: [Color.white.opacity(0.86), color.opacity(0.07)],
+        colors: [AppVisualStyle.surface.opacity(0.86), color.opacity(0.07)],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
       ),
       in: Capsule()
     )
-    .overlay(Capsule().stroke(Color.white.opacity(0.72), lineWidth: 1))
+    .overlay(Capsule().stroke(AppVisualStyle.separator, lineWidth: 1))
   }
 }
 
@@ -6888,7 +7011,7 @@ struct AboutPanelView: View {
         Text("设置与关于")
           .font(.headline)
           .foregroundStyle(.primary)
-        Text("按用途找设置，不用猜入口")
+        Text("外观、权限与更新")
           .font(.caption)
           .foregroundStyle(.secondary)
       }
@@ -6919,13 +7042,14 @@ struct AboutPanelView: View {
           .padding(.horizontal, 12)
           .frame(height: 38)
           .background(
-            activeSettingsArea == area ? accent.opacity(0.09) : Color.clear,
+            activeSettingsArea == area ? AppVisualStyle.selection : Color.clear,
             in: RoundedRectangle(cornerRadius: 9, style: .continuous)
           )
           .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("设置，\(area.rawValue)")
+        .accessibilityAddTraits(activeSettingsArea == area ? .isSelected : [])
         .accessibilityValue(
           (activeSettingsArea == area ? "已选" : "未选")
             + (area == .updates && model.hasAvailableUpdate ? "，有可用更新" : ""))
@@ -6967,10 +7091,14 @@ struct AboutPanelView: View {
 
   private var generalSettingsPage: some View {
     settingsPage(
-      title: "启动、菜单栏与恢复",
+      title: "外观、启动与恢复",
       subtitle: "最常用的入口和故障恢复都集中在这里。",
       systemImage: "gearshape"
     ) {
+      SettingsGroup(title: "外观") {
+        AppAppearanceSetting()
+      }
+
       SettingsGroup(title: "菜单栏") {
         HStack(spacing: 12) {
           SettingsToggleLabel(
@@ -6981,7 +7109,7 @@ struct AboutPanelView: View {
             model.presentMenuBarCustomization()
           }
           .buttonStyle(.borderedProminent)
-          .tint(accent)
+          .tint(AppVisualStyle.emphasizedSelection)
         }
       }
 
@@ -7525,7 +7653,7 @@ struct KeepAwakeSettingsPanel: View {
           .accessibilityLabel("增加自定义时长")
         }
         .foregroundStyle(AppVisualStyle.accent)
-        .background(Color.white, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(AppVisualStyle.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
           RoundedRectangle(cornerRadius: 10, style: .continuous)
             .stroke(hairline, lineWidth: 1)
@@ -7604,7 +7732,7 @@ private struct KeepAwakeDurationButtonStyle: ButtonStyle {
       .foregroundStyle(AppVisualStyle.accent)
       .frame(height: 42)
       .background(
-        configuration.isPressed ? AppVisualStyle.selection : Color.white,
+        configuration.isPressed ? AppVisualStyle.selection : AppVisualStyle.surface,
         in: RoundedRectangle(cornerRadius: 11, style: .continuous)
       )
       .overlay(
@@ -7622,7 +7750,7 @@ private struct KeepAwakePrimaryButtonStyle: ButtonStyle {
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
       .font(.system(size: 12, weight: .semibold))
-      .foregroundStyle(Color.white)
+      .foregroundStyle(AppVisualStyle.onAccent)
       .padding(.horizontal, 14)
       .frame(height: 36)
       .background(
@@ -7653,7 +7781,7 @@ private struct KeepAwakeDoneButtonStyle: ButtonStyle {
       .foregroundStyle(ink)
       .padding(.horizontal, 12)
       .frame(height: 32)
-      .background(Color.white.opacity(configuration.isPressed ? 0.55 : 0.92), in: Capsule())
+      .background(AppVisualStyle.surface.opacity(configuration.isPressed ? 0.55 : 0.92), in: Capsule())
       .overlay(Capsule().stroke(hairline, lineWidth: 1))
   }
 }
@@ -7788,10 +7916,10 @@ private struct ShortcutSemanticMigrationPanel: View {
     }
     .padding(14)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(Color.white, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    .background(AppVisualStyle.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     .overlay(
       RoundedRectangle(cornerRadius: 12, style: .continuous)
-        .stroke(Color(red: 0.85, green: 0.81, blue: 0.88), lineWidth: 1)
+        .stroke(AppVisualStyle.separator, lineWidth: 1)
     )
     .accessibilityElement(children: .contain)
     .accessibilityLabel("快捷键迁移状态")
@@ -7822,7 +7950,7 @@ private struct ShortcutSemanticMigrationPanel: View {
       HStack(spacing: 10) {
         Button(primaryTitle, action: primaryAction)
           .buttonStyle(.borderedProminent)
-          .tint(violet)
+          .tint(AppVisualStyle.emphasizedSelection)
         Button(secondaryTitle, action: secondaryAction)
           .buttonStyle(.bordered)
       }
@@ -7882,9 +8010,21 @@ struct ShortcutUnifiedPanelView: View {
             settingsView
               .frame(maxWidth: .infinity, maxHeight: .infinity)
           } else {
-            ShortcutGuideEmptyState(searchText: "PDF", selectedCategory: "PDF类")
+            WorkspaceEmptyState(
+              systemImage: "doc.richtext", title: "PDF 设置暂未就绪",
+              detail: "可先从应用中心打开披卷，再回来调整快捷键。")
               .frame(maxWidth: .infinity, maxHeight: .infinity)
           }
+        } else if visibleEntries.isEmpty && hasActiveFilters {
+          WorkspaceEmptyState(
+            systemImage: "magnifyingglass", title: "没有匹配的快捷键",
+            detail: "换个关键词，或清除筛选查看全部快捷键。",
+            actionTitle: "清除筛选") {
+              searchText = ""
+              selectedCategory = "全部"
+              searchFocused = true
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
           ShortcutTableView(
             selectedModule: moduleHotkeys,
@@ -7937,9 +8077,8 @@ struct ShortcutUnifiedPanelView: View {
           .frame(maxWidth: .infinity, alignment: .trailing)
       }
     }
-    .padding(.horizontal, 16)
-    .padding(.vertical, 13)
-    .premiumPanel(radius: 17)
+    .padding(.horizontal, 2)
+    .padding(.vertical, 4)
   }
 
   private var unifiedActions: some View {
@@ -7950,6 +8089,7 @@ struct ShortcutUnifiedPanelView: View {
         Label("添加软件快捷键", systemImage: "plus.app")
       }
       .buttonStyle(.borderedProminent)
+      .tint(AppVisualStyle.emphasizedSelection)
       .help("先选软件，再按下你想用的快捷键")
       if model.deletedDefaultShortcutCount > 0 {
         Button {
@@ -7991,74 +8131,38 @@ struct ShortcutUnifiedPanelView: View {
     }
   }
 
+  private var hasActiveFilters: Bool {
+    selectedCategory != "全部" || !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+  }
+
   private var searchAndCategories: some View {
-    VStack(spacing: 9) {
+    VStack(alignment: .leading, spacing: 12) {
+      HStack(spacing: 12) {
+        if isPijuanPDFCategory {
+          Label("披卷内置快捷键可点击改键，不能删除。", systemImage: "doc.richtext")
+            .font(.system(size: 12))
+            .foregroundStyle(muted)
+            .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+        } else {
+          WorkspaceSearchField(
+            placeholder: searchPlaceholder, text: $searchText,
+            focus: $searchFocused, accessibilityName: "搜索快捷键")
+        }
+        resultSummary
+      }
+
       ViewThatFits(in: .horizontal) {
         HStack(spacing: 12) {
           categorySegmentBar
           Spacer(minLength: 0)
-          resultSummary
         }
-
         HStack(spacing: 12) {
           categoryPicker
             .pickerStyle(.menu)
           Spacer(minLength: 0)
-          resultSummary
         }
-      }
-
-      if isPijuanPDFCategory {
-        HStack(spacing: 8) {
-          Image(systemName: "doc.richtext")
-            .foregroundStyle(AppVisualStyle.accent)
-          Text("披卷内置快捷键可点击改键，不能删除。")
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(muted)
-          Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 10)
-        .frame(height: 36)
-        .background(AppVisualStyle.selection.opacity(0.66), in: RoundedRectangle(cornerRadius: 9))
-      } else {
-        HStack(spacing: 9) {
-          Image(systemName: "magnifyingglass")
-            .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(searchFocused ? AppVisualStyle.accent : muted)
-          TextField(searchPlaceholder, text: $searchText)
-            .textFieldStyle(.plain)
-            .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(ink)
-            .focused($searchFocused)
-          if !searchText.isEmpty {
-            Button {
-              searchText = ""
-            } label: {
-              Image(systemName: "xmark.circle.fill")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(muted.opacity(0.72))
-            }
-            .buttonStyle(.plain)
-          }
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 38)
-        .background(
-          Color.white.opacity(0.92),
-          in: RoundedRectangle(cornerRadius: 9, style: .continuous)
-        )
-        .overlay(
-          RoundedRectangle(cornerRadius: 9)
-            .stroke(searchFocused ? AppVisualStyle.accent : hairline, lineWidth: 1)
-        )
       }
     }
-    .padding(10)
-    .background(
-      AppVisualStyle.surface,
-      in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-    )
-    .overlay(RoundedRectangle(cornerRadius: 12).stroke(hairline, lineWidth: 1))
   }
 
   private var categorySegmentBar: some View {
@@ -8069,11 +8173,11 @@ struct ShortcutUnifiedPanelView: View {
           selectedCategory = category
         } label: {
           Text(shortcutGuideCategoryDisplayName(category))
-            .font(.system(size: 11, weight: .semibold))
+            .font(.system(size: 12, weight: selected ? .semibold : .regular))
             .foregroundStyle(ink)
             .lineLimit(1)
-            .padding(.horizontal, 9)
-            .frame(height: 28)
+            .padding(.horizontal, 10)
+            .frame(height: 30)
             .background(
               selected ? AppVisualStyle.selection : Color.clear,
               in: RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -8083,18 +8187,11 @@ struct ShortcutUnifiedPanelView: View {
         .buttonStyle(.plain)
         .accessibilityLabel("\(shortcutGuideCategoryDisplayName(category))分类")
         .accessibilityValue(selected ? "已选" : "未选")
+        .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier("shortcutCategory.\(category)")
       }
     }
     .padding(3)
-    .background(
-      Color.white.opacity(0.74),
-      in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-    )
-    .overlay(
-      RoundedRectangle(cornerRadius: 10, style: .continuous)
-        .stroke(hairline, lineWidth: 1)
-    )
     .fixedSize(horizontal: true, vertical: false)
     .accessibilityElement(children: .contain)
     .accessibilityLabel("快捷键分类")
@@ -8221,7 +8318,7 @@ private struct PrimaryAddShortcutMenu: View {
     } label: {
       Label("新增快捷键", systemImage: "plus")
         .font(.system(size: 12, weight: .semibold))
-        .foregroundStyle(.white)
+        .foregroundStyle(AppVisualStyle.onAccent)
         .padding(.horizontal, 12)
         .frame(minHeight: 32)
         .background(accent, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
@@ -8362,7 +8459,7 @@ private struct ShortcutEditorSheet: View {
               .foregroundStyle(isCapturingHotkey ? accent : ink)
               .padding(.horizontal, 10)
               .frame(height: 38)
-              .background(Color.white.opacity(0.78), in: RoundedRectangle(cornerRadius: 8))
+              .background(AppVisualStyle.surface.opacity(0.78), in: RoundedRectangle(cornerRadius: 8))
               .overlay(
                 RoundedRectangle(cornerRadius: 8)
                   .stroke(isCapturingHotkey ? accent.opacity(0.55) : glassLine, lineWidth: 1))
@@ -8490,7 +8587,7 @@ private struct ShortcutEditorSheet: View {
               .frame(minHeight: 82)
               .scrollContentBackground(.hidden)
               .padding(8)
-              .background(Color.white.opacity(0.78), in: RoundedRectangle(cornerRadius: 8))
+              .background(AppVisualStyle.surface.opacity(0.78), in: RoundedRectangle(cornerRadius: 8))
               .overlay(RoundedRectangle(cornerRadius: 8).stroke(glassLine, lineWidth: 1))
           }
         }
@@ -8648,6 +8745,7 @@ private struct ShortcutEditorSheet: View {
 
 struct ShortcutTableView: View {
   @EnvironmentObject private var model: AppModel
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   let selectedModule: String
   let itemIDs: [String]?
   let editShortcut: ((String) -> Void)?
@@ -8711,7 +8809,7 @@ struct ShortcutTableView: View {
   private func scrollToSelectedItem(using proxy: ScrollViewProxy) {
     guard let selectedID = model.selectedID else { return }
     let scroll: @MainActor @Sendable () -> Void = {
-      withAnimation(.easeOut(duration: 0.2)) {
+      withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
         proxy.scrollTo(selectedID, anchor: .center)
       }
     }
@@ -8749,8 +8847,8 @@ struct HeaderCell: View {
     Text(title)
       .font(.system(size: 12, weight: .medium))
       .foregroundStyle(muted)
-      .frame(width: width, alignment: .leading)
       .padding(.leading, 10)
+      .frame(width: width, alignment: .leading)
   }
 }
 
@@ -8765,13 +8863,14 @@ struct FlexHeaderCell: View {
     Text(title)
       .font(.system(size: 12, weight: .medium))
       .foregroundStyle(muted)
-      .frame(maxWidth: .infinity, alignment: .leading)
       .padding(.leading, 10)
+      .frame(maxWidth: .infinity, alignment: .leading)
   }
 }
 
 struct ShortcutRow: View {
   @EnvironmentObject private var model: AppModel
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Binding var item: ShortcutItem
   let editShortcut: ((String) -> Void)?
   @State private var hovering = false
@@ -8852,8 +8951,9 @@ struct ShortcutRow: View {
       hovering = inside
     }
     .accessibilityIdentifier("shortcut.row.\(item.id)")
-    .animation(.easeOut(duration: 0.14), value: selected)
-    .animation(.easeOut(duration: 0.12), value: hovering)
+    .accessibilityAddTraits(selected ? .isSelected : [])
+    .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: selected)
+    .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovering)
   }
 
   private var rowBackground: Color {
@@ -9438,7 +9538,7 @@ struct InlineTextField: View {
       .padding(.horizontal, 9)
       .frame(height: 30)
       .background(
-        Color.white.opacity(0.001),
+        AppVisualStyle.surface.opacity(0.001),
         in: RoundedRectangle(cornerRadius: 7, style: .continuous)
       )
   }
@@ -9650,7 +9750,7 @@ struct ActionMenu: View {
           .foregroundStyle(ink.opacity(0.70))
           .frame(width: 34, height: 30)
           .background(
-            Color.white.opacity(0.78),
+            AppVisualStyle.surface.opacity(0.78),
             in: RoundedRectangle(cornerRadius: 8, style: .continuous)
           )
           .overlay(
@@ -9672,7 +9772,7 @@ struct ActionMenu: View {
         .frame(height: 30)
         .background(
           LinearGradient(
-            colors: [Color.white.opacity(0.92), softSurface.opacity(0.70)],
+            colors: [AppVisualStyle.surface.opacity(0.92), softSurface.opacity(0.70)],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
           ),
@@ -9723,12 +9823,12 @@ struct ShortcutActionVisual: View {
     }
     .frame(width: size, height: size)
     .background(
-      appIcon == nil ? accent.opacity(0.08) : Color.white.opacity(0.92),
+      appIcon == nil ? accent.opacity(0.08) : AppVisualStyle.surface.opacity(0.92),
       in: RoundedRectangle(cornerRadius: max(6, size * 0.30), style: .continuous)
     )
     .overlay(
       RoundedRectangle(cornerRadius: max(6, size * 0.30), style: .continuous)
-        .stroke(appIcon == nil ? accent.opacity(0.12) : Color.white.opacity(0.80), lineWidth: 1)
+        .stroke(appIcon == nil ? accent.opacity(0.12) : AppVisualStyle.surface.opacity(0.80), lineWidth: 1)
     )
   }
 }
@@ -9777,7 +9877,7 @@ struct ShortcutActionCaptureSheet: View {
         HStack(spacing: 16) {
           Image(systemName: "keyboard")
             .font(.system(size: 30, weight: .semibold))
-            .foregroundStyle(.white)
+            .foregroundStyle(AppVisualStyle.onAccent)
             .frame(width: 64, height: 64)
             .background(accent, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
 
@@ -9805,7 +9905,7 @@ struct ShortcutActionCaptureSheet: View {
             .font(.system(size: 18, weight: .semibold, design: .monospaced))
             .foregroundStyle(model.shortcutActionCaptureDraft.isEmpty ? muted : accent)
             .frame(width: 220, height: 44)
-            .background(.white, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .background(AppVisualStyle.surface, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             .overlay(
               RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .stroke(accent.opacity(0.65), lineWidth: 2)
@@ -9882,7 +9982,7 @@ struct HotkeyCell: View {
           : LinearGradient(
             colors: isProtected
               ? [Color(nsColor: .controlBackgroundColor), Color(nsColor: .controlBackgroundColor)]
-              : [Color(red: 0.978, green: 0.984, blue: 0.990), Color.white.opacity(0.80)],
+              : [AppVisualStyle.background, AppVisualStyle.surface.opacity(0.80)],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
           ),

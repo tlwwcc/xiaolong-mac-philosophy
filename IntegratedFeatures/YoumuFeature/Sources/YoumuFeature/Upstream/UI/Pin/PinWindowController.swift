@@ -422,10 +422,10 @@ final class PinWindowController {
             height: barHeight
         ))
         actionBar.wantsLayer = true
-        actionBar.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.58).cgColor
+        actionBar.layer?.backgroundColor = VisionDesign.overlayBackground.cgColor
         actionBar.layer?.cornerRadius = barHeight / 2
         actionBar.layer?.borderWidth = 1
-        actionBar.layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
+        actionBar.layer?.borderColor = VisionDesign.overlayBorder.cgColor
         actionBar.layer?.shadowColor = NSColor.black.cgColor
         actionBar.layer?.shadowOpacity = 0.38
         actionBar.layer?.shadowRadius = 8
@@ -457,9 +457,9 @@ final class PinWindowController {
             button.target = self
             if action == .saveAs {
                 button.wantsLayer = true
-                button.layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.96).cgColor
+                button.layer?.backgroundColor = VisionDesign.selectionFill.cgColor
                 button.layer?.cornerRadius = buttonSize / 2
-                button.layer?.shadowColor = NSColor.systemBlue.cgColor
+                button.layer?.shadowColor = VisionDesign.selectionFill.cgColor
                 button.layer?.shadowOpacity = 0.42
                 button.layer?.shadowRadius = 4
                 button.layer?.shadowOffset = NSSize(width: 0, height: -1)
@@ -619,7 +619,7 @@ final class PinShadowHostView: NSView {
         layer?.backgroundColor = NSColor.black.cgColor
         layer?.cornerRadius = PinWindowStyle.imageCornerRadius
         layer?.borderWidth = 1
-        layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
+        layer?.borderColor = VisionDesign.overlayBorder.cgColor
         layer?.shadowColor = NSColor.black.cgColor
         layer?.shadowOpacity = PinWindowStyle.shadowOpacity
         layer?.shadowRadius = PinWindowStyle.shadowRadius

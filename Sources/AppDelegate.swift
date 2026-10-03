@@ -324,6 +324,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   func applicationDidHide(_ notification: Notification) {
     shortcutWindowToggleState.invalidate()
     pendingRestorationTickets.removeAll()
+    model.clipboardHistory.cancelPendingReplay()
     if launcherWindow != nil {
     }
     NotificationCenter.default.post(
@@ -2188,6 +2189,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
   private func hideClipboardHistoryWindow() {
     clipboardHistoryReturnApplication = nil
+    model.clipboardHistory.cancelPendingReplay()
     guard let clipboardHistoryWindow else { return }
     NotificationCenter.default.post(
       name: .clipboardHistoryWindowWillHide,
@@ -2351,6 +2353,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         name: .processViewerWindowVisibilityChanged,
         object: false)
     } else if minimizedWindow === clipboardHistoryWindow {
+      model.clipboardHistory.cancelPendingReplay()
       NotificationCenter.default.post(
         name: .clipboardHistoryWindowWillHide,
         object: nil)

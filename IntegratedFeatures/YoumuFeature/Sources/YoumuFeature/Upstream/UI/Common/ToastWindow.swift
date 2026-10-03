@@ -27,7 +27,7 @@ class ToastWindow {
 
         let container = NSView(frame: NSRect(x: 0, y: 0, width: contentWidth, height: contentHeight))
         container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.82).cgColor
+        container.layer?.backgroundColor = VisionDesign.overlayBackground.cgColor
         container.layer?.cornerRadius = contentHeight / 2
         label.frame.origin = NSPoint(
             x: (contentWidth - label.frame.width) / 2,

@@ -623,7 +623,7 @@ private final class ClipboardHistoryFileCellView: NSTableCellView {
     titleLabel.maximumNumberOfLines = 2
     unavailableLabel.translatesAutoresizingMaskIntoConstraints = false
     unavailableLabel.font = .systemFont(ofSize: 11, weight: .medium)
-    unavailableLabel.textColor = .systemOrange
+    unavailableLabel.textColor = NSColor(AppVisualStyle.warning)
 
     addSubview(fileIcon)
     addSubview(titleLabel)
@@ -670,6 +670,9 @@ private final class ClipboardHistoryFileCellView: NSTableCellView {
     didSet {
       titleLabel.textColor =
         backgroundStyle == .emphasized ? .alternateSelectedControlTextColor : .labelColor
+      unavailableLabel.textColor =
+        backgroundStyle == .emphasized
+        ? .alternateSelectedControlTextColor : NSColor(AppVisualStyle.warning)
     }
   }
 }

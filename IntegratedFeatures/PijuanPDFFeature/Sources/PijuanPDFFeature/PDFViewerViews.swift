@@ -173,7 +173,7 @@ struct PDFViewerRootView: View {
     .background(.ultraThinMaterial)
     .overlay(alignment: .bottom) {
       Rectangle()
-        .fill(Color.primary.opacity(0.08))
+        .fill(pdfPanelBorder)
         .frame(height: 1)
     }
   }
@@ -218,7 +218,7 @@ struct PDFViewerRootView: View {
     .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
     .overlay {
       RoundedRectangle(cornerRadius: 9, style: .continuous)
-        .stroke(Color.primary.opacity(0.10), lineWidth: 0.75)
+        .stroke(pdfPanelBorder, lineWidth: 0.75)
     }
     .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
     .help("搜索当前 PDF（⌘F）")
@@ -226,7 +226,7 @@ struct PDFViewerRootView: View {
 
   private var toolbarDivider: some View {
     Rectangle()
-      .fill(Color.primary.opacity(0.10))
+      .fill(pdfPanelBorder)
       .frame(width: 1, height: 18)
       .padding(.horizontal, 1)
   }
@@ -300,10 +300,10 @@ struct PDFViewerRootView: View {
       Spacer()
       if model.pageCount > 0 {
         Text("双指移动  ·  捏合 / 滚轮缩放  ·  \(shortcutText(.actualSize)) 实际大小  ·  \(shortcutText(.togglePresentation)) 投影")
-          .foregroundStyle(.tertiary)
+          .foregroundStyle(.secondary)
       }
       Text(applicationVersionText)
-        .foregroundStyle(.tertiary)
+        .foregroundStyle(.secondary)
         .monospacedDigit()
         .fixedSize()
         .accessibilityIdentifier("pdf-version")
@@ -345,7 +345,7 @@ struct PDFViewerRootView: View {
         .foregroundStyle(.white)
         .padding(.horizontal, 12)
         .frame(height: 32)
-        .background(pdfBrandPurple, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(pdfBrandFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay {
           RoundedRectangle(cornerRadius: 10, style: .continuous)
             .stroke(.white.opacity(0.18), lineWidth: 0.75)
@@ -398,7 +398,7 @@ private struct PDFToolbarGroup<Content: View>: View {
     .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     .overlay {
       RoundedRectangle(cornerRadius: 10, style: .continuous)
-        .stroke(Color.primary.opacity(0.09), lineWidth: 0.75)
+        .stroke(pdfPanelBorder, lineWidth: 0.75)
     }
     .shadow(color: .black.opacity(0.045), radius: 2, y: 1)
   }
@@ -447,7 +447,7 @@ private struct PDFToolbarButton: View {
 
   private var buttonBackground: Color {
     if isProminent {
-      return pdfBrandPurple.opacity(isEnabled ? (isHovered ? 0.88 : 1) : 0.5)
+      return pdfBrandFill.opacity(isEnabled ? (isHovered ? 0.88 : 1) : 0.5)
     }
     return isHovered && isEnabled ? pdfBrandPurple.opacity(0.10) : .clear
   }
@@ -469,7 +469,7 @@ struct PDFThumbnailRepresentable: NSViewRepresentable {
   let pdfView: PDFView
 
   func makeNSView(context: Context) -> PDFThumbnailView {
-    let thumbnailView = PDFThumbnailView()
+    let thumbnailView = AppearanceAwarePDFThumbnailView()
     thumbnailView.pdfView = pdfView
     thumbnailView.thumbnailSize = NSSize(width: 112, height: 148)
     thumbnailView.backgroundColor = .controlBackgroundColor
@@ -478,5 +478,16 @@ struct PDFThumbnailRepresentable: NSViewRepresentable {
 
   func updateNSView(_ nsView: PDFThumbnailView, context: Context) {
     nsView.pdfView = pdfView
+  }
+}
+
+/// PDFKit caches its surrounding canvas. Refresh that canvas, leaving document page pixels alone.
+private final class AppearanceAwarePDFThumbnailView: PDFThumbnailView {
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      backgroundColor = .controlBackgroundColor
+    }
+    needsDisplay = true
   }
 }

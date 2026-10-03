@@ -2,7 +2,7 @@ import AppKit
 
 /// 编辑器顶部上下文工具栏：工具 | 当前工具参数 | 撤销重做。
 /// 输出动作与缩放放在独立底栏，避免所有能力挤在一排。
-class EditorToolbarView: NSView {
+class EditorToolbarView: VisionSurfaceView {
 
     var onToolSelected: ((EditorTool) -> Void)?
     var onArrowStyleSelected: ((ArrowStyle) -> Void)?
@@ -31,13 +31,13 @@ class EditorToolbarView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.backgroundColor = VisionDesign.editorChrome.cgColor
+        surfaceColor = VisionDesign.editorChrome
         layer?.borderWidth = 0
         setupButtons()
 
-        let bottomRule = NSView(frame: NSRect(x: 0, y: 0, width: bounds.width, height: 1))
+        let bottomRule = VisionSurfaceView(frame: NSRect(x: 0, y: 0, width: bounds.width, height: 1))
         bottomRule.wantsLayer = true
-        bottomRule.layer?.backgroundColor = VisionDesign.editorDivider.cgColor
+        bottomRule.surfaceColor = VisionDesign.editorDivider
         bottomRule.autoresizingMask = [.width, .maxYMargin]
         addSubview(bottomRule)
     }
@@ -56,9 +56,9 @@ class EditorToolbarView: NSView {
             x += width + 3
         }
         func separator() {
-            let sep = NSView(frame: NSRect(x: x + 3, y: centerY - 10, width: 1, height: 20))
+            let sep = VisionSurfaceView(frame: NSRect(x: x + 3, y: centerY - 10, width: 1, height: 20))
             sep.wantsLayer = true
-            sep.layer?.backgroundColor = VisionDesign.editorDivider.cgColor
+            sep.surfaceColor = VisionDesign.editorDivider
             addSubview(sep)
             x += 12
         }
@@ -126,7 +126,7 @@ class EditorToolbarView: NSView {
             button.title = width.displayName
             button.isBordered = false
             button.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-            button.contentTintColor = .white
+            button.contentTintColor = VisionDesign.editorForeground
             button.wantsLayer = true
             button.layer?.cornerRadius = 7
             button.target = self
@@ -158,7 +158,7 @@ class EditorToolbarView: NSView {
         button.title = ""
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)
         button.isBordered = false
-        button.contentTintColor = .white
+        button.contentTintColor = VisionDesign.editorForeground
         button.toolTip = tooltip
         button.setAccessibilityLabel(tooltip)
         button.setAccessibilityLabel(tooltip)
@@ -177,7 +177,7 @@ class EditorToolbarView: NSView {
         button.title = title
         button.isBordered = false
         button.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-        button.contentTintColor = .white
+        button.contentTintColor = VisionDesign.editorForeground
         button.toolTip = tooltip
         button.wantsLayer = true
         button.layer?.cornerRadius = 8
@@ -271,11 +271,23 @@ class EditorToolbarView: NSView {
     func setHistoryEnabled(canUndo: Bool, canRedo: Bool) {
         undoButton?.isEnabled = canUndo
         redoButton?.isEnabled = canRedo
-        undoButton?.contentTintColor = canUndo ? .white : NSColor.white.withAlphaComponent(0.3)
-        redoButton?.contentTintColor = canRedo ? .white : NSColor.white.withAlphaComponent(0.3)
+        undoButton?.contentTintColor = canUndo ? VisionDesign.editorForeground : .disabledControlTextColor
+        redoButton?.contentTintColor = canRedo ? VisionDesign.editorForeground : .disabledControlTextColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshSelectionVisuals()
+        setHistoryEnabled(canUndo: undoButton?.isEnabled == true, canRedo: redoButton?.isEnabled == true)
     }
 
     private func refreshSelectionVisuals() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            applySelectionVisuals()
+        }
+    }
+
+    private func applySelectionVisuals() {
         if let arrowButton {
             arrowButton.image = ArrowStylePreview.image(
                 style: selectedArrowStyle,
@@ -290,18 +302,21 @@ class EditorToolbarView: NSView {
         }
         for (tool, button) in toolButtons {
             let selected = (tool == selectedTool)
+            button.contentTintColor = selected ? VisionDesign.selectionForeground : VisionDesign.editorForeground
+            button.layer?.borderWidth = selected ? 1.5 : 0
+            button.layer?.borderColor = VisionDesign.brandAccent.cgColor
             if let actionButton = button as? ActionButton {
                 actionButton.persistentFill = selected
-                    ? NSColor.controlAccentColor.withAlphaComponent(0.82) : nil
+                    ? VisionDesign.selectionFill : nil
             } else {
                 button.layer?.backgroundColor = selected
-                    ? NSColor.controlAccentColor.withAlphaComponent(0.82).cgColor : nil
+                    ? VisionDesign.selectionFill.cgColor : nil
             }
         }
         for (index, button) in colorButtons.enumerated() {
             let selected = (index == selectedColorIndex)
             button.layer?.borderWidth = selected ? 2.5 : 0
-            button.layer?.borderColor = NSColor.white.cgColor
+            button.layer?.borderColor = VisionDesign.editorForeground.cgColor
             button.layer?.shadowColor = NSColor.black.cgColor
             button.layer?.shadowOpacity = selected ? 0.28 : 0
             button.layer?.shadowRadius = selected ? 2 : 0
@@ -309,13 +324,16 @@ class EditorToolbarView: NSView {
         }
         for (width, button) in widthButtons {
             let selected = (width == selectedWidth)
+            button.contentTintColor = selected ? VisionDesign.selectionForeground : VisionDesign.editorForeground
+            button.layer?.borderWidth = selected ? 1.5 : 0
+            button.layer?.borderColor = VisionDesign.brandAccent.cgColor
             button.title = width.displayName
             button.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
             button.toolTip = selectedTool == .text
                 ? "文字字号：\(width.displayName)"
                 : "粗细：\(width.displayName)"
             button.layer?.backgroundColor = selected
-                ? NSColor.controlAccentColor.withAlphaComponent(0.82).cgColor
+                ? VisionDesign.selectionFill.cgColor
                 : nil
             button.layer?.cornerRadius = 7
         }
@@ -341,7 +359,7 @@ enum ArrowStylePreview {
 }
 
 /// 编辑器底部动作栏：缩放与输出固定分区，窗口缩放时出口始终贴右可见。
-final class EditorActionBarView: NSView {
+final class EditorActionBarView: VisionSurfaceView {
     var onZoomOut: (() -> Void)?
     var onZoomIn: (() -> Void)?
     var onFit: (() -> Void)?
@@ -358,11 +376,11 @@ final class EditorActionBarView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.backgroundColor = VisionDesign.editorChrome.cgColor
+        surfaceColor = VisionDesign.editorChrome
 
-        let topRule = NSView(frame: NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1))
+        let topRule = VisionSurfaceView(frame: NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1))
         topRule.wantsLayer = true
-        topRule.layer?.backgroundColor = VisionDesign.editorDivider.cgColor
+        topRule.surfaceColor = VisionDesign.editorDivider
         topRule.autoresizingMask = [.width, .minYMargin]
         addSubview(topRule)
 
@@ -376,14 +394,14 @@ final class EditorActionBarView: NSView {
             self?.onZoomIn?()
         }
         zoomLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
-        zoomLabel.textColor = NSColor.white.withAlphaComponent(0.8)
+        zoomLabel.textColor = VisionDesign.editorSecondary
         zoomLabel.alignment = .center
         leftViews = [minus, zoomLabel, plus, fit]
 
         let cancel = makeButton(symbol: "xmark", tooltip: "取消 (Esc)") { [weak self] in
             self?.onCancel?()
         }
-        cancel.contentTintColor = NSColor(red: 1.0, green: 0.4, blue: 0.4, alpha: 1)
+        cancel.contentTintColor = VisionDesign.failureText
         let save = makeButton(symbol: "square.and.arrow.down", tooltip: "保存 PNG") { [weak self] in
             self?.onSave?()
         }
@@ -429,7 +447,7 @@ final class EditorActionBarView: NSView {
         button.title = ""
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)
         button.isBordered = false
-        button.contentTintColor = .white
+        button.contentTintColor = VisionDesign.editorForeground
         button.toolTip = tooltip
         button.wantsLayer = true
         button.layer?.cornerRadius = 8
@@ -449,11 +467,11 @@ final class EditorActionBarView: NSView {
         button.imagePosition = .imageLeading
         button.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         button.isBordered = false
-        button.contentTintColor = .white
         button.toolTip = tooltip
         button.wantsLayer = true
         button.layer?.cornerRadius = 9
-        button.persistentFill = NSColor.controlAccentColor
+        button.persistentFill = VisionDesign.selectionFill
+        button.contentTintColor = VisionDesign.selectionForeground
         button.onAction = action
         return button
     }
@@ -500,9 +518,16 @@ private class ActionButton: NSButton {
         updateFill()
     }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateFill()
+    }
+
     private func updateFill() {
-        let fill = persistentFill ?? (hover ? NSColor.white.withAlphaComponent(0.10) : .clear)
-        layer?.backgroundColor = fill.cgColor
+        let fill = persistentFill ?? (hover ? NSColor.labelColor.withAlphaComponent(0.10) : .clear)
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = fill.cgColor
+        }
     }
 
     @objc private func fire() { onAction?() }

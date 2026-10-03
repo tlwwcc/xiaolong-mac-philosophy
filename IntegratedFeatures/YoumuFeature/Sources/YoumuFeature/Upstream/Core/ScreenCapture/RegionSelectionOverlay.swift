@@ -482,7 +482,7 @@ class SelectionView: NSView {
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
             .foregroundColor: NSColor.white,
-            .backgroundColor: NSColor.black.withAlphaComponent(0.7)
+            .backgroundColor: VisionDesign.overlayBackground
         ]
         let attrLabel = NSAttributedString(string: label, attributes: attrs)
         let labelSize = attrLabel.size()
@@ -534,7 +534,7 @@ class SelectionView: NSView {
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 11, weight: .medium),
             .foregroundColor: NSColor.white,
-            .backgroundColor: NSColor.black.withAlphaComponent(0.76),
+            .backgroundColor: VisionDesign.overlayBackground,
         ]
         let hint = NSAttributedString(string: text, attributes: attrs)
         let size = hint.size()
@@ -583,7 +583,7 @@ class SelectionView: NSView {
         let hintAttributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 10, weight: .medium),
             .foregroundColor: NSColor.white,
-            .backgroundColor: NSColor.black.withAlphaComponent(0.7),
+            .backgroundColor: VisionDesign.overlayBackground,
         ]
         let hint = NSAttributedString(string: confirmationHint, attributes: hintAttributes)
         let hintSize = hint.size()
@@ -645,7 +645,7 @@ class SelectionView: NSView {
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium),
             .foregroundColor: NSColor.white,
-            .backgroundColor: NSColor.black.withAlphaComponent(0.65),
+            .backgroundColor: VisionDesign.overlayBackground,
         ]
         let attrLabel = NSAttributedString(string: label, attributes: attrs)
         let labelSize = attrLabel.size()

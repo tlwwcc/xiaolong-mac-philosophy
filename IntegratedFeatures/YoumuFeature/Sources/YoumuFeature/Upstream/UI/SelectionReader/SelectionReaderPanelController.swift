@@ -101,7 +101,7 @@ final class SelectionReaderPanelController: NSObject, NSWindowDelegate {
     private var didNotifyDismiss = false
 
     private weak var textView: NSTextView?
-    private weak var statusLabel: NSTextField?
+    private weak var statusLabel: VisionStatusField?
     private weak var backendLabel: NSTextField?
     private weak var voiceLabel: NSTextField?
     private weak var progressSlider: NSSlider?
@@ -153,9 +153,9 @@ final class SelectionReaderPanelController: NSObject, NSWindowDelegate {
             visible.maxY - size.height - 14
         )
 
-        let root = NSView(frame: NSRect(origin: .zero, size: size))
+        let root = VisionSurfaceView(frame: NSRect(origin: .zero, size: size))
         root.wantsLayer = true
-        root.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        root.surfaceColor = .windowBackgroundColor
         root.autoresizingMask = [.width, .height]
 
         buildHeader(in: root, size: size)
@@ -272,13 +272,13 @@ final class SelectionReaderPanelController: NSObject, NSWindowDelegate {
         header.addSubview(backend)
         backendLabel = backend
 
-        let status = NSTextField(labelWithString: "准备语音")
+        let status = VisionStatusField(labelWithString: "准备语音")
         status.alignment = .center
         status.font = NSFont.systemFont(ofSize: 11.5, weight: .semibold)
-        status.textColor = VisionDesign.brandPurple
+        status.textColor = VisionDesign.brandAccent
         status.wantsLayer = true
         status.layer?.cornerRadius = 10
-        status.layer?.backgroundColor = VisionDesign.brandPurpleSoft.cgColor
+        status.surfaceColor = VisionDesign.brandPurpleSoft
         status.layer?.cornerCurve = .continuous
         status.frame = NSRect(x: size.width - 322, y: 25, width: 104, height: 22)
         status.autoresizingMask = [.minXMargin, .minYMargin]
@@ -308,13 +308,13 @@ final class SelectionReaderPanelController: NSObject, NSWindowDelegate {
 
     private func buildTextSurface(in root: NSView, size: NSSize) {
         let cardFrame = NSRect(x: 28, y: 136, width: size.width - 56, height: size.height - 232)
-        let card = NSView(frame: cardFrame)
+        let card = VisionSurfaceView(frame: cardFrame)
         card.wantsLayer = true
         card.layer?.cornerRadius = SelectionReaderVisualContract.textCardCornerRadius
         card.layer?.cornerCurve = .continuous
-        card.layer?.backgroundColor = VisionDesign.paperWhite.cgColor
+        card.surfaceColor = VisionDesign.paperWhite
         card.layer?.borderWidth = 0.5
-        card.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.24).cgColor
+        card.outlineColor = VisionDesign.panelBorder
         card.layer?.shadowColor = NSColor.black.cgColor
         card.layer?.shadowOpacity = 0.08
         card.layer?.shadowRadius = 14
@@ -368,7 +368,7 @@ final class SelectionReaderPanelController: NSObject, NSWindowDelegate {
         let slider = NSSlider(value: 0, minValue: 0, maxValue: 1, target: self, action: #selector(progressChanged))
         slider.isContinuous = true
         slider.controlSize = .small
-        slider.trackFillColor = VisionDesign.brandPurple
+        slider.trackFillColor = VisionDesign.brandAccent
         slider.frame = NSRect(x: 24, y: 101, width: size.width - 48, height: 18)
         slider.autoresizingMask = [.width, .maxYMargin]
         root.addSubview(slider)
@@ -389,18 +389,18 @@ final class SelectionReaderPanelController: NSObject, NSWindowDelegate {
         let shortcut = NSTextField(labelWithString: "空格  播放 / 暂停    ·    ⌃⌘F  全屏    ·    ⌘±  字号")
         shortcut.alignment = .center
         shortcut.font = NSFont.monospacedSystemFont(ofSize: 10.5, weight: .medium)
-        shortcut.textColor = .tertiaryLabelColor
+        shortcut.textColor = .secondaryLabelColor
         shortcut.frame = NSRect(x: 112, y: 81, width: size.width - 224, height: 18)
         shortcut.autoresizingMask = [.width, .maxYMargin]
         root.addSubview(shortcut)
 
-        let controlBar = NSView(frame: NSRect(x: 28, y: 17, width: size.width - 56, height: 58))
+        let controlBar = VisionSurfaceView(frame: NSRect(x: 28, y: 17, width: size.width - 56, height: 58))
         controlBar.wantsLayer = true
         controlBar.layer?.cornerRadius = SelectionReaderVisualContract.controlBarCornerRadius
         controlBar.layer?.cornerCurve = .continuous
-        controlBar.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.62).cgColor
+        controlBar.surfaceColor = .controlBackgroundColor
         controlBar.layer?.borderWidth = 0.75
-        controlBar.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.28).cgColor
+        controlBar.outlineColor = VisionDesign.panelBorder
         controlBar.autoresizingMask = [.width, .maxYMargin]
         root.addSubview(controlBar)
 
@@ -475,7 +475,7 @@ final class SelectionReaderPanelController: NSObject, NSWindowDelegate {
         let label = NSTextField(labelWithString: "00:00")
         label.alignment = alignment
         label.font = NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .medium)
-        label.textColor = .tertiaryLabelColor
+        label.textColor = .secondaryLabelColor
         return label
     }
 
@@ -488,7 +488,7 @@ final class SelectionReaderPanelController: NSObject, NSWindowDelegate {
             string: sourceText,
             attributes: [
                 .font: NSFont.systemFont(ofSize: fontScale.pointSize, weight: .regular),
-                .foregroundColor: VisionDesign.ink.withAlphaComponent(0.82),
+                .foregroundColor: VisionDesign.ink,
                 .paragraphStyle: paragraph
             ]
         )
@@ -522,13 +522,13 @@ final class SelectionReaderPanelController: NSObject, NSWindowDelegate {
         }
         statusLabel?.stringValue = stateTitle
         statusLabel?.textColor = snapshot.state == .playing || snapshot.state == .loading
-            ? VisionDesign.brandPurple
+            ? VisionDesign.brandAccent
             : NSColor.secondaryLabelColor
-        statusLabel?.layer?.backgroundColor = (
+        statusLabel?.surfaceColor = (
             snapshot.state == .playing || snapshot.state == .loading
                 ? VisionDesign.brandPurpleSoft
                 : NSColor.secondaryLabelColor.withAlphaComponent(0.08)
-        ).cgColor
+        )
         playPauseButton?.title = buttonTitle
         playPauseButton?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: buttonTitle)
         playPauseButton?.isEnabled = snapshot.state != .loading
@@ -576,8 +576,8 @@ final class SelectionReaderPanelController: NSObject, NSWindowDelegate {
                     .font: NSFont.systemFont(ofSize: fontScale.pointSize, weight: .semibold),
                     .foregroundColor: NSColor.white,
                     .backgroundColor: state == .paused
-                        ? NSColor.systemOrange.withAlphaComponent(0.78)
-                        : VisionDesign.brandPurple.withAlphaComponent(0.92)
+                        ? VisionDesign.pausedHighlight
+                        : VisionDesign.brandPurple
                 ],
                 range: validRange
             )
@@ -595,7 +595,7 @@ final class SelectionReaderPanelController: NSObject, NSWindowDelegate {
     private var baseReadingAppearance: [NSAttributedString.Key: Any] {
         [
             .font: NSFont.systemFont(ofSize: fontScale.pointSize, weight: .regular),
-            .foregroundColor: VisionDesign.ink.withAlphaComponent(0.82)
+            .foregroundColor: VisionDesign.ink
         ]
     }
 
@@ -649,7 +649,7 @@ final class SelectionReaderPanelController: NSObject, NSWindowDelegate {
             accessibilityDescription: followsReading ? "正在自动跟随朗读" : "继续跟随朗读"
         )
         followButton?.contentTintColor = followsReading
-            ? VisionDesign.brandPurple
+            ? VisionDesign.brandAccent
             : NSColor.secondaryLabelColor
         followButton?.toolTip = followsReading
             ? "翻页或滚动后会暂停自动跟随，正文不会跳回。"

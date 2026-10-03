@@ -417,6 +417,7 @@ enum XLGConfigImporter {
     "launcherSearchEngineV1",
     "launcherPluginEnabledV1",
     "showDockIconV1",
+    "appAppearanceModeV1",
     "menuBarVisibleCatalogItemIDsV1",
     "menuBarCatalogConfigurationVersionV1",
     "processViewerPluginEnabledV1",

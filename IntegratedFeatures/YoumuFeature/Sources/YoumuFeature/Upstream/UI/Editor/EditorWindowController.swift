@@ -89,9 +89,9 @@ class EditorWindowController: NSObject {
             visibleScreenSize: visibleSize
         )
 
-        let container = NSView(frame: NSRect(origin: .zero, size: contentSize))
+        let container = VisionSurfaceView(frame: NSRect(origin: .zero, size: contentSize))
         container.wantsLayer = true
-        container.layer?.backgroundColor = VisionDesign.editorChrome.cgColor
+        container.surfaceColor = VisionDesign.editorChrome
         container.autoresizesSubviews = false // 尺寸变化由 layoutContents 显式重排
 
         scrollView.drawsBackground = true

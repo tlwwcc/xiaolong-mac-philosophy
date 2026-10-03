@@ -391,6 +391,9 @@ final class AppModel: ObservableObject {
   private var hotkeyReloadWorkItem: DispatchWorkItem?
   private var phraseSaveWorkItem: DispatchWorkItem?
   private var phraseSaveNeedsReload = false
+  private var shortcutRecovery = LocalConfigurationRecovery(name: "快捷键配置")
+  private var phraseRecovery = LocalConfigurationRecovery(name: "快捷短语")
+  @Published private(set) var configurationRecoveryMessage: String?
   private var shortcutDefaultBaselineVersionCommitPending = false
   private let windowArrangementController = WindowArrangementController()
   private var windowArrangementScreenObserver: NSObjectProtocol?
@@ -3363,7 +3366,11 @@ final class AppModel: ObservableObject {
           }
         }
         items = try ShortcutConfigurationCodec.load(from: fileURL)
+        shortcutRecovery.recordReadSuccess()
+        updateConfigurationRecoveryMessage()
       } else {
+        shortcutRecovery.recordReadSuccess()
+        updateConfigurationRecoveryMessage()
         items = defaultShortcuts()
         markShortcutDefaultBaselineCurrent()
         saveOnly()
@@ -3431,7 +3438,9 @@ final class AppModel: ObservableObject {
     } catch {
       items = defaultShortcuts()
       selectedID = items.first?.id
-      statusMessage = "配置读取失败，已载入默认值：\(error.localizedDescription)"
+      shortcutRecovery.recordReadFailure()
+      updateConfigurationRecoveryMessage()
+      statusMessage = "配置读取失败，原文件已保护：\(error.localizedDescription)"
     }
   }
 
@@ -3453,7 +3462,11 @@ final class AppModel: ObservableObject {
             else { throw LocalConfigurationReadError.invalidRecord }
           }
         }
+        phraseRecovery.recordReadSuccess()
+        updateConfigurationRecoveryMessage()
       } else {
+        phraseRecovery.recordReadSuccess()
+        updateConfigurationRecoveryMessage()
         phrases = defaultPhrases()
         savePhrasesOnly()
       }
@@ -3461,7 +3474,9 @@ final class AppModel: ObservableObject {
     } catch {
       phrases = defaultPhrases()
       selectedPhraseID = phrases.first?.id
-      statusMessage = "快捷短语读取失败，已载入默认值：\(error.localizedDescription)"
+      phraseRecovery.recordReadFailure()
+      updateConfigurationRecoveryMessage()
+      statusMessage = "快捷短语读取失败，原文件已保护：\(error.localizedDescription)"
     }
   }
 
@@ -4206,6 +4221,11 @@ final class AppModel: ObservableObject {
     UserDefaults.standard.synchronize()
   }
 
+  private func updateConfigurationRecoveryMessage() {
+    let messages = [shortcutRecovery.message, phraseRecovery.message].compactMap { $0 }
+    configurationRecoveryMessage = messages.isEmpty ? nil : messages.joined(separator: "\n")
+  }
+
   @discardableResult
   func saveOnly() -> Bool {
     do {
@@ -4214,9 +4234,11 @@ final class AppModel: ObservableObject {
       let encoder = JSONEncoder()
       encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
       let data = try encoder.encode(items)
-      try data.write(to: fileURL, options: [.atomic])
+      try shortcutRecovery.write(data, to: fileURL)
+      updateConfigurationRecoveryMessage()
       return true
     } catch {
+      updateConfigurationRecoveryMessage()
       statusMessage = "保存失败：\(error.localizedDescription)"
       return false
     }
@@ -4242,16 +4264,21 @@ final class AppModel: ObservableObject {
     DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
   }
 
-  func savePhrasesOnly() {
+  @discardableResult
+  func savePhrasesOnly() -> Bool {
     do {
       try FileManager.default.createDirectory(
         at: phraseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
       let encoder = JSONEncoder()
       encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
       let data = try encoder.encode(phrases)
-      try data.write(to: phraseURL, options: [.atomic])
+      try phraseRecovery.write(data, to: phraseURL)
+      updateConfigurationRecoveryMessage()
+      return true
     } catch {
+      updateConfigurationRecoveryMessage()
       statusMessage = "快捷短语保存失败：\(error.localizedDescription)"
+      return false
     }
   }
 
@@ -4259,7 +4286,7 @@ final class AppModel: ObservableObject {
     phraseSaveWorkItem?.cancel()
     phraseSaveWorkItem = nil
     phraseSaveNeedsReload = false
-    savePhrasesOnly()
+    guard savePhrasesOnly() else { return }
     reloadPhraseExpander()
   }
 
@@ -4271,7 +4298,7 @@ final class AppModel: ObservableObject {
       let shouldReload = self.phraseSaveNeedsReload
       self.phraseSaveWorkItem = nil
       self.phraseSaveNeedsReload = false
-      self.savePhrasesOnly()
+      guard self.savePhrasesOnly() else { return }
       if shouldReload {
         self.reloadPhraseExpander()
       }

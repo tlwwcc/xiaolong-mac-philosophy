@@ -84,7 +84,7 @@ struct ClipboardHistoryApplicationDetailView: View {
         }
         .buttonStyle(.borderedProminent)
         .controlSize(.large)
-        .tint(ClipboardHistoryPalette.brand)
+        .tint(AppVisualStyle.emphasizedSelection)
         .keyboardShortcut(.defaultAction)
         .disabled(controller.isBusy)
         .accessibilityHint("打开可搜索和预览的历史记录窗口")
@@ -102,7 +102,7 @@ struct ClipboardHistoryApplicationDetailView: View {
           )
 
           HStack(spacing: 12) {
-            Label("建议连按物理右 Option 两次", systemImage: "keyboard")
+            Label("查看或修改当前快捷键", systemImage: "keyboard")
               .foregroundStyle(ClipboardHistoryPalette.ink)
             Spacer(minLength: 12)
             Button("前往功能快捷键", action: openShortcutSettings)
@@ -165,7 +165,7 @@ struct ClipboardHistoryApplicationDetailView: View {
       )
       .labelsHidden()
       .toggleStyle(.switch)
-      .tint(ClipboardHistoryPalette.brand)
+      .tint(AppVisualStyle.emphasizedSelection)
       .accessibilityLabel("记录剪贴板历史")
       .accessibilityValue(controller.isEnabled ? "已打开" : "已关闭")
     }
@@ -208,7 +208,7 @@ struct ClipboardHistoryWindowView: View {
     historyPane
       .frame(minWidth: 440, idealWidth: 500, maxWidth: 620, minHeight: 500, idealHeight: 680)
       .background(ClipboardHistoryPalette.paper)
-      .tint(ClipboardHistoryPalette.brand)
+      .tint(AppVisualStyle.emphasizedSelection)
       .sheet(isPresented: $isShowingSettings) {
         ClipboardHistorySettingsSheet(controller: controller)
       }
@@ -717,7 +717,7 @@ private struct ClipboardHistoryRowThumbnail: View {
       if entry.kind == .files && entry.fileNames.count > 1 {
         Text("\(entry.fileNames.count)")
           .font(.system(size: 9, weight: .bold, design: .rounded))
-          .foregroundStyle(.white)
+          .foregroundStyle(AppVisualStyle.onAccent)
           .padding(.horizontal, 5)
           .frame(minHeight: 17)
           .background(ClipboardHistoryPalette.brand, in: Capsule())
@@ -1254,7 +1254,7 @@ private struct ClipboardHistorySettingsView: View {
           )
           .labelsHidden()
           .toggleStyle(.switch)
-          .tint(ClipboardHistoryPalette.brand)
+          .tint(AppVisualStyle.emphasizedSelection)
           .accessibilityLabel("记录新内容")
           .accessibilityValue(controller.isEnabled ? "已打开" : "已关闭")
         }

@@ -283,10 +283,10 @@ final class InPlaceTranslationController {
         // 胶囊容器
         let container = NSView(frame: NSRect(x: 0, y: 0, width: barWidth, height: barHeight))
         container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor(white: 0.16, alpha: 0.88).cgColor
+        container.layer?.backgroundColor = VisionDesign.overlayBackground.cgColor
         container.layer?.cornerRadius = barHeight / 2
         container.layer?.borderWidth = 0.5
-        container.layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
+        container.layer?.borderColor = VisionDesign.overlayBorder.cgColor
 
         var x: CGFloat = 10
         @discardableResult
@@ -354,8 +354,8 @@ final class InPlaceTranslationController {
         let container = NSView(frame: NSRect(origin: .zero, size: hintSize))
         container.wantsLayer = true
         container.layer?.backgroundColor = isError
-            ? NSColor(red: 0.75, green: 0.22, blue: 0.18, alpha: 0.92).cgColor
-            : NSColor.black.withAlphaComponent(0.8).cgColor
+            ? NSColor(red: 0.75, green: 0.22, blue: 0.18, alpha: 1).cgColor
+            : VisionDesign.overlayBackground.cgColor
         container.layer?.cornerRadius = hintSize.height / 2
         container.addSubview(label)
         let cancel = CapsuleButton(title: "取消 · Esc", target: self, action: #selector(closeClicked))

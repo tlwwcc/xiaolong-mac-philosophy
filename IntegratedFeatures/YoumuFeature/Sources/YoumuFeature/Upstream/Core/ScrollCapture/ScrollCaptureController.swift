@@ -1213,7 +1213,7 @@ final class ScrollCaptureController {
         label.lineBreakMode = .byTruncatingMiddle
 
         let panel = Self.makePassivePanel(frame: frame, cornerRadius: 15)
-        panel.contentView?.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.82).cgColor
+        panel.contentView?.layer?.backgroundColor = VisionDesign.overlayBackground.cgColor
         panel.contentView?.addSubview(label)
         panel.orderFrontRegardless()
         statusPanel = panel
@@ -1234,7 +1234,7 @@ final class ScrollCaptureController {
 
         let container = NSView(frame: NSRect(origin: .zero, size: size))
         container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.82).cgColor
+        container.layer?.backgroundColor = VisionDesign.overlayBackground.cgColor
         container.layer?.cornerRadius = 10
         container.addSubview(finish)
 
@@ -1291,7 +1291,7 @@ final class ScrollCaptureController {
 
         let container = NSView(frame: NSRect(origin: .zero, size: size))
         container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.58).cgColor
+        container.layer?.backgroundColor = VisionDesign.overlayBackground.cgColor
         container.layer?.cornerRadius = 8
         container.addSubview(imageView)
         container.addSubview(truth)

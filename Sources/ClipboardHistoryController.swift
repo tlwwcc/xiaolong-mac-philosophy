@@ -1001,6 +1001,11 @@ final class ClipboardHistoryController: ObservableObject {
   private let replayLeaseCacheLimit: Int64
   private let beforeReplayMarkerWrite: (() throws -> Void)?
   private let afterReplayLeasePrepared: (() -> Void)?
+  typealias ReplaySnapshotReader = (
+    String, Int, Int,
+    @escaping (ClipboardPasteboardIsolationResult<ClipboardPasteboardSnapshot>) -> Void
+  ) -> Void
+  private let replaySnapshotReader: ReplaySnapshotReader
   private let systemPasteboard: NSPasteboard
   private var timer: Timer?
   private var maintenanceTimer: Timer?
@@ -1022,6 +1027,8 @@ final class ClipboardHistoryController: ObservableObject {
   private var activeReplayLease: ActiveReplayLease?
   private var pendingReplayLeaseCleanup: [ManagedReplayLease] = []
   private var replayGeneration: UInt64 = 0
+  private var pendingReplayGeneration: UInt64?
+  private var storeOperationCount = 0
 
   private static let workingCopyLifetime: TimeInterval = 24 * 60 * 60
   private static let workingCopyCacheLimit: Int64 = 50_000_000_000
@@ -1091,7 +1098,12 @@ final class ClipboardHistoryController: ObservableObject {
     replayLeaseCacheLimit: Int64 = ClipboardHistoryController.defaultReplayLeaseCacheLimit,
     beforeReplayMarkerWrite: (() throws -> Void)? = nil,
     afterReplayLeasePrepared: (() -> Void)? = nil,
-    systemPasteboard: NSPasteboard = .general
+    systemPasteboard: NSPasteboard = .general,
+    replaySnapshotReader: @escaping ReplaySnapshotReader = { name, count, limit, completion in
+      ClipboardPasteboardIsolation.snapshot(
+        pasteboardName: name, expectedChangeCount: count, byteLimit: limit,
+        completion: completion)
+    }
   ) {
     let normalizedBaseDirectory = baseDirectory.standardizedFileURL
     storeBaseDirectory = normalizedBaseDirectory
@@ -1121,6 +1133,7 @@ final class ClipboardHistoryController: ObservableObject {
     self.replayLeaseCacheLimit = max(0, replayLeaseCacheLimit)
     self.beforeReplayMarkerWrite = beforeReplayMarkerWrite
     self.afterReplayLeasePrepared = afterReplayLeasePrepared
+    self.replaySnapshotReader = replaySnapshotReader
     self.systemPasteboard = systemPasteboard
     self.defaults = defaults
     isEnabled =
@@ -1262,9 +1275,8 @@ final class ClipboardHistoryController: ObservableObject {
   }
 
   func stop() {
-    replayGeneration &+= 1
+    cancelPendingReplay()
     invalidatePasteboardReads()
-    setBusy(false)
     timer?.invalidate()
     timer = nil
     maintenanceTimer?.invalidate()
@@ -1272,6 +1284,24 @@ final class ClipboardHistoryController: ObservableObject {
     replayLeaseTimer?.invalidate()
     replayLeaseTimer = nil
     retryPendingReplayLeaseCleanup()
+  }
+
+  /// Ending the window session revokes only the uncommitted selection. Background history
+  /// monitoring and a file lease already owned by the system clipboard remain intact.
+  func cancelPendingReplay() {
+    dispatchPrecondition(condition: .onQueue(.main))
+    guard pendingReplayGeneration != nil else { return }
+    replayGeneration &+= 1
+    pendingReplayGeneration = nil
+    updateBusyState()
+  }
+
+  private func finishReplay(_ generation: UInt64) -> Bool {
+    dispatchPrecondition(condition: .onQueue(.main))
+    guard generation == replayGeneration else { return false }
+    pendingReplayGeneration = nil
+    updateBusyState()
+    return true
   }
 
   func refresh() {
@@ -1305,7 +1335,7 @@ final class ClipboardHistoryController: ObservableObject {
         let stats = try store.statistics()
         DispatchQueue.main.async {
           self.apply(entries: entries, stats: stats)
-          self.isBusy = false
+          self.setBusy(false)
           self.statusMessage = pinned ? "已固定，自动清理会跳过这条" : "已取消固定"
         }
       } catch {
@@ -1325,7 +1355,7 @@ final class ClipboardHistoryController: ObservableObject {
         let stats = try store.statistics()
         DispatchQueue.main.async {
           self.apply(entries: entries, stats: stats)
-          self.isBusy = false
+          self.setBusy(false)
           self.statusMessage =
             stats.pendingDeletionByteCount > 0
             ? "历史已删除；部分磁盘空间将在后台继续清理"
@@ -1347,7 +1377,7 @@ final class ClipboardHistoryController: ObservableObject {
         let stats = try store.statistics()
         DispatchQueue.main.async {
           self.apply(entries: [], stats: stats)
-          self.isBusy = false
+          self.setBusy(false)
           self.statusMessage =
             stats.pendingDeletionByteCount > 0
             ? "历史已清空；部分磁盘空间将在后台继续清理，Finder 原文件未删除"
@@ -1399,13 +1429,13 @@ final class ClipboardHistoryController: ObservableObject {
           destinationBoundary: self.workingCopyRoot,
           maxSessionBytes: currentSessionAllowance)
         DispatchQueue.main.async {
-          self.isBusy = false
+          self.setBusy(false)
           self.statusMessage = nil
           completion(.success(workingCopy))
         }
       } catch {
         DispatchQueue.main.async {
-          self.isBusy = false
+          self.setBusy(false)
           self.statusMessage = "无法\(actionDescription)：\(error.localizedDescription)"
           completion(.failure(error))
         }
@@ -1496,16 +1526,16 @@ final class ClipboardHistoryController: ObservableObject {
       return
     }
     guard store != nil else {
-      setBusy(false)
       completion(false)
       return
     }
 
     replayGeneration &+= 1
     let generation = replayGeneration
+    pendingReplayGeneration = generation
     let snapshotChangeCount = pasteboard.changeCount
     let pasteboardName = pasteboard.name.rawValue
-    setBusy(true)
+    updateBusyState()
     pollReplayLeaseIfPasteboardChanged()
     worker.async { [weak self] in
       guard let self else { return }
@@ -1531,43 +1561,52 @@ final class ClipboardHistoryController: ObservableObject {
         guard let self else { return }
         switch result {
         case .failure(let error):
-          guard generation == self.replayGeneration else {
+          guard self.finishReplay(generation) else {
             completion(false)
             return
           }
-          self.isBusy = false
           self.statusMessage = "恢复到系统剪贴板失败：\(error.localizedDescription)"
           completion(false)
         case .success(let prepared):
-          guard generation == self.replayGeneration,
-            pasteboard.changeCount == snapshotChangeCount
-          else {
+          guard generation == self.replayGeneration else {
             self.discardPreparedReplayPayload(prepared)
-            self.isBusy = false
             completion(false)
             return
           }
-          ClipboardPasteboardIsolation.snapshot(
-            pasteboardName: pasteboardName,
-            expectedChangeCount: snapshotChangeCount,
-            byteLimit: ClipboardPasteboardSnapshot.defaultByteLimit
+          guard pasteboard.changeCount == snapshotChangeCount else {
+            self.discardPreparedReplayPayload(prepared)
+            _ = self.finishReplay(generation)
+            self.statusMessage = "剪贴板刚刚被其他内容更新，请重试"
+            completion(false)
+            return
+          }
+          self.replaySnapshotReader(
+            pasteboardName,
+            snapshotChangeCount,
+            ClipboardPasteboardSnapshot.defaultByteLimit
           ) { [weak self] snapshotResult in
             guard let self else { return }
-            guard generation == self.replayGeneration,
-              pasteboard.changeCount == snapshotChangeCount,
+            // A revoked owner can release its prepared files, but cannot publish into a
+            // reopened window or clear the busy state of a newer selection.
+            guard generation == self.replayGeneration else {
+              self.discardPreparedReplayPayload(prepared)
+              completion(false)
+              return
+            }
+            guard pasteboard.changeCount == snapshotChangeCount,
               case .success(let snapshot) = snapshotResult,
               snapshot.changeCount == snapshotChangeCount
             else {
               self.discardPreparedReplayPayload(prepared)
-              self.isBusy = false
+              _ = self.finishReplay(generation)
               switch snapshotResult {
               case .timedOut:
                 self.statusMessage = "剪贴板提供方响应过慢，未改动原剪贴板"
               case .rejected:
                 self.statusMessage = "剪贴板内容超过安全备份上限，未改动原剪贴板"
-              case .stale:
+              case .stale, .success:
                 self.statusMessage = "剪贴板刚刚被其他内容更新，请重试"
-              case .noPayload, .failed, .success:
+              case .noPayload, .failed:
                 self.statusMessage = "剪贴板无法在隔离环境中安全备份，未改动原剪贴板"
               }
               completion(false)
@@ -1579,7 +1618,7 @@ final class ClipboardHistoryController: ObservableObject {
               pasteboard: pasteboard,
               snapshot: snapshot,
               tracksGeneralPasteboard: pasteboard === NSPasteboard.general)
-            self.isBusy = false
+            _ = self.finishReplay(generation)
             if didCommit { self.successfulUse?() }
             completion(didCommit)
           }
@@ -2231,7 +2270,7 @@ final class ClipboardHistoryController: ObservableObject {
         self.workerLastObservedPasteboardFingerprint = fingerprint
         if shouldSkipTypelessRoundTrip {
           DispatchQueue.main.async {
-            self.isBusy = false
+            self.setBusy(false)
             self.statusMessage = "已跳过 Typeless 产生的临时剪贴板"
           }
           return
@@ -2272,7 +2311,7 @@ final class ClipboardHistoryController: ObservableObject {
               let stats = try store.statistics()
               DispatchQueue.main.async {
                 self.apply(entries: entries, stats: stats)
-                self.isBusy = false
+                self.setBusy(false)
                 self.statusMessage = "本次文件未保存：\(message)"
               }
               return
@@ -2300,7 +2339,7 @@ final class ClipboardHistoryController: ObservableObject {
             let stats = try store.statistics()
             DispatchQueue.main.async {
               self.apply(entries: entries, stats: stats)
-              self.isBusy = false
+              self.setBusy(false)
               self.statusMessage =
                 "文件保存确认中断；已重新核对历史，结果以当前列表为准。"
             }
@@ -2311,7 +2350,7 @@ final class ClipboardHistoryController: ObservableObject {
             let stats = try store.statistics()
             DispatchQueue.main.async {
               self.apply(entries: entries, stats: stats)
-              self.isBusy = false
+              self.setBusy(false)
               self.statusMessage = "本次文件未保存：文件读取请求无效，请重新复制；已有历史仍可使用。"
             }
             return
@@ -2321,7 +2360,7 @@ final class ClipboardHistoryController: ObservableObject {
         let stats = try store.statistics()
         DispatchQueue.main.async {
           self.apply(entries: entries, stats: stats)
-          self.isBusy = false
+          self.setBusy(false)
           switch result {
           case .inserted(let entry):
             self.statusMessage =
@@ -2354,7 +2393,7 @@ final class ClipboardHistoryController: ObservableObject {
         let entries = try store.entries()
         DispatchQueue.main.async {
           self.apply(entries: entries, stats: stats)
-          self.isBusy = false
+          self.setBusy(false)
           if announces {
             self.statusMessage =
               stats.pendingDeletionByteCount > 0
@@ -2388,18 +2427,30 @@ final class ClipboardHistoryController: ObservableObject {
     quotaBlocked = pinnedBytes >= maxBytes
   }
 
+  // Store work and clipboard replay have independent lifetimes. Finishing or cancelling
+  // one owner must not make another outstanding operation appear complete.
   private func setBusy(_ busy: Bool) {
-    if Thread.isMainThread {
-      isBusy = busy
-    } else {
-      DispatchQueue.main.async { [weak self] in self?.isBusy = busy }
+    guard Thread.isMainThread else {
+      DispatchQueue.main.async { [weak self] in self?.setBusy(busy) }
+      return
     }
+    if busy {
+      storeOperationCount += 1
+    } else {
+      storeOperationCount = max(0, storeOperationCount - 1)
+    }
+    updateBusyState()
+  }
+
+  private func updateBusyState() {
+    dispatchPrecondition(condition: .onQueue(.main))
+    isBusy = storeOperationCount > 0 || pendingReplayGeneration != nil
   }
 
   private func publishFailure(_ error: Error, clearsBusy: Bool = false) {
     DispatchQueue.main.async { [weak self] in
       guard let self else { return }
-      if clearsBusy { self.isBusy = false }
+      if clearsBusy { self.setBusy(false) }
       self.statusMessage = "保存失败：\(error.localizedDescription)"
     }
   }

@@ -35,6 +35,21 @@ struct ProcessStableIdentity: Hashable, Identifiable {
   }
 }
 
+struct ProcessViewerCPUCounter {
+  let identity: ProcessStableIdentity
+  let totalNanoseconds: UInt64
+  let sampledAt: TimeInterval
+
+  func percentage(since previous: Self?) -> Double? {
+    guard let previous, previous.identity == identity,
+      sampledAt > previous.sampledAt,
+      totalNanoseconds >= previous.totalNanoseconds
+    else { return nil }
+    return Double(totalNanoseconds - previous.totalNanoseconds)
+      / ((sampledAt - previous.sampledAt) * 1_000_000_000) * 100
+  }
+}
+
 enum ProcessViewerRunState: String {
   case running
   case sleeping
@@ -64,7 +79,9 @@ struct ProcessViewerProcess: Identifiable {
   var isUserApplication: Bool = false
 
   var id: String { identity.id }
-  var canQuit: Bool { protectionReason == nil && actionState != .quitting }
+  var canQuit: Bool {
+    protectionReason == nil && actionState != .quitting && actionState != .exited
+  }
 
   /// macOS 自带的后台服务默认不占据主列表，但用户可随时在界面中展开查看。
   /// 保留 `.app/Contents/MacOS` 内的 Apple 应用，避免把用户主动打开的 Safari、访达等藏掉。

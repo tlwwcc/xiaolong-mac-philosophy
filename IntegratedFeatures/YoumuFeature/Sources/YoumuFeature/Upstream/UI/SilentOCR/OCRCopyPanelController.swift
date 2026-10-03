@@ -80,7 +80,7 @@ final class OCRCopyPanelController {
             visible.maxX - collapsedSize.width - 8
         )
 
-        let container = NSVisualEffectView(frame: NSRect(origin: .zero, size: collapsedSize))
+        let container = VisionMaterialView(frame: NSRect(origin: .zero, size: collapsedSize))
         container.material = .popover
         container.blendingMode = .behindWindow
         container.state = .active
@@ -222,7 +222,7 @@ final class OCRCopyPanelController {
     }
 
     private func makeTextScrollView(frame: NSRect, editable: Bool, fontSize: CGFloat) -> NSScrollView {
-        let scrollView = NSScrollView(frame: frame)
+        let scrollView = VisionTextScrollView(frame: frame)
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
@@ -311,7 +311,7 @@ final class OCRCopyPanelController {
 
     private func showTranslationError(_ message: String) {
         translatedTextView?.string = "翻译失败：\(message)"
-        translatedTextView?.textColor = .systemRed
+        translatedTextView?.textColor = VisionDesign.failureText
         expandIfNeeded()
     }
 

@@ -17,30 +17,121 @@ enum VisionDesign {
     static let brandViolet = NSColor(
         calibratedRed: 122 / 255, green: 63 / 255, blue: 160 / 255, alpha: 1
     )
-    static let paperWhite = NSColor(
-        calibratedRed: 252 / 255, green: 251 / 255, blue: 253 / 255, alpha: 1
-    )
-    static let ink = NSColor(
-        calibratedRed: 23 / 255, green: 19 / 255, blue: 28 / 255, alpha: 1
-    )
-    static var brandPurpleSoft: NSColor {
-        brandPurple.withAlphaComponent(0.12)
+    /// Keep the canonical purple for white-on-purple controls; use the brighter accent for text.
+    static let brandAccent = NSColor(name: "YoumuBrandAccent") { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(calibratedRed: 0.80, green: 0.65, blue: 0.91, alpha: 1)
+            : NSColor(calibratedRed: 107 / 255, green: 35 / 255, blue: 142 / 255, alpha: 1)
     }
-
-    static let editorChrome = NSColor(
-        calibratedRed: 0.075, green: 0.082, blue: 0.10, alpha: 0.98
-    )
-    static let editorChromeRaised = NSColor(
-        calibratedRed: 0.115, green: 0.125, blue: 0.15, alpha: 0.98
-    )
-    static let editorDivider = NSColor.white.withAlphaComponent(0.10)
-
-    static var panelBorder: NSColor {
-        NSColor.separatorColor.withAlphaComponent(0.72)
+    static let failureText = NSColor(name: "YoumuFailureText") { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(srgbRed: 1.0, green: 0.62, blue: 0.58, alpha: 1)
+            : NSColor(srgbRed: 0.69, green: 0.0, blue: 0.13, alpha: 1)
     }
+    static let paperWhite = NSColor.textBackgroundColor
+    static let ink = NSColor.labelColor
+    static var brandPurpleSoft: NSColor { brandAccent.withAlphaComponent(0.12) }
+
+    static let editorChrome = NSColor.windowBackgroundColor
+    static let editorChromeRaised = NSColor.controlBackgroundColor
+    static let editorDivider = NSColor.separatorColor
+    static let editorForeground = NSColor.labelColor
+    static let editorSecondary = NSColor.secondaryLabelColor
+    static let selectionFill = brandPurple
+    static let selectionForeground = NSColor.white
+    static let pausedHighlight = NSColor(calibratedRed: 0.55, green: 0.24, blue: 0.02, alpha: 1)
+
+    // Content overlays stay dark over arbitrary photographs; opaque surfaces also work when
+    // Reduce Transparency is enabled, without changing captured/translated image pixels.
+    static let overlayBackground = NSColor(calibratedWhite: 0.12, alpha: 1)
+    static let overlayBorder = NSColor(calibratedWhite: 0.65, alpha: 1)
+
+    static var panelBorder: NSColor { NSColor.separatorColor }
 
     static var quietFill: NSColor {
         NSColor.controlAccentColor.withAlphaComponent(0.10)
+    }
+}
+
+/// CALayer stores resolved CGColor values; refresh them in the actual view appearance whenever
+/// the host changes its appearance. AppKit text and control colors remain dynamic NSColors.
+class VisionSurfaceView: NSView {
+    var surfaceColor: NSColor = .clear { didSet { refreshSurface() } }
+    var outlineColor: NSColor = .clear { didSet { refreshSurface() } }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshSurface()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        refreshSurface()
+    }
+
+    private func refreshSurface() {
+        wantsLayer = true
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = surfaceColor.cgColor
+            layer?.borderColor = outlineColor.cgColor
+        }
+    }
+}
+
+final class VisionStatusField: NSTextField {
+    var surfaceColor: NSColor = .clear { didSet { refreshSurface() } }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshSurface()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        refreshSurface()
+    }
+
+    private func refreshSurface() {
+        wantsLayer = true
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = surfaceColor.cgColor
+        }
+    }
+}
+
+final class VisionMaterialView: NSVisualEffectView {
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshBorder()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        refreshBorder()
+    }
+
+    private func refreshBorder() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.borderColor = VisionDesign.panelBorder.cgColor
+        }
+    }
+}
+
+final class VisionTextScrollView: NSScrollView {
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshBorder()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        refreshBorder()
+    }
+
+    private func refreshBorder() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.borderColor = VisionDesign.panelBorder.cgColor
+        }
     }
 }
 

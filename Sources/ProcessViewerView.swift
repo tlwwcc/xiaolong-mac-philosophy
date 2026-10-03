@@ -525,9 +525,9 @@ struct ProcessViewerDetailView: View {
   }
   private var memoryOccupancyColor: Color {
     switch controller.memory.occupancyRatio {
-    case ..<0.72: return Color(nsColor: .systemGreen)
-    case ..<0.88: return Color(nsColor: .systemYellow)
-    default: return Color(nsColor: .systemRed)
+    case ..<0.72: return AppVisualStyle.success
+    case ..<0.88: return AppVisualStyle.warning
+    default: return AppVisualStyle.danger
     }
   }
   private var memoryOccupancyText: String {

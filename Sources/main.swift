@@ -111,12 +111,11 @@ MainActor.assumeIsolated {
   app.setActivationPolicy(
     DockPresencePreference.activationPolicy(
       forVisibleDockIcon: DockPresencePreference.isVisible()))
-  // The current product UI is an intentional paper-white visual system. Keep the whole App in
-  // Aqua until every main and auxiliary window has a complete dark palette; otherwise AppKit's
-  // semantic surfaces turn dark while the existing fixed ink and card colors stay light-only.
-  app.appearance = NSAppearance(named: .aqua)
+  AppAppearanceController.shared.apply()
   RetiredShiftInputSourcePreferences.purge()
   let model = AppModel()
+  // First-run configuration may have just installed the bundled appearance preference.
+  AppAppearanceController.shared.reload()
   let delegate = AppDelegate(model: model)
   app.delegate = delegate
   app.finishLaunching()

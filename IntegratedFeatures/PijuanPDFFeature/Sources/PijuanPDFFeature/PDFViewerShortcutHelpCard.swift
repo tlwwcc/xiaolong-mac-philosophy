@@ -1,12 +1,12 @@
 import AppKit
 import SwiftUI
 
-private let pdfHelpPaper = Color(red: 248.0 / 255.0, green: 247.0 / 255.0, blue: 249.0 / 255.0)
-private let pdfHelpInk = Color(red: 23.0 / 255.0, green: 19.0 / 255.0, blue: 25.0 / 255.0)
-private let pdfHelpMist = Color(red: 238.0 / 255.0, green: 231.0 / 255.0, blue: 245.0 / 255.0)
-private let pdfHelpGlow = Color(red: 241.0 / 255.0, green: 235.0 / 255.0, blue: 246.0 / 255.0)
-private let pdfHelpArc = Color(red: 183.0 / 255.0, green: 156.0 / 255.0, blue: 200.0 / 255.0)
-private let pdfHelpMuted = Color(red: 104.0 / 255.0, green: 97.0 / 255.0, blue: 108.0 / 255.0)
+private let pdfHelpPaper = Color(nsColor: .windowBackgroundColor)
+private let pdfHelpInk = Color.primary
+private let pdfHelpMist = pdfBrandPurple.opacity(0.12)
+private let pdfHelpGlow = Color(nsColor: .controlBackgroundColor)
+private let pdfHelpArc = pdfBrandPurple
+private let pdfHelpMuted = Color.secondary
 
 struct PDFViewerShortcutHelpCard: View {
   let configuration: PDFViewerShortcutConfiguration
@@ -26,7 +26,7 @@ struct PDFViewerShortcutHelpCard: View {
     ZStack {
       pdfHelpPaper
       LinearGradient(
-        colors: [pdfHelpPaper, Color.white, pdfHelpGlow],
+        colors: [pdfHelpPaper, Color(nsColor: .textBackgroundColor), pdfHelpGlow],
         startPoint: .topLeading,
         endPoint: .bottomTrailing)
       PDFHelpBlueprintGrid()
@@ -65,7 +65,6 @@ struct PDFViewerShortcutHelpCard: View {
     }
     .frame(width: 720, height: 480)
     .foregroundStyle(pdfHelpInk)
-    .environment(\.colorScheme, .light)
     .accessibilityElement(children: .contain)
     .accessibilityLabel("披卷帮助与当前快捷键")
   }
@@ -214,7 +213,7 @@ private struct PDFHelpShortcutRow: View {
         .foregroundStyle(pdfBrandPurple)
         .padding(.horizontal, 8)
         .frame(minWidth: 43, minHeight: 23)
-        .background(Color.white.opacity(0.92), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
         .overlay {
           RoundedRectangle(cornerRadius: 7, style: .continuous)
             .stroke(pdfBrandPurple.opacity(0.16), lineWidth: 0.7)
@@ -270,14 +269,14 @@ private struct PDFHelpProductMark: View {
   var body: some View {
     ZStack {
       RoundedRectangle(cornerRadius: 12, style: .continuous)
-        .fill(pdfBrandPurple)
+        .fill(pdfBrandFill)
       PDFHelpDocumentGlyph()
         .fill(.white)
         .frame(width: 25, height: 29)
         .offset(y: -2)
       Image(systemName: "viewfinder")
         .font(.system(size: 17, weight: .bold))
-        .foregroundStyle(pdfBrandPurple)
+        .foregroundStyle(pdfBrandFill)
         .offset(y: -1)
       PDFHelpCanonicalSmileArc()
         .stroke(.white, style: StrokeStyle(lineWidth: 2.3, lineCap: .round))
@@ -343,6 +342,7 @@ struct PDFViewerShortcutHelpPopover: View {
 @MainActor
 enum PDFViewerShortcutHelpRenderer {
   static func image(configuration: PDFViewerShortcutConfiguration) -> NSImage? {
+    // Export keeps a stable paper appearance; the live help panel inherits the host appearance.
     let renderer = ImageRenderer(
       content: PDFViewerShortcutHelpCard(configuration: configuration)
         .frame(width: 720, height: 480)

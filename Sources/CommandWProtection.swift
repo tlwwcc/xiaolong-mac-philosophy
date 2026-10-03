@@ -49,7 +49,7 @@ struct CommandWProtectionSettingsView: View {
         }
       }
       if let selectionError {
-        Text(selectionError).font(.caption).foregroundStyle(.red)
+        Text(selectionError).font(.caption).foregroundStyle(AppVisualStyle.danger)
       }
     }
   }

@@ -57,7 +57,7 @@ struct SoftwareShortcutEditorSheet: View {
         .font(.title2.bold())
       if saved {
         Label("\(draft.name)  ·  \(draft.displayHotkey)", systemImage: "checkmark.circle.fill")
-          .foregroundStyle(.green)
+          .foregroundStyle(AppVisualStyle.success)
         Text(draft.enabled ? "现在可以按这组快捷键打开软件；再按一下隐藏。" : "已保存为停用状态，可在列表中启用。")
         if model.isPaused || !model.advancedListeningAuthorized {
           Text(model.isPaused ? "后台当前已暂停，请恢复运行后使用。" : "请先在设置中完成快捷键所需授权。")
@@ -151,7 +151,7 @@ struct SoftwareShortcutEditorSheet: View {
                     systemImage: "exclamationmark.triangle"
                   )
                   .font(.callout)
-                  .foregroundStyle(issue.kind.isBlocking ? Color.red : Color.secondary)
+                  .foregroundStyle(issue.kind.isBlocking ? AppVisualStyle.danger : AppVisualStyle.textSecondary)
                 }
               }
               .frame(maxWidth: .infinity, alignment: .leading)
@@ -168,7 +168,7 @@ struct SoftwareShortcutEditorSheet: View {
             }
             if let saveError {
               Label(saveError, systemImage: "exclamationmark.triangle.fill")
-                .foregroundStyle(.red)
+                .foregroundStyle(AppVisualStyle.danger)
             }
           }
         }

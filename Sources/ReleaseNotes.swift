@@ -19,9 +19,38 @@ struct ReleaseNoteEntry: Equatable, Identifiable {
 
 enum ReleaseNotes {
   static let fallbackChangelogURL = URL(
-    string: "https://aixlg.com/mac/changelog/?v=1.0.19-235")!
+    string: "https://aixlg.com/mac/changelog/?v=1.0.21-238")!
 
   static let bundled: [ReleaseNoteEntry] = [
+    ReleaseNoteEntry(
+      version: "1.0.21",
+      build: 238,
+      dateText: "2026-10-03",
+      title: "界面更清楚，日常操作更安心",
+      summary: "主窗口重新整理，工具、快捷键和设置更好找；配置异常先保护原文件，剪贴板与进程查看器的等待和取消更可靠。",
+      highlights: [
+        "顶部直接切换功能快捷键、应用中心和设置；工具按用途分组，搜索无结果时可一键恢复全部。",
+        "设置 → 通用 → 外观，可选浅色、深色或跟随系统；常用窗口同步切换，PDF和图片保留原色。",
+        "配置文件损坏时先保全原文件再保存；无法安全保存会明确提示，不用默认内容悄悄覆盖。",
+        "关闭剪贴板窗口即可取消尚未完成的回填；进程查看器暂停或隐藏后，旧结果不会重新开始采样。",
+      ],
+      previousHighlights: ["保留个人快捷键与既有功能，无需新增系统权限；官方签名、公证和更新安全校验继续保留。"],
+      changelogURL: fallbackChangelogURL
+    ),
+    ReleaseNoteEntry(
+      version: "1.0.20",
+      build: 236,
+      dateText: "2026-10-03",
+      title: "暗下来，所有窗口依然清楚",
+      summary: "新增完整深色外观，也可选择浅色或跟随系统；主窗口、启动器、剪贴板、游目与披卷同步切换。",
+      highlights: [
+        "设置 → 通用 → 外观，选择跟随系统、浅色或深色，立即生效，重启后仍保留。",
+        "按钮、输入框、选中项、弹窗和状态提示一并适配；无需关闭正在使用的窗口。",
+        "PDF 页面、截图、图片和二维码保留原色；只调整工具界面，不改动文档内容。",
+      ],
+      previousHighlights: ["保留个人快捷键和原有功能，不改变 Mac 系统外观。"],
+      changelogURL: fallbackChangelogURL
+    ),
     ReleaseNoteEntry(
       version: "1.0.19",
       build: 235,

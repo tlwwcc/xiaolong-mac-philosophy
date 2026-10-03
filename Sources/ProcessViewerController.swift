@@ -2,6 +2,11 @@ import AppKit
 import Darwin
 import Foundation
 
+protocol ProcessViewerSampling: Sendable {
+  func sample(previous: [pid_t: ProcessViewerProcess]) async throws -> ProcessViewerSnapshot
+  func terminate(identity: ProcessStableIdentity, force: Bool) async -> ProcessTerminationResult
+}
+
 @MainActor
 final class ProcessViewerController: ObservableObject {
   @Published private(set) var processes: [ProcessViewerProcess] = []
@@ -12,15 +17,29 @@ final class ProcessViewerController: ObservableObject {
   @Published private(set) var sampleError: String?
   @Published private(set) var reducedFrequency = false
   @Published var isPaused = false {
-    didSet { updateTimer() }
+    didSet {
+      if isPaused { cancelRefresh() }
+      updateTimer()
+    }
   }
 
-  private let sampler = ProcessViewerSampler()
+  private let sampler: any ProcessViewerSampling
+  private var sampleTask: Task<Void, Never>?
+  private var sampleGeneration: UInt64 = 0
   private var timer: Timer?
   private var isVisible = false
   private var isEnabled = true
   private var isAppActive = true
   private var slowSampleCount = 0
+
+  init(sampler: any ProcessViewerSampling = ProcessViewerSampler()) {
+    self.sampler = sampler
+  }
+
+  isolated deinit {
+    timer?.invalidate()
+    sampleTask?.cancel()
+  }
 
   var periodicTaskCount: Int { timer == nil ? 0 : 1 }
 
@@ -28,13 +47,15 @@ final class ProcessViewerController: ObservableObject {
     isVisible = visible
     if visible {
       refresh()
+    } else {
+      cancelRefresh()
     }
     updateTimer()
   }
 
   func setEnabled(_ enabled: Bool) {
     isEnabled = enabled
-    if !enabled { stopTimer() } else if isVisible { refresh() }
+    if !enabled { cancelRefresh() } else if isVisible { refresh() }
     updateTimer()
   }
 
@@ -46,16 +67,29 @@ final class ProcessViewerController: ObservableObject {
   func refresh() {
     guard isEnabled, !isLoading else { return }
     isLoading = true
+    sampleGeneration &+= 1
+    let generation = sampleGeneration
     let previous = Dictionary(uniqueKeysWithValues: processes.map { ($0.identity.pid, $0) })
-    Task {
+    sampleTask = Task { [weak self, sampler] in
       do {
         let snapshot = try await sampler.sample(previous: previous)
-        apply(snapshot)
+        guard !Task.isCancelled, let self, self.sampleGeneration == generation else { return }
+        self.apply(snapshot)
       } catch {
-        sampleError = "本次刷新失败：\(error.localizedDescription)"
+        guard !Task.isCancelled, let self, self.sampleGeneration == generation else { return }
+        self.sampleError = "本次刷新失败：\(error.localizedDescription)"
       }
-      isLoading = false
+      guard let self, self.sampleGeneration == generation else { return }
+      self.isLoading = false
+      self.sampleTask = nil
     }
+  }
+
+  private func cancelRefresh() {
+    sampleGeneration &+= 1
+    sampleTask?.cancel()
+    sampleTask = nil
+    isLoading = false
   }
 
   func requestQuit(_ process: ProcessViewerProcess) {
@@ -68,7 +102,8 @@ final class ProcessViewerController: ObservableObject {
   }
 
   private func performTermination(_ process: ProcessViewerProcess, force: Bool) {
-    guard process.canQuit else { return }
+    guard let current = processes.first(where: { $0.identity == process.identity }), current.canQuit
+    else { return }
     mutate(process.identity) { $0.actionState = .quitting }
     Task {
       let result = await sampler.terminate(identity: process.identity, force: force)
@@ -76,7 +111,7 @@ final class ProcessViewerController: ObservableObject {
       case .exited:
         mutate(process.identity) { $0.actionState = .exited }
         try? await Task.sleep(nanoseconds: 550_000_000)
-        refresh()
+        if isVisible, isEnabled, !isPaused { refresh() }
       case .identityChanged:
         mutate(process.identity) {
           $0.actionState =
@@ -111,7 +146,14 @@ final class ProcessViewerController: ObservableObject {
   }
 
   private func apply(_ snapshot: ProcessViewerSnapshot) {
-    processes = snapshot.processes
+    // A sample started before the user clicked Quit. Action ownership stays on the main actor;
+    // a background snapshot must not erase a newer quit/result state or enable a second request.
+    let currentActions = Dictionary(uniqueKeysWithValues: processes.map { ($0.identity, $0.actionState) })
+    processes = snapshot.processes.map { sampled in
+      var row = sampled
+      if let current = currentActions[row.identity] { row.actionState = current }
+      return row
+    }
     memory = snapshot.memory
     memoryOccupancyHistory.append(snapshot.memory.occupancyRatio)
     if memoryOccupancyHistory.count > 90 {
@@ -148,36 +190,24 @@ enum ProcessTerminationResult {
   case stillRunning
 }
 
-actor ProcessViewerSampler {
-  private struct Counters {
-    let totalNanoseconds: UInt64
-    let sampledAt: TimeInterval
-  }
-
-  private var counters: [pid_t: Counters] = [:]
+actor ProcessViewerSampler: ProcessViewerSampling {
+  private var counters: [pid_t: ProcessViewerCPUCounter] = [:]
 
   func sample(previous: [pid_t: ProcessViewerProcess]) throws -> ProcessViewerSnapshot {
     let started = ProcessInfo.processInfo.systemUptime
     let pids = listAllPIDs()
     let now = ProcessInfo.processInfo.systemUptime
-    var nextCounters: [pid_t: Counters] = [:]
+    var nextCounters: [pid_t: ProcessViewerCPUCounter] = [:]
     var rows: [ProcessViewerProcess] = []
     rows.reserveCapacity(pids.count)
 
     for pid in pids where pid > 0 {
+      try Task.checkCancellation()
       guard let raw = readProcess(pid: pid) else { continue }
-      let current = Counters(totalNanoseconds: raw.totalCPUTime, sampledAt: now)
+      let current = ProcessViewerCPUCounter(
+        identity: raw.identity, totalNanoseconds: raw.totalCPUTime, sampledAt: now)
       nextCounters[pid] = current
-      let cpu: Double?
-      if let old = counters[pid], now > old.sampledAt,
-        current.totalNanoseconds >= old.totalNanoseconds
-      {
-        cpu =
-          Double(current.totalNanoseconds - old.totalNanoseconds)
-          / ((now - old.sampledAt) * 1_000_000_000) * 100
-      } else {
-        cpu = nil
-      }
+      let cpu = current.percentage(since: counters[pid])
       var row = ProcessViewerProcess(
         identity: raw.identity,
         name: raw.name,

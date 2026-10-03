@@ -621,36 +621,47 @@ private final class AuthorizationInstalledAppDragCardView: NSView, NSDraggingSou
     AuthorizationDragGuideLayout.preferredSize
   }
 
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    needsDisplay = true
+  }
+
   override func draw(_ dirtyRect: NSRect) {
     super.draw(dirtyRect)
     let presentation = AuthorizationGuidePresentation.make(for: phase)
     let accentColor: NSColor
     switch phase {
     case .restartReady:
-      accentColor = .systemGreen
+      accentColor = NSColor(AppVisualStyle.success)
     case .restarting:
-      accentColor = .secondaryLabelColor
+      accentColor = NSColor(AppVisualStyle.textSecondary)
     case .systemRelaunch:
-      accentColor = .systemOrange
+      accentColor = NSColor(AppVisualStyle.warning)
     case .drag, .guidedDrag:
-      accentColor = .controlAccentColor
+      accentColor = NSColor(AppVisualStyle.accent)
     }
     let card = bounds.insetBy(dx: 1, dy: 1)
     let path = NSBezierPath(roundedRect: card, xRadius: 15, yRadius: 15)
+    // This card floats above another app, whose appearance can differ from our own.
+    // Keep the text surface opaque so a light System Settings window cannot wash it out.
+    let surfaceColor = NSColor.windowBackgroundColor
     NSGradient(colors: [
-      NSColor.windowBackgroundColor.withAlphaComponent(0.98),
-      accentColor.withAlphaComponent(0.19),
+      surfaceColor,
+      surfaceColor.blended(withFraction: 0.12, of: accentColor) ?? surfaceColor,
     ])?.draw(in: path, angle: 0)
     accentColor.withAlphaComponent(0.62).setStroke()
     path.lineWidth = 1.5
     path.stroke()
 
     let arrowRect = NSRect(x: 18, y: bounds.midY - 18, width: 36, height: 36)
+    let symbolColors = presentation.symbolName.hasSuffix(".circle.fill")
+      ? [NSColor(AppVisualStyle.onAccent), accentColor] : [accentColor]
     let arrow = NSImage(
       systemSymbolName: presentation.symbolName,
       accessibilityDescription: presentation.title
     )?.withSymbolConfiguration(
-      NSImage.SymbolConfiguration(pointSize: 34, weight: .bold))
+      NSImage.SymbolConfiguration(pointSize: 34, weight: .bold)
+        .applying(NSImage.SymbolConfiguration(paletteColors: symbolColors)))
     arrow?.draw(in: arrowRect)
 
     let iconRect = NSRect(x: 68, y: bounds.midY - 24, width: 48, height: 48)
@@ -692,7 +703,7 @@ private final class AuthorizationInstalledAppDragCardView: NSView, NSDraggingSou
       in: subtitleRect,
       withAttributes: [
         .font: NSFont.systemFont(ofSize: 12),
-        .foregroundColor: NSColor.secondaryLabelColor,
+        .foregroundColor: NSColor(AppVisualStyle.textSecondary),
       ])
   }
 

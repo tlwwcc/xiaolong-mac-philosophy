@@ -40,6 +40,15 @@ final class BlueprintPDFView: PDFView {
     window?.invalidateCursorRects(for: self)
   }
 
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    // Only the canvas surrounding the PDF follows the skin; pages keep their authored colors.
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      backgroundColor = .windowBackgroundColor
+    }
+    needsDisplay = true
+  }
+
   override func resetCursorRects() {
     super.resetCursorRects()
     addCursorRect(visibleRect, cursor: .openHand)
