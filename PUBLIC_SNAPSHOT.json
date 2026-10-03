@@ -467,7 +467,7 @@
     },
     "Resources/Info.plist": {
       "executable": false,
-      "sha256": "a2b37599d88fae2fe5e441cba5f52d5b6cc71d1addc72d25439357f01d4f274e",
+      "sha256": "6486d40be9f2e0c196e5ab8691c5f21ea18ee00d2ce31e1087cbaf300f4953df",
       "size": 2719
     },
     "Resources/PijuanAppIcon.png": {
@@ -672,8 +672,8 @@
     },
     "Sources/CodexNetworkProbe.swift": {
       "executable": false,
-      "sha256": "a114f7925ea47d390aa6fd7126fcc03b59747f3633a348df40935577f6b26db6",
-      "size": 65126
+      "sha256": "f6b4bc8224362ff4371312e3c59e2771ac4f58d97fa10015978522dace84560b",
+      "size": 68467
     },
     "Sources/CommandWProtection.swift": {
       "executable": false,
@@ -812,8 +812,8 @@
     },
     "Sources/ReleaseNotes.swift": {
       "executable": false,
-      "sha256": "61a19578220bc712f0aed09c3070bb72dc2bc4204e37af1f2b9df81cf15354be",
-      "size": 114947
+      "sha256": "7459f87ee034d35407707ffbe83c2260478949ac79edf66e8c83ac3f821278ff",
+      "size": 115963
     },
     "Sources/RetiredShiftInputSourcePreferences.swift": {
       "executable": false,
@@ -958,5 +958,5 @@
   },
   "kind": "frozen",
   "schemaVersion": 1,
-  "sourceRevision": "495ad8e306e3da1a4be74cfbf31396a2d259bb76"
+  "sourceRevision": "3e0ce2a7318a6dc3e28e809676610e0d6fa77eb7"
 }

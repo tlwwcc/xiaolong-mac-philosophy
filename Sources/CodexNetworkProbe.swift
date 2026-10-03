@@ -29,7 +29,7 @@ enum NetworkProbeDirection: String, CaseIterable, Codable, Identifiable {
 
   var subtitle: String {
     switch self {
-    case .domestic, .international: return "直连 · 下载、上传、延迟"
+    case .domestic, .international: return "Cloudflare · 当前线路"
     case .codex: return "当前网络 · 4 轮"
     }
   }
@@ -49,7 +49,7 @@ enum WebsiteSpeedStage: String, Equatable, Sendable {
 
   var title: String {
     switch self {
-    case .latency: return "正在校准延迟"
+    case .latency: return "正在准备测速"
     case .download: return "正在测试下载"
     case .upload: return "正在测试上传"
     }
@@ -255,23 +255,96 @@ struct WebsiteSpeedProgress: Equatable, Sendable {
   let completedSamples: Int
   let totalSamples: Int
   let stageValue: Double?
-  let displayPercent: Double
+  let completedDownloadMbps: Double?
+  let pauseEpoch: Int
 
   var fraction: Double {
-    min(1, max(0, displayPercent / 100))
+    guard totalSamples > 0 else { return 0 }
+    return min(1, max(0, Double(completedSamples) / Double(totalSamples)))
+  }
+}
+
+/// A batch owns this counter. Delegates only record bytes; a 250 ms task samples
+/// the shared monotonic clock, so concurrent request rates are never added.
+final class WebsiteSpeedLiveMeter: @unchecked Sendable {
+  static let intervalNanoseconds: UInt64 = 250_000_000
+  private let lock = NSLock()
+  private var bytesByRequest: [Int: Int64] = [:]
+  private var observations: [(time: TimeInterval, bytes: Int64)]
+  private var closed = false
+
+  init(startedAt: TimeInterval) {
+    observations = [(startedAt, 0)]
   }
 
-  func withDisplayPercent(_ displayPercent: Double) -> WebsiteSpeedProgress {
-    WebsiteSpeedProgress(
-      stage: stage,
-      completedSamples: completedSamples,
-      totalSamples: totalSamples,
-      stageValue: stageValue,
-      displayPercent: displayPercent)
+  func record(totalBytes: Int64, requestID: Int) {
+    lock.lock()
+    defer { lock.unlock() }
+    guard !closed, totalBytes >= 0 else { return }
+    bytesByRequest[requestID] = max(bytesByRequest[requestID, default: 0], totalBytes)
   }
 
-  static func nextDisplayPercent(after current: Double) -> Double {
-    min(92, current + (current < 55 ? 2.4 : 0.8))
+  func sample(at now: TimeInterval) -> Double? {
+    lock.lock()
+    defer { lock.unlock() }
+    guard !closed, now.isFinite, let last = observations.last, now > last.time else {
+      return nil
+    }
+    let bytes = bytesByRequest.values.reduce(Int64(0), +)
+    observations.append((now, bytes))
+    // Retain the sample immediately preceding the one-second window boundary.
+    while observations.count > 2, observations[1].time <= now - 1 {
+      observations.removeFirst()
+    }
+    guard bytes > 0, let first = observations.first else { return nil }
+    return Double(bytes - first.bytes) * 8 / (now - first.time) / 1_000_000
+  }
+
+  func close() {
+    lock.lock()
+    closed = true
+    lock.unlock()
+  }
+}
+
+struct WebsiteSpeedDisplay: Equatable {
+  let value: String
+  let unit: String
+  private let spokenUnit: String
+
+  var text: String { unit.isEmpty ? value : "\(value) \(unit)" }
+  var accessibilityText: String {
+    unit.isEmpty ? "待测" : "\(value == "<1" ? "不足1" : value)\(spokenUnit)每秒"
+  }
+
+  /// Match the status bar's decimal byte units; keep one decimal in the larger sphere.
+  static func rate(_ mbps: Double?) -> WebsiteSpeedDisplay {
+    guard let mbps, mbps.isFinite, mbps >= 0 else {
+      return WebsiteSpeedDisplay(value: "—", unit: "", spokenUnit: "")
+    }
+    let bytesPerSecond = mbps * 125_000
+    guard bytesPerSecond.isFinite else {
+      return WebsiteSpeedDisplay(value: "—", unit: "", spokenUnit: "")
+    }
+    if bytesPerSecond >= 1_000_000_000 {
+      return WebsiteSpeedDisplay(
+        value: String(format: "%.1f", bytesPerSecond / 1_000_000_000),
+        unit: "GB/s", spokenUnit: "吉字节")
+    }
+    if bytesPerSecond >= 1_000_000 {
+      return WebsiteSpeedDisplay(
+        value: String(format: "%.1f", bytesPerSecond / 1_000_000),
+        unit: "MB/s", spokenUnit: "兆字节")
+    }
+    if bytesPerSecond >= 1_000 {
+      return WebsiteSpeedDisplay(
+        value: String(format: "%.0f", min((bytesPerSecond / 1_000).rounded(), 999)),
+        unit: "KB/s", spokenUnit: "千字节")
+    }
+    return WebsiteSpeedDisplay(
+      value: bytesPerSecond > 0 && bytesPerSecond < 1
+        ? "<1" : String(format: "%.0f", min(bytesPerSecond.rounded(), 999)),
+      unit: "B/s", spokenUnit: "字节")
   }
 }
 
@@ -319,6 +392,10 @@ struct WebsiteSpeedResult: Equatable, Sendable {
     downloadBitsPerSecond: [Double],
     uploadBitsPerSecond: [Double]
   ) -> WebsiteSpeedResult? {
+    guard !downloadBitsPerSecond.isEmpty, !uploadBitsPerSecond.isEmpty,
+      downloadBitsPerSecond.allSatisfy({ $0.isFinite && $0 > 0 }),
+      uploadBitsPerSecond.allSatisfy({ $0.isFinite && $0 > 0 })
+    else { return nil }
     let latency =
       NetworkProbeStatistics.percentile(latencyMilliseconds, probability: 0.5) ?? 0
     let download =
@@ -594,6 +671,7 @@ private final class WebsiteSpeedRequest: ProbeURLSessionTaskHandler, @unchecked 
   private let expectedBytes: Int
   private let duringLoad: WebsiteSpeedStage?
   private let timeout: TimeInterval
+  private let byteProgress: (@Sendable (Int64) -> Void)?
   private let lock = NSLock()
   private var continuation: CheckedContinuation<WebsiteSpeedRequestOutcome, Never>?
   private var task: URLSessionDataTask?
@@ -612,13 +690,15 @@ private final class WebsiteSpeedRequest: ProbeURLSessionTaskHandler, @unchecked 
     stage: WebsiteSpeedStage,
     bytes: Int,
     duringLoad: WebsiteSpeedStage? = nil,
-    timeout: TimeInterval = WebsiteSpeedPlan.requestTimeout
+    timeout: TimeInterval = WebsiteSpeedPlan.requestTimeout,
+    byteProgress: (@Sendable (Int64) -> Void)? = nil
   ) {
     self.sessionPool = sessionPool
     self.stage = stage
     expectedBytes = bytes
     self.duringLoad = duringLoad
     self.timeout = timeout
+    self.byteProgress = byteProgress
   }
 
   func run() async -> WebsiteSpeedRequestOutcome {
@@ -699,8 +779,14 @@ private final class WebsiteSpeedRequest: ProbeURLSessionTaskHandler, @unchecked 
 
   func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
     lock.lock()
+    guard !finished, !cancellationRequested else {
+      lock.unlock()
+      return
+    }
     receivedBodyBytes += Int64(data.count)
+    let bytes = receivedBodyBytes
     lock.unlock()
+    if stage == .download { byteProgress?(bytes) }
   }
 
   func urlSession(
@@ -711,9 +797,15 @@ private final class WebsiteSpeedRequest: ProbeURLSessionTaskHandler, @unchecked 
     totalBytesExpectedToSend: Int64
   ) {
     lock.lock()
+    guard !finished, !cancellationRequested else {
+      lock.unlock()
+      return
+    }
     sentBodyBytes = max(sentBodyBytes, totalBytesSent)
     lastBodySendAt = ProcessInfo.processInfo.systemUptime
+    let bytes = sentBodyBytes
     lock.unlock()
+    if stage == .upload { byteProgress?(bytes) }
   }
 
   func urlSession(
@@ -889,6 +981,20 @@ final class WebsiteSpeedTestRunner: @unchecked Sendable {
     loadedLatencyRequest?.cancel()
   }
 
+  /// Checked again on the main actor immediately before publishing a live value.
+  /// A callback queued before pause must not become current after resume.
+  func acceptsProgress(pauseEpoch expectedEpoch: Int) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return !cancelled && !paused && pauseEpoch == expectedEpoch
+  }
+
+  private var currentPauseEpoch: Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return pauseEpoch
+  }
+
   func resume() {
     lock.lock()
     paused = false
@@ -931,14 +1037,15 @@ final class WebsiteSpeedTestRunner: @unchecked Sendable {
       }
 
       ledger.begin(group)
-      let valueAtGroupStart = ledger.value(for: group.stage)
+      let valueAtGroupStart = group.stage == .latency ? ledger.value(for: .latency) : nil
       await progress(
         WebsiteSpeedProgress(
           stage: group.stage,
           completedSamples: completedSamples,
           totalSamples: WebsiteSpeedPlan.totalSampleCount,
           stageValue: valueAtGroupStart,
-          displayPercent: 3))
+          completedDownloadMbps: group.stage == .upload ? ledger.value(for: .download) : nil,
+          pauseEpoch: currentPauseEpoch))
 
       let loadedLatencyTask = startLoadedLatency(for: group.stage)
       var sampleIndex = 0
@@ -963,23 +1070,65 @@ final class WebsiteSpeedTestRunner: @unchecked Sendable {
           return .failure("测速已达到本次流量上限，已自动停止")
         }
 
-        let requests = (0..<transferCount).map { _ in
+        let requestPauseEpoch = currentPauseEpoch
+        let liveCompletedSamples = completedSamples
+        let completedDownload = group.stage == .upload ? ledger.value(for: .download) : nil
+        // Clear the previous batch before starting the next transfer window.
+        await progress(
+          WebsiteSpeedProgress(
+            stage: group.stage,
+            completedSamples: completedSamples,
+            totalSamples: WebsiteSpeedPlan.totalSampleCount,
+            stageValue: nil,
+            completedDownloadMbps: completedDownload,
+            pauseEpoch: requestPauseEpoch))
+        guard acceptsProgress(pauseEpoch: requestPauseEpoch) else { continue }
+        let batchStartedAt = now()
+        let liveMeter = WebsiteSpeedLiveMeter(startedAt: batchStartedAt)
+        let requests = (0..<transferCount).map { requestID in
           WebsiteSpeedRequest(
             sessionPool: sessionPool,
             stage: group.stage,
             bytes: group.bytes,
-            timeout: requestTimeout)
+            timeout: requestTimeout,
+            byteProgress: { liveMeter.record(totalBytes: $0, requestID: requestID) })
         }
-        let requestPauseEpoch = setCurrentRequests(requests)
-        let batchStartedAt = now()
+        setCurrentRequests(requests, expectedPauseEpoch: requestPauseEpoch)
+        let liveProgressTask: Task<Void, Never>? =
+          group.stage == .latency
+          ? nil
+          : Task {
+            while !Task.isCancelled {
+              do {
+                try await Task.sleep(nanoseconds: WebsiteSpeedLiveMeter.intervalNanoseconds)
+              } catch { return }
+              guard !Task.isCancelled, self.acceptsProgress(pauseEpoch: requestPauseEpoch),
+                let value = liveMeter.sample(at: self.now())
+              else { continue }
+              await progress(
+                WebsiteSpeedProgress(
+                  stage: group.stage,
+                  completedSamples: liveCompletedSamples,
+                  totalSamples: WebsiteSpeedPlan.totalSampleCount,
+                  stageValue: value,
+                  completedDownloadMbps: completedDownload,
+                  pauseEpoch: requestPauseEpoch))
+            }
+          }
         let outcomes = await withTaskGroup(of: WebsiteSpeedRequestOutcome.self) { batch in
           for request in requests { batch.addTask { await request.run() } }
           var results: [WebsiteSpeedRequestOutcome] = []
           for await outcome in batch { results.append(outcome) }
           return results
         }
+        // Freeze transfer time before draining a potentially queued main-actor update.
+        let batchFinishedAt = now()
+        let lastLiveValue = liveMeter.sample(at: batchFinishedAt)
+        liveMeter.close()
+        liveProgressTask?.cancel()
+        await liveProgressTask?.value
         let outcome = WebsiteSpeedBatch.aggregate(
-          outcomes, stage: group.stage, wallDuration: now() - batchStartedAt)
+          outcomes, stage: group.stage, wallDuration: batchFinishedAt - batchStartedAt)
         let disposition = finishCurrentRequests(startedAtPauseEpoch: requestPauseEpoch)
 
         if disposition == .cancel || Task.isCancelled {
@@ -1019,14 +1168,15 @@ final class WebsiteSpeedTestRunner: @unchecked Sendable {
           sampleIndex += 1
           completedSamples += 1
 
-          let stageValue = ledger.value(for: group.stage)
+          let stageValue = group.stage == .latency ? ledger.value(for: .latency) : lastLiveValue
           await progress(
             WebsiteSpeedProgress(
               stage: group.stage,
               completedSamples: completedSamples,
               totalSamples: WebsiteSpeedPlan.totalSampleCount,
               stageValue: stageValue,
-              displayPercent: 3))
+              completedDownloadMbps: completedDownload,
+              pauseEpoch: requestPauseEpoch))
         }
       }
       await stopLoadedLatency(loadedLatencyTask)
@@ -1073,14 +1223,12 @@ final class WebsiteSpeedTestRunner: @unchecked Sendable {
     return (cancelled, paused)
   }
 
-  private func setCurrentRequests(_ requests: [WebsiteSpeedRequest]) -> Int {
+  private func setCurrentRequests(_ requests: [WebsiteSpeedRequest], expectedPauseEpoch: Int) {
     lock.lock()
     currentRequests = requests
-    let requestPauseEpoch = pauseEpoch
-    let shouldCancel = cancelled || paused
+    let shouldCancel = cancelled || paused || pauseEpoch != expectedPauseEpoch
     lock.unlock()
     if shouldCancel { requests.forEach { $0.cancel() } }
-    return requestPauseEpoch
   }
 
   private func finishCurrentRequests(startedAtPauseEpoch: Int) -> WebsiteSpeedRequestDisposition {
@@ -1365,7 +1513,6 @@ final class CodexNetworkProbeController: ObservableObject {
   private var runIDs: [NetworkProbeDirection: Int] = [.domestic: 0, .codex: 0]
   private var runningTasks: [NetworkProbeDirection: Task<Void, Never>] = [:]
   private var websiteRunner: WebsiteSpeedTestRunner?
-  private var networkProgressTask: Task<Void, Never>?
 
   nonisolated init() {}
 
@@ -1395,13 +1542,14 @@ final class CodexNetworkProbeController: ObservableObject {
     switch (direction, phase(for: direction)) {
     case (.domestic, .networkRunning(let progress)):
       websiteRunner?.pause()
-      networkProgressTask?.cancel()
-      networkProgressTask = nil
       phases[.domestic] = .networkPaused(progress)
     case (.domestic, .networkPaused(let progress)):
       websiteRunner?.resume()
-      phases[.domestic] = .networkRunning(progress)
-      startNetworkProgressAnimation(runID: runIDs[.domestic, default: 0])
+      phases[.domestic] = .networkRunning(
+        WebsiteSpeedProgress(
+          stage: progress.stage, completedSamples: progress.completedSamples,
+          totalSamples: progress.totalSamples, stageValue: nil,
+          completedDownloadMbps: progress.completedDownloadMbps, pauseEpoch: progress.pauseEpoch))
     case (.codex, .codexRunning):
       return
     case (.domestic, _):
@@ -1421,8 +1569,6 @@ final class CodexNetworkProbeController: ObservableObject {
   func cancelAll() {
     websiteRunner?.cancel()
     websiteRunner = nil
-    networkProgressTask?.cancel()
-    networkProgressTask = nil
     for direction in NetworkProbeDirection.customerChoices {
       runningTasks[direction]?.cancel()
       runningTasks[direction] = nil
@@ -1442,25 +1588,20 @@ final class CodexNetworkProbeController: ObservableObject {
         completedSamples: 0,
         totalSamples: WebsiteSpeedPlan.totalSampleCount,
         stageValue: nil,
-        displayPercent: 3))
-    startNetworkProgressAnimation(runID: runID)
+        completedDownloadMbps: nil,
+        pauseEpoch: 0))
 
     runningTasks[.domestic] = Task { @MainActor [weak self] in
       let outcome = await runner.run { progress in
-        guard let self, self.stillActive(.domestic, runID: runID) else { return }
-        let displayPercent = self.currentNetworkDisplayPercent
-        let displayedProgress = progress.withDisplayPercent(displayPercent)
-        if case .networkPaused = self.phases[.domestic] {
-          self.phases[.domestic] = .networkPaused(displayedProgress)
-        } else {
-          self.phases[.domestic] = .networkRunning(displayedProgress)
-        }
+        guard let self, self.stillActive(.domestic, runID: runID),
+          runner.acceptsProgress(pauseEpoch: progress.pauseEpoch),
+          case .networkRunning = self.phases[.domestic]
+        else { return }
+        self.phases[.domestic] = .networkRunning(progress)
       }
       guard let self, stillActive(.domestic, runID: runID) else { return }
       websiteRunner = nil
       runningTasks[.domestic] = nil
-      networkProgressTask?.cancel()
-      networkProgressTask = nil
       switch outcome {
       case .success(let result):
         phases[.domestic] = .networkFinished(result)
@@ -1509,8 +1650,6 @@ final class CodexNetworkProbeController: ObservableObject {
     if direction == .domestic {
       websiteRunner?.cancel()
       websiteRunner = nil
-      networkProgressTask?.cancel()
-      networkProgressTask = nil
     }
     runIDs[direction, default: 0] += 1
   }
@@ -1524,34 +1663,6 @@ final class CodexNetworkProbeController: ObservableObject {
     runIDs[direction] == runID
   }
 
-  private var currentNetworkDisplayPercent: Double {
-    switch phases[.domestic] {
-    case .networkRunning(let progress), .networkPaused(let progress):
-      return progress.displayPercent
-    default:
-      return 3
-    }
-  }
-
-  private func startNetworkProgressAnimation(runID: Int) {
-    networkProgressTask?.cancel()
-    networkProgressTask = Task { @MainActor [weak self] in
-      while let self, self.stillActive(.domestic, runID: runID) {
-        do {
-          try await Task.sleep(nanoseconds: 320_000_000)
-        } catch {
-          return
-        }
-        guard self.stillActive(.domestic, runID: runID) else { return }
-        guard case .networkRunning(let progress) = self.phases[.domestic] else {
-          continue
-        }
-        self.phases[.domestic] = .networkRunning(
-          progress.withDisplayPercent(
-            WebsiteSpeedProgress.nextDisplayPercent(after: progress.displayPercent)))
-      }
-    }
-  }
 }
 
 enum NetworkProbeVisualTone: Equatable {
@@ -1590,10 +1701,6 @@ struct CodexNetworkProbeWindowRoot: View {
           }
           .frame(maxWidth: .infinity)
 
-          if case .networkFinished(let result) = controller.phase(for: .domestic) {
-            NetworkSpeedMetricStrip(result: result)
-          }
-
           methodNote
         }
         .padding(.horizontal, proxy.size.width < 650 ? 18 : 28)
@@ -1628,7 +1735,7 @@ struct CodexNetworkProbeWindowRoot: View {
   }
 
   private var methodNote: some View {
-    Text("网速直连 Cloudflare，受节点和 VPN 影响。Codex 只检测 OpenAI 连通与响应，不运行任务，沿用当前线路。")
+    Text("网速测量当前线路到 Cloudflare 的下载与上传，不代表国内宽带，VPN 仍可能影响结果。Codex 只检测 OpenAI 连通与响应，不运行任务，沿用当前线路。")
       .font(.system(size: 11))
       .foregroundStyle(.secondary)
       .multilineTextAlignment(.center)
@@ -1636,66 +1743,7 @@ struct CodexNetworkProbeWindowRoot: View {
   }
 }
 
-private struct NetworkSpeedMetricStrip: View {
-  let result: WebsiteSpeedResult
-
-  var body: some View {
-    HStack(spacing: 0) {
-      metric("下载", value: wholeNumber(result.downloadMbps), unit: "Mbps")
-      divider
-      metric("上传", value: wholeNumber(result.uploadMbps), unit: "Mbps")
-      divider
-      metric("延迟", value: wholeNumber(result.latencyMilliseconds), unit: "ms")
-      divider
-      metric("抖动", value: decimal(result.jitterMilliseconds), unit: "ms")
-    }
-    .padding(.vertical, 10)
-    .frame(maxWidth: 600)
-    .background(Color(nsColor: .controlBackgroundColor).opacity(0.72))
-    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-    .overlay(
-      RoundedRectangle(cornerRadius: 12, style: .continuous)
-        .stroke(Color(nsColor: .separatorColor).opacity(0.42), lineWidth: 1)
-    )
-    .accessibilityElement(children: .combine)
-    .accessibilityLabel(
-      "下载 \(wholeNumber(result.downloadMbps)) 兆每秒，上传 \(wholeNumber(result.uploadMbps)) 兆每秒，延迟 \(wholeNumber(result.latencyMilliseconds)) 毫秒，抖动 \(decimal(result.jitterMilliseconds)) 毫秒"
-    )
-  }
-
-  private var divider: some View {
-    Rectangle()
-      .fill(Color(nsColor: .separatorColor).opacity(0.55))
-      .frame(width: 1, height: 30)
-  }
-
-  private func metric(_ title: String, value: String, unit: String) -> some View {
-    VStack(spacing: 2) {
-      Text(title)
-        .font(.caption)
-        .foregroundStyle(.secondary)
-      HStack(alignment: .firstTextBaseline, spacing: 3) {
-        Text(value)
-          .font(.system(size: 17, weight: .bold, design: .rounded))
-          .monospacedDigit()
-        Text(unit)
-          .font(.system(size: 9, weight: .semibold))
-          .foregroundStyle(.secondary)
-      }
-    }
-    .frame(maxWidth: .infinity)
-  }
-
-  private func wholeNumber(_ value: Double) -> String {
-    String(Int(value.rounded()))
-  }
-
-  private func decimal(_ value: Double) -> String {
-    String(format: "%.1f", value)
-  }
-}
-
-private struct NetworkProbeSphere: View {
+struct NetworkProbeSphere: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   let direction: NetworkProbeDirection
@@ -1809,7 +1857,7 @@ private struct NetworkProbeSphere: View {
           Text("开始测速")
             .font(.system(size: 27, weight: .bold))
             .foregroundStyle(tone.color)
-          Text("约需 15 秒")
+          Text(direction.subtitle)
             .font(.callout)
             .foregroundStyle(.secondary)
           actionLabel("点击测速", systemImage: "play.fill")
@@ -1820,22 +1868,13 @@ private struct NetworkProbeSphere: View {
     case .networkPaused(let progress):
       networkProgress(progress, paused: true)
     case .networkFinished(let result):
-      VStack(spacing: 7) {
+      VStack(spacing: 12) {
         Text("测速完成")
           .font(.caption.weight(.semibold))
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
-          Text(roundedNumber(result.downloadMbps))
-            .font(.system(size: 43, weight: .bold, design: .rounded))
-            .monospacedDigit()
-          Text("Mbps")
-            .font(.system(size: 11, weight: .semibold))
+        HStack(alignment: .top, spacing: 14) {
+          finishedSpeed("下载", value: result.downloadMbps)
+          finishedSpeed("上传", value: result.uploadMbps)
         }
-        .foregroundStyle(tone.color)
-        Text("下载")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-        Text("上传 \(roundedNumber(result.uploadMbps)) Mbps")
-          .font(.caption.weight(.semibold))
         actionLabel("再测一次", systemImage: "arrow.clockwise")
       }
     case .codexRunning(let completedRounds, _):
@@ -1899,27 +1938,53 @@ private struct NetworkProbeSphere: View {
     VStack(spacing: 9) {
       Text(paused ? "已暂停" : progress.stage.title)
         .font(.caption.weight(.semibold))
-      if let value = progress.stageValue {
+      if let value = progress.stageValue, progress.stage != .latency {
+        let display = WebsiteSpeedDisplay.rate(value)
         HStack(alignment: .firstTextBaseline, spacing: 4) {
-          Text(roundedNumber(value))
+          Text(display.value)
             .font(.system(size: 43, weight: .bold, design: .rounded))
             .monospacedDigit()
-          Text(progress.stage == .latency ? "ms" : "Mbps")
+            .lineLimit(1)
+            .minimumScaleFactor(0.65)
+          Text(display.unit)
             .font(.system(size: 12, weight: .semibold))
         }
         .foregroundStyle(tone.color)
       } else {
-        Text("校准中")
+        Text("—")
           .font(.system(size: 43, weight: .bold, design: .rounded))
           .foregroundStyle(tone.color)
       }
-      if progress.stageValue == nil {
-        Text("保留当前结果")
-          .font(.callout)
+      if progress.stage == .upload {
+        Text("下载 \(progress.completedDownloadMbps.map(speed) ?? "—")")
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(.secondary)
+      } else if progress.stage == .download {
+        Text("上传 —")
+          .font(.caption)
           .foregroundStyle(.secondary)
       }
       actionLabel(paused ? "继续" : "暂停", systemImage: paused ? "play.fill" : "pause.fill")
     }
+  }
+
+  private func finishedSpeed(_ title: String, value: Double) -> some View {
+    let display = WebsiteSpeedDisplay.rate(value)
+    return VStack(spacing: 4) {
+      Text(title)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      Text(display.value)
+        .font(.system(size: 30, weight: .bold, design: .rounded))
+        .monospacedDigit()
+        .foregroundStyle(tone.color)
+        .lineLimit(1)
+        .minimumScaleFactor(0.65)
+      Text(display.unit)
+        .font(.system(size: 11, weight: .semibold))
+        .foregroundStyle(.secondary)
+    }
+    .frame(maxWidth: .infinity)
   }
 
   private func actionLabel(_ text: String, systemImage: String) -> some View {
@@ -1934,15 +1999,7 @@ private struct NetworkProbeSphere: View {
   }
 
   private func speed(_ value: Double) -> String {
-    value >= 100 ? String(Int(value.rounded())) : String(format: "%.1f", value)
-  }
-
-  private func roundedNumber(_ value: Double) -> String {
-    String(Int(value.rounded()))
-  }
-
-  private func milliseconds(_ value: Double) -> String {
-    String(Int(value.rounded()))
+    WebsiteSpeedDisplay.rate(value).text
   }
 
   private var accessibilityLabel: String {
@@ -1961,11 +2018,15 @@ private struct NetworkProbeSphere: View {
     case .idle:
       return "准备就绪"
     case .networkRunning(let progress):
-      return "\(progress.stage.title)，已完成 \(progress.completedSamples) 项"
+      if progress.stage == .latency { return progress.stage.title }
+      let rate = WebsiteSpeedDisplay.rate(progress.stageValue).accessibilityText
+      return "\(progress.stage.title)，\(rate)"
     case .networkPaused(let progress):
       return "已暂停，当前阶段 \(progress.stage.title)"
     case .networkFinished(let result):
-      return "下载 \(speed(result.downloadMbps)) 兆每秒，上传 \(speed(result.uploadMbps)) 兆每秒"
+      let download = WebsiteSpeedDisplay.rate(result.downloadMbps).accessibilityText
+      let upload = WebsiteSpeedDisplay.rate(result.uploadMbps).accessibilityText
+      return "下载 \(download)，上传 \(upload)"
     case .codexRunning(let completedRounds, _):
       return "进行中，已完成 \(completedRounds) / 4 轮"
     case .codexFinished(let summary):

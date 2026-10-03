@@ -19,9 +19,23 @@ struct ReleaseNoteEntry: Equatable, Identifiable {
 
 enum ReleaseNotes {
   static let fallbackChangelogURL = URL(
-    string: "https://aixlg.com/mac/changelog/?v=1.0.21-238")!
+    string: "https://aixlg.com/mac/changelog/?v=1.0.22-239")!
 
   static let bundled: [ReleaseNoteEntry] = [
+    ReleaseNoteEntry(
+      version: "1.0.22",
+      build: 239,
+      dateText: "2026-10-03",
+      title: "测速变化看得见，反馈直接进群",
+      summary: "打开测试网速即可查看下载与上传的实时变化，速度单位自动换算；官网点击“加入交流群”即可查看二维码，反馈更方便。",
+      highlights: [
+        "打开测试网速，点击网络测速圆球即可直接开始；下载与上传按实时数据更新，等待数据时明确显示准备状态。",
+        "速度自动使用 B/s、KB/s、MB/s 或 GB/s，低速也能看得更清楚；测试中再点圆球可暂停或继续。",
+        "官网点击“加入交流群”即可查看、保存二维码；遇到问题或有新想法，可直接在群里交流。",
+      ],
+      previousHighlights: ["保留个人快捷键与设置，无需新增权限。测速反映当前线路到 Cloudflare 的表现，节点与 VPN 仍可能影响结果。"],
+      changelogURL: fallbackChangelogURL
+    ),
     ReleaseNoteEntry(
       version: "1.0.21",
       build: 238,
