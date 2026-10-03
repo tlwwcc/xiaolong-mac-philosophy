@@ -3,7 +3,7 @@ import Foundation
 import SwiftUI
 
 /// 客户界面只保留网页上的两个球。
-/// `international` 仅用于读取旧设置，统一迁回网络测速，不再出现在界面中。
+/// `international` 仅用于读取旧设置，映射为 Codex 连接，不再单列入口。
 enum NetworkProbeDirection: String, CaseIterable, Codable, Identifiable {
   case domestic
   case international
@@ -14,7 +14,7 @@ enum NetworkProbeDirection: String, CaseIterable, Codable, Identifiable {
   static let customerChoices: [NetworkProbeDirection] = [.domestic, .codex]
 
   static func customerFacing(_ stored: NetworkProbeDirection?) -> NetworkProbeDirection {
-    stored == .codex ? .codex : .domestic
+    stored == .domestic ? .domestic : .codex
   }
 
   var title: String {
@@ -29,7 +29,7 @@ enum NetworkProbeDirection: String, CaseIterable, Codable, Identifiable {
 
   var subtitle: String {
     switch self {
-    case .domestic, .international: return "下载、上传、延迟、抖动"
+    case .domestic, .international: return "直连 · 下载、上传、延迟"
     case .codex: return "当前网络 · 4 轮"
     }
   }
@@ -63,16 +63,17 @@ struct WebsiteSpeedMeasurementGroup: Equatable, Sendable {
   let bypassFinishThreshold: Bool
 }
 
-/// 当前生产版 aixlg.com/c 的 Cloudflare 测量序列。
+/// 同一测量窗口内并发传输，避免单个请求限制带宽采样。
 enum WebsiteSpeedPlan {
+  static let concurrentTransfers = 4
   static let bandwidthFinishRequestDuration: TimeInterval = 1.2
   static let bandwidthMinimumRequestDuration: TimeInterval = 0.01
   static let estimatedServerTimeMilliseconds: Double = 10
   static let maximumConsecutiveRetries = 4
   static let requestTimeout: TimeInterval = 15
   static let maximumWallClockDuration: TimeInterval = 75
-  static let maximumDownloadBytesIncludingRetries = 80_000_000
-  static let maximumUploadBytesIncludingRetries = 48_000_000
+  static let maximumDownloadBytesIncludingRetries = 320_000_000
+  static let maximumUploadBytesIncludingRetries = 192_000_000
   static let loadedLatencyThrottleNanoseconds: UInt64 = 400_000_000
 
   static let groups: [WebsiteSpeedMeasurementGroup] = [
@@ -87,7 +88,7 @@ enum WebsiteSpeedPlan {
     WebsiteSpeedMeasurementGroup(
       stage: .download, bytes: 8_000_000, count: 3, bypassFinishThreshold: false),
     WebsiteSpeedMeasurementGroup(
-      stage: .download, bytes: 16_000_000, count: 2, bypassFinishThreshold: false),
+      stage: .download, bytes: 8_000_000, count: 2, bypassFinishThreshold: false),
     WebsiteSpeedMeasurementGroup(
       stage: .upload, bytes: 500_000, count: 2, bypassFinishThreshold: false),
     WebsiteSpeedMeasurementGroup(
@@ -100,11 +101,11 @@ enum WebsiteSpeedPlan {
   static let maximumPlannedDownloadBytes =
     groups
     .filter { $0.stage == .download }
-    .reduce(0) { $0 + ($1.bytes * $1.count) }
+    .reduce(0) { $0 + ($1.bytes * $1.count * concurrentTransfers) }
   static let maximumPlannedUploadBytes =
     groups
     .filter { $0.stage == .upload }
-    .reduce(0) { $0 + ($1.bytes * $1.count) }
+    .reduce(0) { $0 + ($1.bytes * $1.count * concurrentTransfers) }
 
   static func endpoint(
     for stage: WebsiteSpeedStage,
@@ -387,10 +388,48 @@ struct WebsiteSpeedSampleLedger: Equatable, Sendable {
   }
 }
 
-private enum WebsiteSpeedRequestOutcome {
+enum WebsiteSpeedRequestOutcome: Equatable, Sendable {
   case success(bitsPerSecond: Double?, latencyMilliseconds: Double, duration: TimeInterval)
   case failure(String)
+  case httpFailure(Int)
   case cancelled
+}
+
+enum WebsiteSpeedBatch {
+  static func aggregate(
+    _ outcomes: [WebsiteSpeedRequestOutcome],
+    stage: WebsiteSpeedStage,
+    wallDuration: TimeInterval
+  ) -> WebsiteSpeedRequestOutcome {
+    guard !outcomes.isEmpty else { return .failure("没有取得测速样本") }
+    if outcomes.contains(.cancelled) { return .cancelled }
+    var transferredBits = 0.0
+    var latencies: [Double] = []
+    for outcome in outcomes {
+      switch outcome {
+      case .failure(let message): return .failure(message)
+      case .httpFailure(let status): return .httpFailure(status)
+      case .cancelled: return .cancelled
+      case .success(let rate, let latency, let duration):
+        latencies.append(latency)
+        if stage != .latency {
+          guard let rate, rate.isFinite, rate > 0, duration.isFinite, duration > 0 else {
+            return .failure("有效传输样本不足，请重试")
+          }
+          transferredBits += rate * duration
+        }
+      }
+    }
+    if stage == .latency { return outcomes[0] }
+    guard wallDuration.isFinite, wallDuration > 0, transferredBits.isFinite else {
+      return .failure("测速计时无效，请重试")
+    }
+    // 并发请求的速率不能直接相加；字节总量必须除以共同的实际耗时。
+    return .success(
+      bitsPerSecond: transferredBits / wallDuration,
+      latencyMilliseconds: NetworkProbeStatistics.median(latencies) ?? 0,
+      duration: wallDuration)
+  }
 }
 
 private protocol ProbeURLSessionTaskHandler: AnyObject {
@@ -715,8 +754,8 @@ private final class WebsiteSpeedRequest: ProbeURLSessionTaskHandler, @unchecked 
       complete(.failure("测速节点没有返回 HTTP 响应"))
       return
     }
-    if let failure = WebsiteSpeedHTTPStatus.failureDescription(response.statusCode) {
-      complete(.failure(failure))
+    if WebsiteSpeedHTTPStatus.failureDescription(response.statusCode) != nil {
+      complete(.httpFailure(response.statusCode))
       return
     }
 
@@ -814,7 +853,7 @@ final class WebsiteSpeedTestRunner: @unchecked Sendable {
   private var paused = false
   private var cancelled = false
   private var pauseEpoch = 0
-  private var currentRequest: WebsiteSpeedRequest?
+  private var currentRequests: [WebsiteSpeedRequest] = []
   private var currentLoadedLatencyRequest: WebsiteSpeedRequest?
 
   init(
@@ -827,6 +866,10 @@ final class WebsiteSpeedTestRunner: @unchecked Sendable {
     configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
     configuration.timeoutIntervalForRequest = WebsiteSpeedPlan.requestTimeout
     configuration.timeoutIntervalForResource = WebsiteSpeedPlan.requestTimeout
+    configuration.httpMaximumConnectionsPerHost = WebsiteSpeedPlan.concurrentTransfers + 1
+    // 带宽测试测本机直连；Codex 连接仍沿用用户的系统代理。
+    // 不改系统设置，VPN/透明网关仍由系统路由决定。
+    configuration.connectionProxyDictionary = [:]
     configuration.allowsExpensiveNetworkAccess = false
     configuration.allowsConstrainedNetworkAccess = false
     configuration.httpCookieAcceptPolicy = .never
@@ -839,10 +882,10 @@ final class WebsiteSpeedTestRunner: @unchecked Sendable {
     lock.lock()
     paused = true
     pauseEpoch &+= 1
-    let request = currentRequest
+    let requests = currentRequests
     let loadedLatencyRequest = currentLoadedLatencyRequest
     lock.unlock()
-    request?.cancel()
+    requests.forEach { $0.cancel() }
     loadedLatencyRequest?.cancel()
   }
 
@@ -856,10 +899,10 @@ final class WebsiteSpeedTestRunner: @unchecked Sendable {
     lock.lock()
     cancelled = true
     paused = false
-    let request = currentRequest
+    let requests = currentRequests
     let loadedLatencyRequest = currentLoadedLatencyRequest
     lock.unlock()
-    request?.cancel()
+    requests.forEach { $0.cancel() }
     loadedLatencyRequest?.cancel()
   }
 
@@ -914,21 +957,30 @@ final class WebsiteSpeedTestRunner: @unchecked Sendable {
           return .failure(
             "测速已超过 \(Int(WebsiteSpeedPlan.maximumWallClockDuration)) 秒，已自动停止")
         }
-        guard transferBudget.reserve(stage: group.stage, bytes: group.bytes) else {
+        let transferCount = group.stage == .latency ? 1 : WebsiteSpeedPlan.concurrentTransfers
+        guard transferBudget.reserve(stage: group.stage, bytes: group.bytes * transferCount) else {
           await stopLoadedLatency(loadedLatencyTask)
           return .failure("测速已达到本次流量上限，已自动停止")
         }
 
-        let request = WebsiteSpeedRequest(
-          sessionPool: sessionPool,
-          stage: group.stage,
-          bytes: group.bytes,
-          timeout: requestTimeout)
-        let requestPauseEpoch = setCurrentRequest(request)
-        let outcome = await request.run()
-        let disposition = finishCurrentRequest(
-          request,
-          startedAtPauseEpoch: requestPauseEpoch)
+        let requests = (0..<transferCount).map { _ in
+          WebsiteSpeedRequest(
+            sessionPool: sessionPool,
+            stage: group.stage,
+            bytes: group.bytes,
+            timeout: requestTimeout)
+        }
+        let requestPauseEpoch = setCurrentRequests(requests)
+        let batchStartedAt = now()
+        let outcomes = await withTaskGroup(of: WebsiteSpeedRequestOutcome.self) { batch in
+          for request in requests { batch.addTask { await request.run() } }
+          var results: [WebsiteSpeedRequestOutcome] = []
+          for await outcome in batch { results.append(outcome) }
+          return results
+        }
+        let outcome = WebsiteSpeedBatch.aggregate(
+          outcomes, stage: group.stage, wallDuration: now() - batchStartedAt)
+        let disposition = finishCurrentRequests(startedAtPauseEpoch: requestPauseEpoch)
 
         if disposition == .cancel || Task.isCancelled {
           await stopLoadedLatency(loadedLatencyTask)
@@ -943,8 +995,13 @@ final class WebsiteSpeedTestRunner: @unchecked Sendable {
 
         switch outcome {
         case .cancelled:
-          // 暂停会取消当前样本；即使用户很快继续，也应重试当前样本而不是结束整轮。
-          continue
+          // 用户暂停已由 pauseEpoch 接续；其他取消不能无休止消耗流量预算。
+          await stopLoadedLatency(loadedLatencyTask)
+          return .failure("网络中断了测速，请重试")
+        case .httpFailure(let status):
+          if status == 429 || status >= 500, retryPolicy.registerFailure() { continue }
+          await stopLoadedLatency(loadedLatencyTask)
+          return .failure(WebsiteSpeedHTTPStatus.failureDescription(status) ?? "测速节点响应异常")
         case .failure(let message):
           if retryPolicy.registerFailure() {
             continue
@@ -1016,22 +1073,19 @@ final class WebsiteSpeedTestRunner: @unchecked Sendable {
     return (cancelled, paused)
   }
 
-  private func setCurrentRequest(_ request: WebsiteSpeedRequest) -> Int {
+  private func setCurrentRequests(_ requests: [WebsiteSpeedRequest]) -> Int {
     lock.lock()
-    currentRequest = request
+    currentRequests = requests
     let requestPauseEpoch = pauseEpoch
     let shouldCancel = cancelled || paused
     lock.unlock()
-    if shouldCancel { request.cancel() }
+    if shouldCancel { requests.forEach { $0.cancel() } }
     return requestPauseEpoch
   }
 
-  private func finishCurrentRequest(
-    _ request: WebsiteSpeedRequest,
-    startedAtPauseEpoch: Int
-  ) -> WebsiteSpeedRequestDisposition {
+  private func finishCurrentRequests(startedAtPauseEpoch: Int) -> WebsiteSpeedRequestDisposition {
     lock.lock()
-    if currentRequest === request { currentRequest = nil }
+    currentRequests = []
     let disposition = WebsiteSpeedRequestDisposition.resolve(
       startedAtPauseEpoch: startedAtPauseEpoch,
       currentPauseEpoch: pauseEpoch,
@@ -1063,6 +1117,9 @@ final class WebsiteSpeedTestRunner: @unchecked Sendable {
           continue
         case .failure:
           if retryPolicy.registerFailure() { continue }
+          return
+        case .httpFailure(let status):
+          if status == 429 || status >= 500, retryPolicy.registerFailure() { continue }
           return
         case .success:
           retryPolicy.registerSuccess()
@@ -1573,7 +1630,7 @@ struct CodexNetworkProbeWindowRoot: View {
   }
 
   private var methodNote: some View {
-    Text("网速测试会按当前线路自适应取样；Codex 只检测 OpenAI 连通与响应，不运行任务。")
+    Text("网速直连 Cloudflare，受节点和 VPN 影响。Codex 只检测 OpenAI 连通与响应，不运行任务，沿用当前线路。")
       .font(.system(size: 11))
       .foregroundStyle(.secondary)
       .multilineTextAlignment(.center)

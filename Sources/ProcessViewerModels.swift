@@ -1,5 +1,29 @@
 import Foundation
 
+enum ProcessViewerApplicationPolicy {
+  static func includes(
+    bundlePath: String?, executablePath: String?, bundleExecutablePath: String?,
+    activationAllowed: Bool, isCurrentUser: Bool
+  ) -> Bool {
+    guard let bundlePath, let executablePath, let bundleExecutablePath,
+      activationAllowed, isCurrentUser
+    else { return false }
+    return bundlePath.hasSuffix(".app")
+      && !bundlePath.contains(".app/Contents/")
+      && !bundlePath.hasPrefix("/System/Library/")
+      && URL(fileURLWithPath: executablePath).resolvingSymlinksInPath().standardizedFileURL
+        == URL(fileURLWithPath: bundleExecutablePath).resolvingSymlinksInPath().standardizedFileURL
+  }
+
+  static func protectsSystemExecutable(path: String?, isUserApplication: Bool) -> Bool {
+    guard let path else { return false }
+    // Calculator and other ordinary built-in apps live here; their exact main
+    // executable has already been checked. System services remain protected.
+    if isUserApplication && path.hasPrefix("/System/Applications/") { return false }
+    return path.hasPrefix("/System/") || path.hasPrefix("/usr/libexec/")
+  }
+}
+
 struct ProcessStableIdentity: Hashable, Identifiable {
   let pid: pid_t
   let startTimeMicroseconds: UInt64
@@ -37,6 +61,7 @@ struct ProcessViewerProcess: Identifiable {
   let state: ProcessViewerRunState
   let protectionReason: String?
   var actionState: ProcessViewerActionState = .idle
+  var isUserApplication: Bool = false
 
   var id: String { identity.id }
   var canQuit: Bool { protectionReason == nil && actionState != .quitting }
@@ -55,7 +80,7 @@ struct ProcessViewerProcess: Identifiable {
     "cfprefsd", "distnoted", "opendirectoryd", "powerd", "syslogd", "securityd", "trustd",
     "mds", "mdworker", "mdworker_shared", "corespotlightd", "locationd", "bluetoothd",
     "airportd", "sharingd", "nsurlsessiond", "symptomsd", "analyticsd", "accountsd",
-    "cloudd", "bird", "photolibraryd", "softwareupdated", "timed", "notifyd", "hidd"
+    "cloudd", "bird", "photolibraryd", "softwareupdated", "timed", "notifyd", "hidd",
   ]
 }
 

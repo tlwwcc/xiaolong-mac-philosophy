@@ -108,6 +108,7 @@ final class BoundedProcessExecution: @unchecked Sendable {
   private var launchedProcessID: pid_t?
   private var isolatedProcessGroupID: pid_t?
   private var rootProcessTerminated = false
+  private var rootCleanupScheduled = false
   private var standardOutputReachedEOF = false
   private var standardErrorReachedEOF = false
   private var terminationTarget: BoundedProcessTerminationTarget?
@@ -310,9 +311,12 @@ final class BoundedProcessExecution: @unchecked Sendable {
     rootProcessTerminated = true
     stateLock.unlock()
 
-    // A shell can exit successfully while a background descendant continues. Contain any
-    // surviving member of the exact launch group before reporting the root's result.
+    // EOF callbacks can race this callback after rootProcessTerminated becomes true.
+    // Do not deliver completion until the exact group's cleanup has been scheduled.
     beginTerminationSequenceIfNeeded()
+    stateLock.lock()
+    rootCleanupScheduled = true
+    stateLock.unlock()
     scheduleFinishFallbackIfNeeded()
     finishIfReady()
   }
@@ -397,14 +401,14 @@ final class BoundedProcessExecution: @unchecked Sendable {
     stateLock.lock()
     let ready =
       launchCompleted && rootProcessTerminated && standardOutputReachedEOF
-      && standardErrorReachedEOF
+      && standardErrorReachedEOF && rootCleanupScheduled
     stateLock.unlock()
     if ready { finish() }
   }
 
   private func finish() {
     stateLock.lock()
-    guard !finished else {
+    guard !finished, !rootProcessTerminated || rootCleanupScheduled else {
       stateLock.unlock()
       return
     }

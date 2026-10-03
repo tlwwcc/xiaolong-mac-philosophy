@@ -63,12 +63,12 @@ final class ProcessViewerController: ObservableObject {
   }
 
   func requestForceQuit(_ process: ProcessViewerProcess) {
-    guard process.actionState.allowsForce else { return }
+    guard process.canQuit else { return }
     performTermination(process, force: true)
   }
 
   private func performTermination(_ process: ProcessViewerProcess, force: Bool) {
-    guard process.canQuit || (force && process.actionState.allowsForce) else { return }
+    guard process.canQuit else { return }
     mutate(process.identity) { $0.actionState = .quitting }
     Task {
       let result = await sampler.terminate(identity: process.identity, force: force)
@@ -188,7 +188,8 @@ actor ProcessViewerSampler {
         cpuPercent: cpu,
         residentBytes: raw.residentBytes,
         state: raw.state,
-        protectionReason: raw.protectionReason)
+        protectionReason: raw.protectionReason,
+        isUserApplication: raw.isUserApplication)
       if let old = previous[pid], old.identity == row.identity { row.actionState = old.actionState }
       rows.append(row)
     }
@@ -236,6 +237,7 @@ actor ProcessViewerSampler {
     let residentBytes: UInt64
     let state: ProcessViewerRunState
     let protectionReason: String?
+    let isUserApplication: Bool
   }
 
   private func listAllPIDs() -> [pid_t] {
@@ -256,7 +258,8 @@ actor ProcessViewerSampler {
 
     var pathBuffer = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
     let pathLength = proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count))
-    let path = pathLength > 0
+    let path =
+      pathLength > 0
       ? String(
         decoding: pathBuffer.prefix(Int(pathLength)).prefix { $0 != 0 }
           .map { UInt8(bitPattern: $0) },
@@ -280,7 +283,14 @@ actor ProcessViewerSampler {
     let resident = usageResult == 0 ? usage.ri_resident_size : 0
     let uid = uid_t(bsd.pbi_uid)
     let start = UInt64(bsd.pbi_start_tvsec) * 1_000_000 + UInt64(bsd.pbi_start_tvusec)
-    let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+    let application = NSRunningApplication(processIdentifier: pid)
+    let bundle = application?.bundleIdentifier
+    let applicationPath = application?.bundleURL?.path
+    let isUserApplication = ProcessViewerApplicationPolicy.includes(
+      bundlePath: applicationPath, executablePath: path,
+      bundleExecutablePath: application?.bundleURL.flatMap { Bundle(url: $0)?.executableURL?.path },
+      activationAllowed: application != nil && application?.activationPolicy != .prohibited,
+      isCurrentUser: uid == getuid())
     let executableIdentity = path ?? bundle ?? ""
     let identity = ProcessStableIdentity(
       pid: pid,
@@ -288,11 +298,12 @@ actor ProcessViewerSampler {
       executableIdentity: executableIdentity,
       uid: uid)
     let protection = protectionReason(
-      pid: pid, uid: uid, path: path, identityComplete: start > 0 && !executableIdentity.isEmpty)
+      pid: pid, uid: uid, path: path, identityComplete: start > 0 && !executableIdentity.isEmpty,
+      isUserApplication: isUserApplication)
     let state: ProcessViewerRunState = bsd.pbi_status == UInt32(SRUN) ? .running : .sleeping
     return RawProcess(
       identity: identity,
-      name: displayName,
+      name: isUserApplication ? (application?.localizedName ?? displayName) : displayName,
       path: path,
       bundleID: bundle,
       ownerName: userName(uid: uid),
@@ -300,10 +311,13 @@ actor ProcessViewerSampler {
       totalCPUTime: totalCPU,
       residentBytes: resident,
       state: state,
-      protectionReason: protection)
+      protectionReason: protection,
+      isUserApplication: isUserApplication)
   }
 
-  private func protectionReason(pid: pid_t, uid: uid_t, path: String?, identityComplete: Bool)
+  private func protectionReason(
+    pid: pid_t, uid: uid_t, path: String?, identityComplete: Bool, isUserApplication: Bool
+  )
     -> String?
   {
     if pid <= 1 || pid == ProcessInfo.processInfo.processIdentifier {
@@ -312,7 +326,9 @@ actor ProcessViewerSampler {
     }
     guard identityComplete else { return "无法确认进程身份，已禁止操作。" }
     guard uid == getuid() else { return "权限不足，未执行任何操作。" }
-    if path?.hasPrefix("/System/") == true || path?.hasPrefix("/usr/libexec/") == true {
+    if ProcessViewerApplicationPolicy.protectsSystemExecutable(
+      path: path, isUserApplication: isUserApplication)
+    {
       return "系统关键进程，不能在这里结束。"
     }
     if let executable = path.map({ URL(fileURLWithPath: $0).lastPathComponent }),

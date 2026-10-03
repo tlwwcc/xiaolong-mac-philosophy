@@ -56,7 +56,7 @@ struct ProcessViewerDetailView: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var query = ""
   @State private var sort: ProcessViewerSort = .cpu
-  @AppStorage("processViewerShowSystemProcessesV1") private var showSystemProcesses = false
+  @State private var showSystemProcesses = false
   @State private var expandedIdentity: ProcessStableIdentity?
   @State private var quitCandidate: ProcessViewerProcess?
   @State private var forceCandidate: ProcessViewerProcess?
@@ -72,7 +72,7 @@ struct ProcessViewerDetailView: View {
         || process.executablePath?.localizedCaseInsensitiveContains(trimmed) == true
         || String(process.identity.pid).hasPrefix(trimmed)
       guard matchesSearch else { return false }
-      return showSystemProcesses || !trimmed.isEmpty || !process.isKnownMacOSBackgroundProcess
+      return showSystemProcesses || process.isUserApplication
     }
     return filtered.sorted { lhs, rhs in
       let ordered: Bool?
@@ -101,7 +101,7 @@ struct ProcessViewerDetailView: View {
           toolbar(compact: proxy.size.width < 760)
           if hiddenSystemProcessCount > 0 {
             Label(
-              "已隐藏 \(hiddenSystemProcessCount) 个 macOS 系统后台；搜索或打开“显示系统后台”即可查看。",
+              "当前只看运行软件，包含后台软件。需要时可切换“全部进程”。",
               systemImage: "line.3.horizontal.decrease.circle"
             )
             .font(.caption)
@@ -172,7 +172,7 @@ struct ProcessViewerDetailView: View {
     HStack(alignment: .top) {
       VStack(alignment: .leading, spacing: 4) {
         Text("进程查看器").font(.system(size: 20, weight: .semibold))
-        Text("像“照妖镜”一样把后台占用说清楚，但它不是杀毒软件。")
+        Text("找到正在运行的软件，卡住时可强制结束。")
           .font(.system(size: 12)).foregroundStyle(.secondary)
         Label(statusText, systemImage: controller.isPaused ? "pause.circle" : "waveform.path.ecg")
           .font(.caption).foregroundStyle(.secondary)
@@ -295,7 +295,7 @@ struct ProcessViewerDetailView: View {
   }
 
   private var searchField: some View {
-    TextField("搜索名称、Bundle ID 或 PID", text: $query)
+    TextField(showSystemProcesses ? "搜索进程名称或 PID" : "搜索运行软件", text: $query)
       .textFieldStyle(.roundedBorder)
       .focused($searchFocused)
       .onReceive(NotificationCenter.default.publisher(for: .processViewerFocusSearch)) { _ in
@@ -306,9 +306,9 @@ struct ProcessViewerDetailView: View {
 
   private var toolbarControls: some View {
     Group {
-      Toggle("显示系统后台", isOn: $showSystemProcesses)
+      Toggle("全部进程", isOn: $showSystemProcesses)
         .toggleStyle(.switch)
-        .help("默认隐藏 macOS 自带后台服务；你主动打开的 Apple 应用仍会显示。")
+        .help("默认只显示运行软件，包括后台和菜单栏软件；打开后查看所有可读取进程。")
       Picker("排序", selection: $sort) {
         ForEach(ProcessViewerSort.allCases) { Text($0.rawValue).tag($0) }
       }.labelsHidden().frame(maxWidth: 160)
@@ -340,7 +340,7 @@ struct ProcessViewerDetailView: View {
     guard !showSystemProcesses,
       query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     else { return 0 }
-    return controller.processes.filter(\.isKnownMacOSBackgroundProcess).count
+    return controller.processes.filter { !$0.isUserApplication }.count
   }
 
   private func processList(compact: Bool) -> some View {
@@ -365,7 +365,7 @@ struct ProcessViewerDetailView: View {
             Text("CPU").frame(width: 88, alignment: .trailing)
             Text("内存").frame(width: 104, alignment: .trailing)
             Text("状态").frame(width: 116, alignment: .leading)
-            Text("").frame(width: 44)
+            Text("").frame(width: 130)
           }
           .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
           .padding(.horizontal, 8).padding(.vertical, 7)
@@ -381,7 +381,7 @@ struct ProcessViewerDetailView: View {
         HStack {
           processIdentity(process)
           Spacer()
-          processMenu(process)
+          processActions(process)
         }
         Text("CPU \(percent(process.cpuPercent)) · 内存 \(bytes(process.residentBytes))")
           .font(.callout).monospacedDigit()
@@ -393,7 +393,7 @@ struct ProcessViewerDetailView: View {
           Text(bytes(process.residentBytes)).monospacedDigit().frame(
             width: 104, alignment: .trailing)
           processStatus(process).frame(width: 116, alignment: .leading)
-          processMenu(process).frame(width: 44)
+          processActions(process).frame(width: 130)
         }
       }
       if expandedIdentity == process.identity { processDetails(process) }
@@ -456,6 +456,16 @@ struct ProcessViewerDetailView: View {
     }.font(.caption).foregroundStyle(.secondary).lineLimit(2)
   }
 
+  private func processActions(_ process: ProcessViewerProcess) -> some View {
+    HStack(spacing: 4) {
+      Button("强制结束", role: .destructive) { forceCandidate = process }
+        .disabled(!process.canQuit)
+        .help(process.protectionReason ?? "强制结束\(process.name)，可能丢失未保存内容")
+        .accessibilityLabel("强制结束\(process.name)")
+      processMenu(process)
+    }
+  }
+
   private func processMenu(_ process: ProcessViewerProcess) -> some View {
     Menu {
       Button(expandedIdentity == process.identity ? "收起详情" : "展开详情") {
@@ -464,9 +474,6 @@ struct ProcessViewerDetailView: View {
       Divider()
       Button("退出进程…", role: .destructive) { quitCandidate = process }
         .disabled(!process.canQuit)
-      if process.actionState.allowsForce {
-        Button("强制结束…", role: .destructive) { forceCandidate = process }
-      }
       if let reason = process.protectionReason { Text(reason) }
     } label: {
       Image(systemName: "ellipsis.circle").frame(width: 44, height: 44)

@@ -1338,10 +1338,9 @@ private let moduleOrder = [
 
 private let applicationYoumuID = "youmu"
 private let applicationPijuanPDFID = "pijuan-pdf"
-private let applicationFeatureShortcutsID = "feature-shortcuts"
 private let applicationPhrasesID = AppModel.phrasesPluginID
 private let applicationClipboardHistoryID = "clipboard-history"
-private let applicationCenterItemCount = 16
+private let applicationCenterItemCount = 11
 
 private func isApplicationCenterModule(_ module: String) -> Bool {
   switch module {
@@ -4250,19 +4249,6 @@ struct PluginCenterView: View {
         isEnabled: nil,
         isFeatured: true),
       ApplicationCenterItem(
-        id: applicationFeatureShortcutsID,
-        name: "功能快捷键",
-        purpose: "把重复动作固定成顺手的一键",
-        valueDescription: "先用默认配置；熟悉后再按自己的习惯增删和改键。",
-        systemImage: "keyboard.badge.ellipsis",
-        tint: indigo,
-        category: "输入效率",
-        mode: .configuration,
-        statusText: "\(model.enabledCount) 项已启用",
-        statusImage: "bolt.fill",
-        statusColor: teal,
-        isEnabled: nil),
-      ApplicationCenterItem(
         id: "caps-core",
         name: "Caps 核心键",
         purpose: "把 Caps Lock 变成左手控制台",
@@ -4518,14 +4504,6 @@ struct PluginCenterView: View {
         YoumuApplicationDetailView()
       case applicationPijuanPDFID:
         PijuanApplicationDetailView()
-      case applicationFeatureShortcutsID:
-        OnDemandApplicationDetailView(
-          productName: item.name,
-          headline: "先用默认配置完成一次",
-          description: "从打开 App、窗口左右分屏或复制粘贴开始。默认动作可以直接用，熟悉后再调整按键。"
-        ) {
-          model.selectedModuleName = moduleHotkeys
-        }
       case applicationPhrasesID:
         PhrasePanelView()
       case applicationClipboardHistoryID:
@@ -5035,46 +5013,15 @@ private struct YoumuApplicationDetailView: View {
   @EnvironmentObject private var model: AppModel
 
   var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 16) {
-        VStack(alignment: .leading, spacing: 7) {
-          Text("看懂屏幕内容")
-            .font(.title3.weight(.semibold))
-            .foregroundStyle(ink)
-          Text("调整截图、朗读与翻译。")
-            .font(.body)
-            .foregroundStyle(muted)
-        }
-
-        ApplicationWindowOpenButton(productName: "游目") {
-          model.openYoumuControlCenter()
-        }
-
-        HStack(spacing: 10) {
-          Image(systemName: "menubar.rectangle")
-            .foregroundStyle(accent)
-            .accessibilityHidden(true)
-          Text("快捷操作可从菜单栏调用，快捷键在“功能快捷键”统一管理。")
-            .font(.callout)
-            .foregroundStyle(muted)
-            .fixedSize(horizontal: false, vertical: true)
-          Spacer(minLength: 8)
-          Button {
-            model.openFeatureShortcutManager(
-              commandID: YoumuFeatureShortcutCatalog.quickSnapshot.id)
-          } label: {
-            Label("管理快捷键", systemImage: "keyboard")
-          }
-          .buttonStyle(.bordered)
-          .controlSize(.small)
-          .accessibilityLabel("在功能快捷键中管理游目快捷键")
-        }
-        .padding(.top, 2)
+    Group {
+      if let settings = model.makeYoumuSettingsViewHandler?() {
+        settings
+      } else {
+        Text("游目设置暂不可用，请重新打开软件。")
+          .foregroundStyle(.secondary)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
-      .padding(22)
-      .frame(maxWidth: 680, alignment: .topLeading)
     }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 }
 
@@ -5093,8 +5040,18 @@ private struct PijuanApplicationDetailView: View {
             .foregroundStyle(muted)
         }
 
-        ApplicationWindowOpenButton(productName: "披卷") {
-          model.showPijuanPDFFeature()
+        HStack(spacing: 12) {
+          Button {
+            model.showPijuanPDFFeature()
+          } label: {
+            Label("打开披卷", systemImage: "doc.richtext")
+          }
+          .buttonStyle(.borderedProminent)
+          Button {
+            model.openPijuanPDFShortcutManager()
+          } label: {
+            Label("管理快捷键", systemImage: "keyboard")
+          }
         }
 
         FileAssociationControlCard(
@@ -7245,6 +7202,10 @@ struct AboutPanelView: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("小龙哥 Mac 哲学。\(model.appVersionAccessibilityText)")
+      }
+
+      SettingsGroup(title: "👋 让小龙哥认识你") {
+        FriendProfileSettingsView()
       }
 
       SettingsGroup(title: "使用量统计") {

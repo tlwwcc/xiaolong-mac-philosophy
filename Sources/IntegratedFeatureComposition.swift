@@ -113,9 +113,7 @@ func runInstalledTranslationSmoke() async -> [String: String] {
           action: .open(YoumuFeatureIDs.controlWindow)
         ) {
           await MainActor.run {
-            runtime.openControlWindow { commandID in
-              model.executeFeatureCommand(commandID: commandID)
-            }
+            model.openYoumuControlCenter()
           }
         }
       )
@@ -150,8 +148,8 @@ func runInstalledTranslationSmoke() async -> [String: String] {
       model?.showYoumuFeatureHandler = { [weak self] in
         self?.dispatchYoumu(commandID: YoumuFeatureIDs.quickSnapshot.rawValue)
       }
-      model?.openYoumuControlCenterHandler = { [weak self] in
-        self?.openYoumuControlCenter()
+      model?.makeYoumuSettingsViewHandler = { [weak self] in
+        self?.youmuRuntime.makeEmbeddedSettingsView()
       }
       model?.showPijuanPDFFeatureHandler = { [weak self] in
         self?.showPijuanPDF()
@@ -223,28 +221,6 @@ func runInstalledTranslationSmoke() async -> [String: String] {
         model?.statusMessage = reason
       case .permissionDenied(let permissionID, let reason):
         handleYoumuPermissionDenial(permissionID, reason: reason)
-      }
-    }
-
-    private func openYoumuControlCenter() {
-      Task { @MainActor [weak self] in
-        guard let self else { return }
-        do {
-          let result = try await dispatcher.dispatch(
-            featureID: YoumuFeatureIDs.feature,
-            action: .open(YoumuFeatureIDs.controlWindow)
-          )
-          switch result {
-          case .executed:
-            model?.statusMessage = "已打开游目。"
-          case .denied(let reason), .entitlementDenied(_, let reason):
-            model?.statusMessage = reason
-          case .permissionDenied(let permissionID, let reason):
-            handleYoumuPermissionDenial(permissionID, reason: reason)
-          }
-        } catch {
-          model?.statusMessage = "游目未能打开：\(error.localizedDescription)"
-        }
       }
     }
 

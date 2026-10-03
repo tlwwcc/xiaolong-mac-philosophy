@@ -59,7 +59,7 @@ final class YoumuControlWindowController: NSObject, NSWindowDelegate {
   }
 }
 
-private struct YoumuControlView: View {
+struct YoumuControlView: View {
   private enum Pane: String, CaseIterable, Identifiable {
     case general
     case translation
@@ -98,10 +98,12 @@ private struct YoumuControlView: View {
 
   let canOpenShortcutManager: Bool
   let openShortcutManager: @MainActor () -> Void
+  let embedded: Bool
 
   init(
     canOpenShortcutManager: Bool,
-    openShortcutManager: @escaping @MainActor () -> Void
+    openShortcutManager: @escaping @MainActor () -> Void,
+    embedded: Bool = false
   ) {
     let settings = AppSettings.load()
     _settings = State(initialValue: settings)
@@ -111,33 +113,62 @@ private struct YoumuControlView: View {
         ?? Self.customPresetName)
     self.canOpenShortcutManager = canOpenShortcutManager
     self.openShortcutManager = openShortcutManager
+    self.embedded = embedded
   }
 
   var body: some View {
-    HStack(spacing: 0) {
-      sidebar
-
-      Divider()
-
-      VStack(spacing: 0) {
-        detailHeader
-        Divider()
-        detailPane
+    Group {
+      if embedded {
+        VStack(spacing: 0) {
+          HStack(spacing: 12) {
+            Picker("游目设置", selection: $selectedPane) {
+              Text("通用").tag(Pane.general)
+              Text("翻译引擎").tag(Pane.translation)
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 280)
+            Spacer(minLength: 0)
+            if canOpenShortcutManager {
+              Button(action: openShortcutManager) {
+                Label("快捷键", systemImage: "keyboard")
+              }
+              .help("在功能快捷键中管理游目按键")
+            }
+          }
+          .padding(16)
+          Divider()
+          detailPane.frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+      } else {
+        HStack(spacing: 0) {
+          sidebar
+          Divider()
+          VStack(spacing: 0) {
+            detailHeader
+            Divider()
+            detailPane.frame(maxWidth: .infinity, maxHeight: .infinity)
+          }
           .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
       }
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-    .frame(minWidth: 680, minHeight: 520)
-    .onReceive(NotificationCenter.default.publisher(
-      for: Notification.Name("AIXLGManagedConfigurationDidRestore"))) { _ in
-        onlineTestTask?.cancel()
-        onlineTestID = nil
-        settings = AppSettings.load()
-        draftConfig = settings.translationConfig
-        selectedPreset = Self.matchingPreset(for: draftConfig) ?? Self.customPresetName
-        previousAPIOrigin = (try? TranslationConfig.normalizedEndpoint(draftConfig.apiEndpoint))
-          .flatMap { endpoint in endpoint.host.map { "\($0):\(endpoint.port ?? 443)" } }
-        onlineStatus = .idle
+    .frame(minWidth: embedded ? 0 : 680, minHeight: embedded ? 0 : 520)
+    .onDisappear {
+      onlineTestTask?.cancel()
+      onlineTestID = nil
+    }
+    .onReceive(
+      NotificationCenter.default.publisher(
+        for: Notification.Name("AIXLGManagedConfigurationDidRestore"))
+    ) { _ in
+      onlineTestTask?.cancel()
+      onlineTestID = nil
+      settings = AppSettings.load()
+      draftConfig = settings.translationConfig
+      selectedPreset = Self.matchingPreset(for: draftConfig) ?? Self.customPresetName
+      previousAPIOrigin = (try? TranslationConfig.normalizedEndpoint(draftConfig.apiEndpoint))
+        .flatMap { endpoint in endpoint.host.map { "\($0):\(endpoint.port ?? 443)" } }
+      onlineStatus = .idle
     }
   }
 
@@ -342,20 +373,25 @@ private struct YoumuControlView: View {
       }
       if settings.translationBackend == .onlineAPI || settings.translationBackend == .automatic {
         Section("在线 API") {
-          TextField("API 地址", text: $draftConfig.apiEndpoint,
-                    prompt: Text("粘贴服务商的 API / Base URL"))
-            .textFieldStyle(.roundedBorder)
-            .onChange(of: draftConfig.apiEndpoint) { _ in endpointChanged() }
-          SecureField("API 密钥", text: $draftConfig.apiKey,
-                      prompt: Text("服务商需要时填写"))
+          TextField(
+            "API 地址", text: $draftConfig.apiEndpoint,
+            prompt: Text("粘贴服务商的 API / Base URL")
+          )
+          .textFieldStyle(.roundedBorder)
+          .onChange(of: draftConfig.apiEndpoint) { _ in endpointChanged() }
+          SecureField(
+            "API 密钥", text: $draftConfig.apiKey,
+            prompt: Text("服务商需要时填写"))
 
           Text("常见服务自动补齐接口和模型；密钥只保存在 macOS 钥匙串。")
             .font(.caption).foregroundStyle(.secondary)
 
           if needsCustomModel {
-            TextField("模型名称", text: $draftConfig.modelName,
-                      prompt: Text("复制服务商提供的模型名称"))
-              .textFieldStyle(.roundedBorder)
+            TextField(
+              "模型名称", text: $draftConfig.modelName,
+              prompt: Text("复制服务商提供的模型名称")
+            )
+            .textFieldStyle(.roundedBorder)
           }
 
           DisclosureGroup("模型与更多设置", isExpanded: $showAdvancedTranslationSettings) {
@@ -449,15 +485,17 @@ private struct YoumuControlView: View {
 
   private func endpointChanged() {
     if case .success = onlineStatus,
-       (try? TranslationConfig.normalizedEndpoint(draftConfig.apiEndpoint).absoluteString)
-        == settings.translationConfig.apiEndpoint {
+      (try? TranslationConfig.normalizedEndpoint(draftConfig.apiEndpoint).absoluteString)
+        == settings.translationConfig.apiEndpoint
+    {
       return
     }
     onlineTestTask?.cancel()
     onlineTestID = nil
     onlineStatus = .idle
     guard let endpoint = try? TranslationConfig.normalizedEndpoint(draftConfig.apiEndpoint),
-          let host = endpoint.host else { return }
+      let host = endpoint.host
+    else { return }
     let origin = "\(host):\(endpoint.port ?? 443)"
     if let previousAPIOrigin, previousAPIOrigin != origin {
       // 地址换到另一家服务时绝不沿用旧家的密钥或模型。

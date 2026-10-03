@@ -97,8 +97,8 @@
     },
     "IntegratedFeatures/YoumuFeature/Sources/YoumuFeature/Control/YoumuControlWindow.swift": {
       "executable": false,
-      "sha256": "5738e0bd305736e1cfff77b198d1bca52e958a4b8884d890a51074f42150c253",
-      "size": 21613
+      "sha256": "dd895783a6df8a1a7a761f4eee90f166d03b03bbcc49314b426d96f0501074be",
+      "size": 22642
     },
     "IntegratedFeatures/YoumuFeature/Sources/YoumuFeature/Control/YoumuTranslationSetup.swift": {
       "executable": false,
@@ -337,8 +337,8 @@
     },
     "IntegratedFeatures/YoumuFeature/Sources/YoumuFeature/YoumuFeatureRuntime.swift": {
       "executable": false,
-      "sha256": "68a06175af29ae3c94794f240d8c21196159d4a13123ca6648e7a8a5b36940ef",
-      "size": 8571
+      "sha256": "440ec8e3ad7de03dc1b1b75351af90fc65df2ae6eee3741be91c5413614ac9c9",
+      "size": 8851
     },
     "IntegratedFeatures/YoumuFeature/Sources/YoumuFeature/YoumuTranslationDiagnostics.swift": {
       "executable": false,
@@ -467,7 +467,7 @@
     },
     "Resources/Info.plist": {
       "executable": false,
-      "sha256": "0f8ed257b110194601e17ac4e37421449313826e4b49672601e57400250aee43",
+      "sha256": "52bb22a671a5c97db5d5c4ceb22aa362e50e9549ef16bf7ce26b0fd4944a4bfc",
       "size": 2719
     },
     "Resources/PijuanAppIcon.png": {
@@ -537,8 +537,8 @@
     },
     "Sources/AppDelegate.swift": {
       "executable": false,
-      "sha256": "3f848c5d7b3155b39a78ed2f5c6f5a77a4e3a53d8dec2520e3b6cb5afd3478fc",
-      "size": 91008
+      "sha256": "2bc304325d49f51eab6d3cf6e216a66c8aefab60acca855016d4b20012e0c4c1",
+      "size": 91261
     },
     "Sources/AppDiagnostics.swift": {
       "executable": false,
@@ -547,13 +547,13 @@
     },
     "Sources/AppLauncher.swift": {
       "executable": false,
-      "sha256": "b6eac95af60c4e4cb5ec70b7393c9cf680625aeb9745d0021f3cc9e1fe459dde",
-      "size": 55677
+      "sha256": "e135d4ab250e743ac2597bd2ccf4e251a42785490a6a9954110f924aba90ecf7",
+      "size": 55863
     },
     "Sources/AppModel.swift": {
       "executable": false,
-      "sha256": "fc5e87c392e4be6665874d5b96d989b406fac040c7abae0564461aa6237454fb",
-      "size": 374753
+      "sha256": "e88ecd75de521b1fb17794484ec4e9d4c6676c3e10422d3129c298d9da8ac235",
+      "size": 375049
     },
     "Sources/AppRuntimeIdentity.swift": {
       "executable": false,
@@ -572,8 +572,8 @@
     },
     "Sources/AppViews.swift": {
       "executable": false,
-      "sha256": "10a2f259a26f5fa2a06b521475120a8af4287e224735eef22a5501b04dbf6b73",
-      "size": 320601
+      "sha256": "d58eeb66b73f1594802ab30cf787182cea86e3df6d296af208538a9b02216afc",
+      "size": 318870
     },
     "Sources/AppVisualStyle.swift": {
       "executable": false,
@@ -667,8 +667,8 @@
     },
     "Sources/CodexNetworkProbe.swift": {
       "executable": false,
-      "sha256": "fb3afeed1b71ea158a9d97d1b9bac173b1818e569943c633980670a84f583599",
-      "size": 62453
+      "sha256": "6bec7dead9e737c969c8fec0fe25b43d8576f6c169cbac869f5d508532c350a7",
+      "size": 65453
     },
     "Sources/CommandWProtection.swift": {
       "executable": false,
@@ -737,8 +737,8 @@
     },
     "Sources/IntegratedFeatureComposition.swift": {
       "executable": false,
-      "sha256": "00580526e0170cc88fa7f81530cdf31c5e62a6c077788ceefd0787679591524d",
-      "size": 11179
+      "sha256": "cef71a40ec73e8084731ebe8b5dcd09aa731993d730cb9c1caf15328d138eed2",
+      "size": 10303
     },
     "Sources/LauncherDefaultConfiguration.swift": {
       "executable": false,
@@ -782,28 +782,28 @@
     },
     "Sources/ProcessViewerController.swift": {
       "executable": false,
-      "sha256": "fb27c6af73e1f549696f9b4042ccd0982235dc8df574783f8e41d4e5be4837c5",
-      "size": 13617
+      "sha256": "6bb0976279362def8d44ce0b489aeacc0dfd748ba8fc8695f9a1931344543b0f",
+      "size": 14314
     },
     "Sources/ProcessViewerModels.swift": {
       "executable": false,
-      "sha256": "af884520d2f7bf38d9a53400da5ffa84a5ce008e16b05d6a9e89033b02d9e88a",
-      "size": 3340
+      "sha256": "c21879fc5cb073c146fa7a8b93f301e58dd12f2dd6c815c4803206b6ee6d5690",
+      "size": 4510
     },
     "Sources/ProcessViewerView.swift": {
       "executable": false,
-      "sha256": "882ba5b7c5167c75c1eb89bcbccf5f0461cb41e2176b22a10342caee430512c2",
-      "size": 23520
+      "sha256": "85260a03f5837f2df46cb5ae0106770c66ec0d95611d99a2fcd1b0400209c3bd",
+      "size": 23725
     },
     "Sources/ProductReleasePolicy.swift": {
       "executable": false,
-      "sha256": "8d5e54bb40105537401b1871acd862bcf929d08ee8ba78d52b20acd300f31c8b",
+      "sha256": "dca90e9977f7005a402ce887aca11cc3cf7e4c8b1813c7d79b83c97b833b0e39",
       "size": 1752
     },
     "Sources/ReleaseNotes.swift": {
       "executable": false,
-      "sha256": "ed356453f43475944f7aa95b1b8cdb4d9e708356cd8deaad178fb77d82b272db",
-      "size": 111784
+      "sha256": "98824dcc0aba4937656072a1f3711f6c4b4300d22dc56f9182b42c72baf1b272",
+      "size": 113022
     },
     "Sources/RetiredShiftInputSourcePreferences.swift": {
       "executable": false,
@@ -902,8 +902,8 @@
     },
     "Sources/UsageStatistics.swift": {
       "executable": false,
-      "sha256": "20dbc9c95ca52bfba9fa2f5115712941b4cfc4498052d67783602fb2a9dd928e",
-      "size": 13481
+      "sha256": "a3ceea61b205f563fc2860fd12ab7c5a50dc6b28512a9646fb3b2786bedb48fc",
+      "size": 25453
     },
     "Sources/WindowArrangementController.swift": {
       "executable": false,
@@ -948,5 +948,5 @@
   },
   "kind": "frozen",
   "schemaVersion": 1,
-  "sourceRevision": "653b528769276ce62c5cb4b87e2f6a4aec6b052a"
+  "sourceRevision": "ee58e6feae828798e21d1dfd82c27cf05ff7b7c7"
 }

@@ -2121,6 +2121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   private func showCodexNetworkProbe() {
+    let shouldStartDefaultTest = codexNetworkProbeWindow?.isVisible != true
     if codexNetworkProbeWindow == nil {
       buildCodexNetworkProbeWindow()
     }
@@ -2133,7 +2134,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     codexNetworkProbeWindow?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
     dispatchPrecondition(condition: .onQueue(.main))
-    MainActor.assumeIsolated { codexNetworkProbeController.setEnabled(true) }
+    MainActor.assumeIsolated {
+      codexNetworkProbeController.setEnabled(true)
+      if shouldStartDefaultTest && !codexNetworkProbeController.isRunning {
+        codexNetworkProbeController.start(model.codexNetworkProbeDefaultDirection)
+      }
+    }
   }
 
   private func showSleepManagementWindow() {

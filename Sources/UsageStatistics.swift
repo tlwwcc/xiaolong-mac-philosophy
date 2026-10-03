@@ -20,11 +20,24 @@ final class UsageStatistics: ObservableObject {
   static let consentKey = "usageStatistics.consent.v1"
   static let installationKey = "usageStatistics.installation.v1"
   static let sequenceKey = "usageStatistics.sequence.v1"
+  static let nicknameKey = "usageStatistics.nickname.v1"
+  static let earlyAccessKey = "usageStatistics.earlyAccess.v1"
+  static let profileKnownKey = "usageStatistics.profileKnown.v1"
+  static let profileSequenceKey = "usageStatistics.profileSequence.v1"
   private let endpoint = URL(string: "https://aixlg.com/api/usage/presence")!
   @Published private(set) var enabled: Bool
   @Published private(set) var deleting = false
   @Published private(set) var deletionMessage: String?
   @Published private(set) var deviceCode: String?
+  @Published private(set) var nickname: String
+  @Published private(set) var earlyAccess: Bool
+  @Published private(set) var invitation: FriendInvitation?
+  @Published private(set) var profileBusy = false
+  @Published private(set) var profileMessage: String?
+  @Published private(set) var profileFailed = false
+  @Published private(set) var profileChange = 0
+  private var profileTask: Task<Void, Never>?
+  private var profileOwner = UUID()
   private var policy = UsageReportingPolicy()
   private var timer: Timer?
   private var observers: [NSObjectProtocol] = []
@@ -39,6 +52,8 @@ final class UsageStatistics: ObservableObject {
 
   init(defaults: UserDefaults = .standard, session injectedSession: URLSession? = nil) {
     self.defaults = defaults
+    nickname = defaults.string(forKey: Self.nicknameKey) ?? ""
+    earlyAccess = defaults.bool(forKey: Self.earlyAccessKey)
     deviceCode = Self.deviceCode(for: defaults.string(forKey: Self.installationKey))
     enabled = defaults.object(forKey: Self.consentKey) == nil
       ? true : defaults.bool(forKey: Self.consentKey)
@@ -221,6 +236,9 @@ final class UsageStatistics: ObservableObject {
 
   func deleteRecords() {
     guard !deleting else { return }
+    profileOwner = UUID()
+    profileTask?.cancel()
+    profileBusy = false
     setEnabled(false)
     guard let token = installation(create: false), let request = request(state: "delete", token: token) else {
       deletionMessage = "这台 Mac 尚未生成统计标识。"
@@ -236,12 +254,243 @@ final class UsageStatistics: ObservableObject {
         guard Self.hasReceipt(data: data, response: response) else { throw URLError(.badServerResponse) }
         defaults.removeObject(forKey: Self.installationKey)
         defaults.removeObject(forKey: Self.sequenceKey)
+        [Self.nicknameKey, Self.earlyAccessKey, Self.profileKnownKey, Self.profileSequenceKey]
+          .forEach(defaults.removeObject(forKey:))
+        nickname = ""
+        earlyAccess = false
+        invitation = nil
+        profileMessage = nil
+        profileChange += 1
         deviceCode = nil
         defaults.synchronize()
-        deletionMessage = "服务器中的统计记录已清除，统计保持关闭。"
+        deletionMessage = "服务器中的统计、昵称和报名已清除，统计保持关闭。"
       } catch {
         deletionMessage = "统计已关闭；暂未清除服务器记录，请联网后重试。"
       }
+    }
+  }
+
+  struct FriendInvitation: Decodable {
+    let title: String
+    let detail: String
+    let url: String
+
+    var safeURL: URL? {
+      guard let components = URLComponents(string: url),
+        components.scheme == "https", components.host == "aixlg.com",
+        components.user == nil, components.password == nil, components.port == nil,
+        components.query == nil,
+        components.percentEncodedPath.range(of: "^/mac/[A-Za-z0-9/_-]*$", options: .regularExpression) != nil
+      else { return nil }
+      return components.url
+    }
+  }
+
+  private struct ProfileReceipt: Decodable {
+    let ok: Bool
+    let profileProtocol: Int
+    let profile: Profile
+    struct Profile: Decodable {
+      let nickname: String
+      let earlyAccess: Bool
+      let sequence: Int
+      let invitation: FriendInvitation?
+    }
+  }
+
+  static func normalizedNickname(_ input: String) -> String? {
+    let value = input.trimmingCharacters(in: .whitespacesAndNewlines).precomposedStringWithCanonicalMapping
+    guard value.unicodeScalars.count <= 24, !value.unicodeScalars.contains(where: {
+      switch $0.properties.generalCategory {
+      case .control, .surrogate, .lineSeparator, .paragraphSeparator: return true
+      case .format: return $0.value != 0x200D
+      default: return false
+      }
+    }) else { return nil }
+    return value
+  }
+
+  func refreshProfile() {
+    guard defaults.bool(forKey: Self.profileKnownKey) else { return }
+    performProfileSave(nil)
+  }
+
+  func saveProfile(nickname input: String, earlyAccess: Bool) {
+    guard let name = Self.normalizedNickname(input), !name.isEmpty else {
+      profileFailed = true
+      profileMessage = "请填 1–24 个字的称呼，不要换行。"
+      return
+    }
+    performProfileSave((name, earlyAccess))
+  }
+
+  func removeProfile() { performProfileSave(("", false)) }
+
+  private func performProfileSave(_ value: (String, Bool)?) {
+    guard !profileBusy, !deleting, let token = installation(create: value != nil) else { return }
+    let owner = UUID()
+    profileOwner = owner
+    var payload: [String: Any] = ["installation": token, "action": value == nil ? "get" : "save"]
+    var sequence = defaults.integer(forKey: Self.profileSequenceKey)
+    if let value {
+      guard sequence >= 0, sequence < 9_007_199_254_740_991 else { return }
+      sequence += 1
+      defaults.set(sequence, forKey: Self.profileSequenceKey)
+      // A lost save receipt can be recovered by reopening this entry.
+      defaults.set(true, forKey: Self.profileKnownKey)
+      guard defaults.synchronize() else {
+        profileFailed = true
+        profileMessage = "本机未能保存登记状态，请稍后重试。"
+        return
+      }
+      payload["sequence"] = sequence
+      payload["nickname"] = value.0
+      payload["earlyAccess"] = value.1
+    }
+    var request = URLRequest(url: URL(string: "https://aixlg.com/api/usage/profile")!)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+    profileBusy = true
+    profileFailed = false
+    profileMessage = value == nil ? "正在同步…" : "正在保存…"
+    profileTask = Task { [weak self] in
+      guard let self else { return }
+      defer { if profileOwner == owner { profileBusy = false } }
+      do {
+        let (data, response) = try await session.data(for: request)
+        guard profileOwner == owner, !Task.isCancelled else { return }
+        guard (response as? HTTPURLResponse)?.statusCode == 200,
+          let receipt = try? JSONDecoder().decode(ProfileReceipt.self, from: data),
+          receipt.ok, receipt.profileProtocol == 1,
+          receipt.profile.sequence >= 0, receipt.profile.sequence <= 9_007_199_254_740_991,
+          Self.normalizedNickname(receipt.profile.nickname) == receipt.profile.nickname,
+          !receipt.profile.earlyAccess || !receipt.profile.nickname.isEmpty
+        else { throw URLError(.badServerResponse) }
+        let result = receipt.profile
+        defaults.set(max(sequence, result.sequence), forKey: Self.profileSequenceKey)
+        if let value, (result.sequence != sequence || result.nickname != value.0 || result.earlyAccess != value.1) {
+          profileFailed = true
+          profileMessage = "登记状态已变化；输入已保留，请再次保存。"
+          return
+        }
+        nickname = result.nickname
+        earlyAccess = result.earlyAccess
+        invitation = result.earlyAccess ? result.invitation : nil
+        defaults.set(nickname, forKey: Self.nicknameKey)
+        defaults.set(earlyAccess, forKey: Self.earlyAccessKey)
+        defaults.set(!nickname.isEmpty, forKey: Self.profileKnownKey)
+        defaults.synchronize()
+        profileChange += 1
+        profileMessage = nickname.isEmpty ? "昵称和报名已清除。" : value == nil ? "已同步。" : "昵称已保存，小龙哥能在后台看到。"
+      } catch {
+        guard profileOwner == owner, !Task.isCancelled else { return }
+        profileFailed = true
+        profileMessage = value == nil ? "暂时无法同步，请联网后重试。" : "未确认保存结果，输入已保留；请重试或重新打开此页同步。"
+      }
+    }
+  }
+
+  @discardableResult
+  func copyFeedbackInfo(to pasteboard: NSPasteboard = .general) -> Bool {
+    guard !deleting, !profileBusy, let deviceCode else { return false }
+    let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知"
+    let os = ProcessInfo.processInfo.operatingSystemVersion
+    let text = "称呼：\(nickname.isEmpty ? "未登记" : nickname)\n设备：\(deviceCode)\nMac 哲学：\(version)\nmacOS：\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)\n遇到的问题："
+    pasteboard.clearContents()
+    return pasteboard.setString(text, forType: .string)
+  }
+}
+
+@MainActor
+struct FriendProfileSettingsView: View {
+  @ObservedObject private var statistics: UsageStatistics
+  @State private var draft = ""
+  @State private var earlyAccess = false
+  @State private var confirmsRemoval = false
+  @State private var copyMessage: String?
+
+  init(statistics: UsageStatistics? = nil) { self.statistics = statistics ?? .shared }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Text("用微信群里的称呼，方便小龙哥认出你。")
+        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      TextField("微信群昵称，或小龙哥认识的称呼", text: $draft)
+        .textFieldStyle(.roundedBorder)
+        .accessibilityLabel("你的昵称")
+        .accessibilityIdentifier("friendProfile.nickname")
+        .disabled(statistics.profileBusy || statistics.deleting)
+      Toggle("报名老朋友尝鲜", isOn: $earlyAccess)
+        .disabled(statistics.profileBusy || statistics.deleting)
+        .accessibilityIdentifier("friendProfile.earlyAccess")
+      Text("新功能优先体验；有邀请时，到这里查看。不会自动安装。")
+        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      HStack {
+        Button(statistics.profileBusy ? "正在同步…" : "保存昵称") {
+          statistics.saveProfile(nickname: draft, earlyAccess: earlyAccess)
+        }
+        .disabled(statistics.profileBusy || statistics.deleting || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .accessibilityIdentifier("friendProfile.save")
+        if !statistics.nickname.isEmpty {
+          Button("删除昵称", role: .destructive) { confirmsRemoval = true }
+            .disabled(statistics.profileBusy || statistics.deleting)
+            .accessibilityIdentifier("friendProfile.remove")
+        }
+      }
+      if let message = statistics.profileMessage {
+        Text(message).font(.caption)
+          .foregroundStyle(statistics.profileFailed ? Color.red : Color.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+        if statistics.profileFailed {
+          Button("重新同步") { statistics.refreshProfile() }
+            .disabled(statistics.profileBusy || statistics.deleting)
+        }
+      }
+      if statistics.earlyAccess {
+        if let invitation = statistics.invitation, let url = invitation.safeURL {
+          VStack(alignment: .leading, spacing: 6) {
+            Text(invitation.title).font(.headline)
+            Text(invitation.detail).font(.callout).fixedSize(horizontal: false, vertical: true)
+            Link("查看尝鲜邀请", destination: url)
+          }
+        } else {
+          Text(statistics.profileBusy ? "正在查看尝鲜邀请…" : statistics.profileFailed ? "上次已报名；本次未能确认邀请。" : "已报名，目前暂无尝鲜邀请。")
+            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+      }
+      if !statistics.nickname.isEmpty {
+        Button("复制反馈信息") {
+          copyMessage = statistics.copyFeedbackInfo() ? "已复制昵称、设备编号和版本，可粘贴到交流群并补充问题。" : "未能复制，请稍后重试。"
+        }
+        .disabled(statistics.profileBusy || statistics.deleting)
+        .accessibilityIdentifier("friendProfile.copyFeedback")
+        if let copyMessage {
+          Text(copyMessage).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+      }
+      Text("仅小龙哥可见，可改可删；不影响免费使用。")
+        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      DisclosureGroup("昵称与隐私") {
+        Text("保存后，昵称会与本机统计编号关联。关闭统计也能登记；不会读取微信、通讯录或计算机名。昵称与报名最长保留一年，重新保存续期。删除昵称同时退出尝鲜；不影响其他功能。")
+          .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      }
+      .font(.caption)
+    }
+    .onAppear {
+      draft = statistics.nickname
+      earlyAccess = statistics.earlyAccess
+      statistics.refreshProfile()
+    }
+    .onReceive(statistics.$profileChange) { _ in
+      draft = statistics.nickname
+      earlyAccess = statistics.earlyAccess
+      copyMessage = nil
+    }
+    .confirmationDialog("删除昵称并退出老朋友尝鲜？", isPresented: $confirmsRemoval) {
+      Button("删除昵称并退出", role: .destructive) { statistics.removeProfile() }
+    } message: {
+      Text("不影响免费使用，也不改变使用量统计的开关。")
     }
   }
 }
@@ -259,7 +508,7 @@ struct UsageStatisticsSettingsView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Toggle("参与匿名使用量统计", isOn: Binding(
+      Toggle(statistics.nickname.isEmpty ? "参与匿名使用量统计" : "参与使用量统计（已关联昵称）", isOn: Binding(
         get: { statistics.enabled }, set: { statistics.setEnabled($0) }))
         .disabled(statistics.deleting)
         .accessibilityIdentifier("usageStatistics.enabled")
@@ -281,7 +530,7 @@ struct UsageStatisticsSettingsView: View {
             deviceCodeControls
           }
         }
-        Text(statistics.deviceCode == nil ? "开启统计并运行后显示，用于对照后台设备。" : "可复制给小龙哥，用于对照后台并备注这台 Mac。")
+        Text(statistics.deviceCode == nil ? "保存昵称或开启统计后显示，用于对照后台设备。" : "用于区分同名用户或多台 Mac；无需再复制编号找小龙哥登记。")
           .font(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -295,12 +544,12 @@ struct UsageStatisticsSettingsView: View {
         copiedDeviceCode = nil
         copyFailed = false
       }
-      Button(statistics.deleting ? "正在清除…" : "清除统计记录并关闭") { confirmsDeletion = true }
+      Button(statistics.deleting ? "正在清除…" : "清除统计与昵称并关闭") { confirmsDeletion = true }
         .disabled(statistics.deleting)
         .confirmationDialog("清除这台 Mac 的服务器统计记录？", isPresented: $confirmsDeletion) {
           Button("清除并关闭", role: .destructive) { statistics.deleteRecords() }
         } message: {
-          Text("只清除使用量统计，不影响本机文件、设置或功能。以后重新开启将作为新的参与设备。")
+          Text("同时删除本机的服务器统计、昵称、备注与尝鲜报名，不影响本机文件、设置或功能。以后重新开启将作为新的参与设备。")
         }
       if let message = statistics.deletionMessage {
         Text(message).font(.caption).foregroundStyle(.secondary)

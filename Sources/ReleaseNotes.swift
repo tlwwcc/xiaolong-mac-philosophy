@@ -19,9 +19,24 @@ struct ReleaseNoteEntry: Equatable, Identifiable {
 
 enum ReleaseNotes {
   static let fallbackChangelogURL = URL(
-    string: "https://aixlg.com/mac/changelog/?v=1.0.17-233")!
+    string: "https://aixlg.com/mac/changelog/?v=1.0.19-235")!
 
   static let bundled: [ReleaseNoteEntry] = [
+    ReleaseNoteEntry(
+      version: "1.0.19",
+      build: 235,
+      dateText: "2026-10-03",
+      title: "设置少绕路，卡住的软件更好找",
+      summary: "游目设置并入主界面，披卷入口集中；进程查看器默认只看运行软件，可直接强制结束。打开测速先检查 Codex，网络带宽改为并发直连测试。",
+      highlights: [
+        "应用中心 → 游目可直接调整通用和翻译设置；披卷的打开、快捷键和文件关联集中在同一页。",
+        "进程查看器包含后台和菜单栏软件；找到目标后可直接点“强制结束”并确认，需要时再切换“全部进程”。",
+        "打开测试网速先测 Codex；点网络测速查看直连下载、上传与延迟，测试中可随时再点暂停或继续。结果会受节点与 VPN 影响。",
+        "设置 → 关于可自愿填写群昵称、报名新功能尝鲜或复制反馈信息；这些选择随时可修改或清除。",
+      ],
+      previousHighlights: ["所有功能永久免费，无需账号；保留个人配置，官方签名、公证和更新安全校验继续保留。"],
+      changelogURL: fallbackChangelogURL
+    ),
     ReleaseNoteEntry(
       version: "1.0.17",
       build: 233,
@@ -36,7 +51,7 @@ enum ReleaseNotes {
         "设置 → 关于可复制本机设备编号，方便反馈问题；保留个人快捷键与设置。",
       ],
       previousHighlights: ["所有功能永久免费，无需账号；官方签名、公证和更新安全校验继续保留。"],
-      changelogURL: fallbackChangelogURL
+      changelogURL: URL(string: "https://aixlg.com/mac/changelog/?v=1.0.17-233")!
     ),
     ReleaseNoteEntry(
       version: "1.0.16",

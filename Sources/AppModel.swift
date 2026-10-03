@@ -272,7 +272,7 @@ final class AppModel: ObservableObject {
   @Published private(set) var fileAssociationBusyKind: AssociatedFileKind?
   @Published private(set) var fileAssociationFeedbackKind: AssociatedFileKind?
   @Published private(set) var fileAssociationFeedbackText = ""
-  @Published var codexNetworkProbeDefaultDirection: NetworkProbeDirection = .domestic
+  @Published var codexNetworkProbeDefaultDirection: NetworkProbeDirection = .codex
   @Published private(set) var sparkleUpdateReminder = SparkleUpdateReminder()
   @Published var latestUpdate: AppUpdateManifest?
   @Published var updateServerVersionText = "未检查"
@@ -339,7 +339,7 @@ final class AppModel: ObservableObject {
   var showClipboardHistoryHandler: (() -> Void)?
   var showCodexNetworkProbeHandler: (() -> Void)?
   var showYoumuFeatureHandler: (() -> Void)?
-  var openYoumuControlCenterHandler: (() -> Void)?
+  var makeYoumuSettingsViewHandler: (() -> AnyView?)?
   var showPijuanPDFFeatureHandler: (() -> Void)?
   var openPijuanPDFDocumentHandler: ((URL) -> Void)?
   var showSleepPanelHandler: (() -> Void)?
@@ -575,8 +575,11 @@ final class AppModel: ObservableObject {
       rawValue: UserDefaults.standard.string(
         forKey: Self.codexNetworkProbeDefaultDirectionDefaultsKey) ?? ""
     )
-    codexNetworkProbeDefaultDirection = NetworkProbeDirection.customerFacing(
-      storedNetworkProbeDirection)
+    let networkDefaultMigrated = UserDefaults.standard.bool(
+      forKey: "codexNetworkProbeCodexDefaultMigratedV2")
+    codexNetworkProbeDefaultDirection = networkDefaultMigrated
+      ? NetworkProbeDirection.customerFacing(storedNetworkProbeDirection) : .codex
+    UserDefaults.standard.set(true, forKey: "codexNetworkProbeCodexDefaultMigratedV2")
     UserDefaults.standard.set(
       codexNetworkProbeDefaultDirection.rawValue,
       forKey: Self.codexNetworkProbeDefaultDirectionDefaultsKey)
@@ -2189,11 +2192,13 @@ final class AppModel: ObservableObject {
   }
 
   func openYoumuControlCenter() {
-    guard let openYoumuControlCenterHandler else {
-      statusMessage = "游目控制窗口尚未载入当前构建。"
+    guard makeYoumuSettingsViewHandler != nil else {
+      statusMessage = "游目设置尚未载入当前构建。"
       return
     }
-    openYoumuControlCenterHandler()
+    selectPlugin(id: "youmu")
+    selectedModuleName = "插件中心"
+    presentWindowHandler?()
   }
 
   func executeFeatureCommand(commandID: String) {

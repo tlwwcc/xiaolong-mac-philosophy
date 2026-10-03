@@ -1,6 +1,7 @@
 import BuiltinFeatureCatalog
 import Foundation
 import PlatformContracts
+import SwiftUI
 
 public enum YoumuCaptureMode: String, CaseIterable, Equatable, Sendable {
   case quickSnapshot
@@ -195,6 +196,14 @@ public final class YoumuFeatureRuntime {
 
   public func permissionSnapshot() -> YoumuPermissionSnapshot {
     YoumuPermissionSnapshot(screenRecording: Permissions.screenRecordingStatus)
+  }
+
+  public func makeEmbeddedSettingsView() -> AnyView {
+    AnyView(
+      YoumuControlView(
+        canOpenShortcutManager: shortcutManagerHandler != nil,
+        openShortcutManager: { [weak self] in self?.shortcutManagerHandler?() },
+        embedded: true))
   }
 
   /// Opens Apple's Screen Recording pane only while access is missing.
