@@ -7336,10 +7336,6 @@ struct AboutPanelView: View {
         FriendProfileSettingsView()
       }
 
-      SettingsGroup(title: "使用量统计") {
-        UsageStatisticsSettingsView()
-      }
-
       SettingsGroup(title: "帮助与隐私") {
         FeedbackRequestPanelView()
         Divider().padding(.leading, 32)

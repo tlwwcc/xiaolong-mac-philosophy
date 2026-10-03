@@ -421,6 +421,7 @@ struct FriendProfileSettingsView: View {
         .accessibilityLabel("你的昵称")
         .accessibilityIdentifier("friendProfile.nickname")
         .disabled(statistics.profileBusy || statistics.deleting)
+      UsageDeviceCodeView(statistics: statistics)
       Toggle("报名老朋友尝鲜", isOn: $earlyAccess)
         .disabled(statistics.profileBusy || statistics.deleting)
         .accessibilityIdentifier("friendProfile.earlyAccess")
@@ -469,12 +470,18 @@ struct FriendProfileSettingsView: View {
           Text(copyMessage).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
       }
-      Text("仅小龙哥可见，可改可删；不影响免费使用。")
+      Text("昵称仅小龙哥可见，可改可删；设备统计可在下方关闭。")
         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       DisclosureGroup("昵称与隐私") {
-        Text("保存后，昵称会与本机统计编号关联。关闭统计也能登记；不会读取微信、通讯录或计算机名。昵称与报名最长保留一年，重新保存续期。删除昵称同时退出尝鲜；不影响其他功能。")
-          .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 12) {
+          Text("保存后，昵称与上方本机编号关联，不用再找小龙哥登记。关闭统计也能保存昵称；不会读取微信、通讯录或计算机名。昵称与报名最长保留一年，重新保存续期。删除昵称同时退出尝鲜；不影响其他功能。")
+            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+          Divider()
+          UsageStatisticsSettingsView(statistics: statistics)
+        }
+        .padding(.top, 8)
       }
+      .accessibilityIdentifier("friendProfile.privacy")
       .font(.caption)
     }
     .onAppear {
@@ -496,72 +503,45 @@ struct FriendProfileSettingsView: View {
 }
 
 @MainActor
-struct UsageStatisticsSettingsView: View {
-  @ObservedObject private var statistics: UsageStatistics
-  @State private var confirmsDeletion = false
+private struct UsageDeviceCodeView: View {
+  @ObservedObject var statistics: UsageStatistics
   @State private var copiedDeviceCode: String?
   @State private var copyFailed = false
 
-  init(statistics: UsageStatistics? = nil) {
-    self.statistics = statistics ?? .shared
-  }
-
   var body: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      Toggle(statistics.nickname.isEmpty ? "参与匿名使用量统计" : "参与使用量统计（已关联昵称）", isOn: Binding(
-        get: { statistics.enabled }, set: { statistics.setEnabled($0) }))
-        .disabled(statistics.deleting)
-        .accessibilityIdentifier("usageStatistics.enabled")
-      Text("默认开启，可随时关闭；此前主动关闭的选择会保留。开启后，向小龙哥发送随机安装编号、软件与系统版本和在线状态，用于统计在线设备。不会发送文件、剪贴板、截图或输入内容；关闭不影响任何功能。")
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
-      Text("每日记录保留一年；设备信息在一年未报告在线后清理。多台 Mac 分别计数，无需注册账号。")
-        .font(.caption)
-        .foregroundStyle(.secondary)
-      VStack(alignment: .leading, spacing: 6) {
-        ViewThatFits(in: .horizontal) {
-          HStack(spacing: 12) {
-            Text("本机设备编号").fixedSize()
-            deviceCodeControls
-          }
-          VStack(alignment: .leading, spacing: 6) {
-            Text("本机设备编号")
-            deviceCodeControls
-          }
+    VStack(alignment: .leading, spacing: 6) {
+      ViewThatFits(in: .horizontal) {
+        HStack(spacing: 12) {
+          Text("本机编号").fixedSize()
+          deviceCodeControls
         }
-        Text(statistics.deviceCode == nil ? "保存昵称或开启统计后显示，用于对照后台设备。" : "用于区分同名用户或多台 Mac；无需再复制编号找小龙哥登记。")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
-        if copyFailed {
-          Text("未能复制，请选中编号后复制。")
-            .font(.caption)
-            .foregroundStyle(AppVisualStyle.danger)
+        VStack(alignment: .leading, spacing: 6) {
+          Text("本机编号")
+          deviceCodeControls
         }
       }
-      .onReceive(statistics.$deviceCode) { _ in
-        copiedDeviceCode = nil
-        copyFailed = false
-      }
-      Button(statistics.deleting ? "正在清除…" : "清除统计与昵称并关闭") { confirmsDeletion = true }
-        .disabled(statistics.deleting)
-        .confirmationDialog("清除这台 Mac 的服务器统计记录？", isPresented: $confirmsDeletion) {
-          Button("清除并关闭", role: .destructive) { statistics.deleteRecords() }
-        } message: {
-          Text("同时删除本机的服务器统计、昵称、备注与尝鲜报名，不影响本机文件、设置或功能。以后重新开启将作为新的参与设备。")
-        }
-      if let message = statistics.deletionMessage {
-        Text(message).font(.caption).foregroundStyle(.secondary)
+      if statistics.deviceCode == nil {
+        Text("保存昵称或开启统计后显示。")
           .fixedSize(horizontal: false, vertical: true)
       }
+      if copyFailed {
+        Text("未能复制，请选中编号后复制。")
+          .foregroundStyle(AppVisualStyle.danger)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+    .font(.caption)
+    .foregroundStyle(.secondary)
+    .onReceive(statistics.$deviceCode) { _ in
+      copiedDeviceCode = nil
+      copyFailed = false
     }
   }
 
   private var deviceCodeControls: some View {
     HStack(spacing: 12) {
       Text(statistics.deviceCode ?? "尚未生成")
-        .font(.system(.body, design: .monospaced))
+        .font(.system(.caption, design: .monospaced))
         .textSelection(.enabled)
         .fixedSize()
         .accessibilityIdentifier("usageStatistics.deviceCode")
@@ -581,6 +561,45 @@ struct UsageStatisticsSettingsView: View {
       .fixedSize()
       .disabled(statistics.deviceCode == nil || statistics.deleting)
       .accessibilityIdentifier("usageStatistics.copyDeviceCode")
+    }
+  }
+}
+
+@MainActor
+struct UsageStatisticsSettingsView: View {
+  @ObservedObject private var statistics: UsageStatistics
+  @State private var confirmsDeletion = false
+
+  init(statistics: UsageStatistics? = nil) {
+    self.statistics = statistics ?? .shared
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Toggle(statistics.nickname.isEmpty ? "参与匿名设备统计" : "参与设备统计（已关联昵称）", isOn: Binding(
+        get: { statistics.enabled }, set: { statistics.setEnabled($0) }))
+        .font(.body)
+        .disabled(statistics.deleting)
+        .accessibilityIdentifier("usageStatistics.enabled")
+      Text("默认开启，可随时关闭；此前主动关闭的选择会保留。开启后，向小龙哥发送随机安装编号、软件与系统版本和在线状态，用于统计接入与在线设备。不会发送文件、剪贴板、截图或输入内容；关闭不影响任何功能。")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+      Text("每日记录保留一年；设备信息在一年未报告在线后清理。多台 Mac 分别计数，无需注册账号。")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+      Button(statistics.deleting ? "正在清除…" : "清除统计与昵称并关闭") { confirmsDeletion = true }
+        .disabled(statistics.deleting)
+        .confirmationDialog("清除这台 Mac 的服务器统计记录？", isPresented: $confirmsDeletion) {
+          Button("清除并关闭", role: .destructive) { statistics.deleteRecords() }
+        } message: {
+          Text("同时删除本机的服务器统计、昵称、备注与尝鲜报名，不影响本机文件、设置或功能。以后重新开启将作为新的参与设备。")
+        }
+      if let message = statistics.deletionMessage {
+        Text(message).font(.caption).foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
     }
   }
 }

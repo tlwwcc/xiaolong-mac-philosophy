@@ -467,7 +467,7 @@
     },
     "Resources/Info.plist": {
       "executable": false,
-      "sha256": "6486d40be9f2e0c196e5ab8691c5f21ea18ee00d2ce31e1087cbaf300f4953df",
+      "sha256": "6672c70be37bf9430659a5170c2c6abe86e4dbee6f321d2fae32c0046e078d23",
       "size": 2719
     },
     "Resources/PijuanAppIcon.png": {
@@ -577,8 +577,8 @@
     },
     "Sources/AppViews.swift": {
       "executable": false,
-      "sha256": "62cd4391dc02a3afeddc1fc8a8921e82df4c5edda464b03f54f09ce2506de9d4",
-      "size": 323877
+      "sha256": "e1a218fab8b0252de09f51bb785f1821d3f55a0388be429347cfe5a37d921f8e",
+      "size": 323782
     },
     "Sources/AppVisualStyle.swift": {
       "executable": false,
@@ -807,13 +807,13 @@
     },
     "Sources/ProductReleasePolicy.swift": {
       "executable": false,
-      "sha256": "dca90e9977f7005a402ce887aca11cc3cf7e4c8b1813c7d79b83c97b833b0e39",
+      "sha256": "27cd73cd6e81a0e94f5564ecdc85708b081a754209fa54373c9c36a15e9d2208",
       "size": 1752
     },
     "Sources/ReleaseNotes.swift": {
       "executable": false,
-      "sha256": "7459f87ee034d35407707ffbe83c2260478949ac79edf66e8c83ac3f821278ff",
-      "size": 115963
+      "sha256": "e4a34bc1695b5e17dad0ee656cf15111f86b5a15029010d6e3d0492ace9c2809",
+      "size": 116931
     },
     "Sources/RetiredShiftInputSourcePreferences.swift": {
       "executable": false,
@@ -912,8 +912,8 @@
     },
     "Sources/UsageStatistics.swift": {
       "executable": false,
-      "sha256": "fc1a28c76df2c0c7aa86a88737a8a442a34327d6004e77db6efd1174b1984abb",
-      "size": 25495
+      "sha256": "c3b522294438aa40439a1ca7904a4349a43c21673e0926b7105c702462ab7b58",
+      "size": 25906
     },
     "Sources/WindowArrangementController.swift": {
       "executable": false,
@@ -958,5 +958,5 @@
   },
   "kind": "frozen",
   "schemaVersion": 1,
-  "sourceRevision": "3e0ce2a7318a6dc3e28e809676610e0d6fa77eb7"
+  "sourceRevision": "a4be26a0c4638692d66c4aa73e28e75aa35fb7d1"
 }

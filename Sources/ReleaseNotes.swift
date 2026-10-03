@@ -19,9 +19,23 @@ struct ReleaseNoteEntry: Equatable, Identifiable {
 
 enum ReleaseNotes {
   static let fallbackChangelogURL = URL(
-    string: "https://aixlg.com/mac/changelog/?v=1.0.22-239")!
+    string: "https://aixlg.com/mac/changelog/?v=1.0.23-240")!
 
   static let bundled: [ReleaseNoteEntry] = [
+    ReleaseNoteEntry(
+      version: "1.0.23",
+      build: 240,
+      dateText: "2026-10-04",
+      title: "昵称和设备信息，一起查看更方便",
+      summary: "打开设置 → 关于，可在同一张卡片里填写昵称、查看和复制本机编号；隐私说明与统计设置收进展开入口，页面更清爽。",
+      highlights: [
+        "在“让小龙哥认识你”填写熟悉的称呼并保存，昵称会与本机编号对应，无需另外登记。",
+        "点击本机编号旁的“复制”，反馈问题时可直接带上编号，方便区分同名用户或多台 Mac。",
+        "展开“昵称与隐私”即可查看说明，随时关闭设备统计或清除记录，常用页面更清爽。",
+      ],
+      previousHighlights: ["保留个人设置和此前关闭统计的选择；昵称自愿填写，不影响免费使用。"],
+      changelogURL: fallbackChangelogURL
+    ),
     ReleaseNoteEntry(
       version: "1.0.22",
       build: 239,
@@ -34,7 +48,7 @@ enum ReleaseNotes {
         "官网点击“加入交流群”即可查看、保存二维码；遇到问题或有新想法，可直接在群里交流。",
       ],
       previousHighlights: ["保留个人快捷键与设置，无需新增权限。测速反映当前线路到 Cloudflare 的表现，节点与 VPN 仍可能影响结果。"],
-      changelogURL: fallbackChangelogURL
+      changelogURL: URL(string: "https://aixlg.com/mac/changelog/?v=1.0.22-239")!
     ),
     ReleaseNoteEntry(
       version: "1.0.21",
