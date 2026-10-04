@@ -298,16 +298,10 @@ struct RootView: View {
     .sheet(
       isPresented: Binding(
         get: { model.isAccessibilityAuthorizationPresented },
-        set: { model.isAccessibilityAuthorizationPresented = $0 }),
-      onDismiss: { model.offerTranslationModelSetupIfNeeded() }
+        set: { model.isAccessibilityAuthorizationPresented = $0 })
     ) {
       AccessibilityAuthorizationSheetView()
         .environmentObject(model)
-    }
-    .sheet(isPresented: $model.isTranslationModelSetupPresented) {
-      model.makeTranslationModelSetupViewHandler? {
-        model.isTranslationModelSetupPresented = false
-      }
     }
     .sheet(isPresented: $model.isCommunityQRCodePresented) {
       VStack(spacing: 12) {

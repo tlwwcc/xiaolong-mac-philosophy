@@ -124,12 +124,6 @@ func runInstalledTranslationSmoke() async -> [String: String] {
     }
 
     func installHandlers() {
-      model?.translationModelNeedsDownloadHandler = {
-        await YoumuTranslationSetup.needsModelDownload()
-      }
-      model?.makeTranslationModelSetupViewHandler = { dismiss in
-        YoumuTranslationSetup.makeView(dismiss: dismiss)
-      }
       model?.globalInputOwnershipWillYieldHandler = { [weak self] in
         self?.youmuRuntime.cancelAllCommandSessions()
       }

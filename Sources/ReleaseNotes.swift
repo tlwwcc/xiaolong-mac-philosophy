@@ -19,9 +19,23 @@ struct ReleaseNoteEntry: Equatable, Identifiable {
 
 enum ReleaseNotes {
   static let fallbackChangelogURL = URL(
-    string: "https://aixlg.com/mac/changelog/?v=1.0.23-240")!
+    string: "https://aixlg.com/mac/changelog/?v=1.0.24-241")!
 
   static let bundled: [ReleaseNoteEntry] = [
+    ReleaseNoteEntry(
+      version: "1.0.24",
+      build: 241,
+      dateText: "2026-10-04",
+      title: "装好直接翻译，遇到异常自动接替",
+      summary: "打开游目即可使用共享翻译，无需先下载苹果语言模型；保留现有默认，暂时异常时自动尝试备用模型。",
+      highlights: [
+        "新安装直接使用共享翻译，无需下载本机语言模型，也不用注册或配置密钥。",
+        "按原来的方式翻译，默认模型暂时异常时自动尝试备用；等待时仍可随时取消。",
+        "在游目 → 翻译中选择共享翻译即可直接使用；需要离线翻译时，再按需手动准备语言。",
+      ],
+      previousHighlights: ["保留已有翻译选择、个人快捷键和设置；首次联网仍会征得同意，费用由我们承担。"],
+      changelogURL: fallbackChangelogURL
+    ),
     ReleaseNoteEntry(
       version: "1.0.23",
       build: 240,

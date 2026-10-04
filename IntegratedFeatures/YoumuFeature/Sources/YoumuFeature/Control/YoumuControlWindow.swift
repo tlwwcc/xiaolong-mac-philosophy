@@ -353,18 +353,20 @@ struct YoumuControlView: View {
         .foregroundStyle(.secondary)
       }
 
-      Section("Apple 本机翻译") {
-        if #available(macOS 15.0, *) {
-          AppleLocalModelControlRow()
-        } else {
-          Label("需要 macOS 15 或更新版本", systemImage: "exclamationmark.triangle")
-            .foregroundStyle(.secondary)
+      if settings.translationBackend == .appleLocal || settings.translationBackend == .automatic {
+        Section("Apple 本机翻译") {
+          if #available(macOS 15.0, *) {
+            AppleLocalModelControlRow()
+          } else {
+            Label("需要 macOS 15 或更新版本", systemImage: "exclamationmark.triangle")
+              .foregroundStyle(.secondary)
+          }
         }
       }
 
       if settings.translationBackend == .sharedService {
         Section("共享翻译") {
-          Text("翻译由小龙哥 Mac 哲学服务转交智谱处理。匿名编号仅用于使用额度，不保存原文或译文。")
+          Text("无需下载模型；默认模型暂时不可用时，自动尝试备用模型。翻译由智谱处理，匿名编号仅用于使用额度，不保存原文或译文。")
             .font(.caption).foregroundStyle(.secondary)
           Button("重新选择联网权限") {
             OnlineDataConsentManager.shared.reset(.sharedTranslation)

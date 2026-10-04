@@ -217,7 +217,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       // Free sharing never suppresses the normal system permission onboarding.
       _ = model.presentAuthorizationOnboardingIfNeeded()
     }
-    model.offerTranslationModelSetupIfNeeded()
   }
 
   func applicationDidBecomeActive(_ notification: Notification) {

@@ -293,10 +293,7 @@ final class AppModel: ObservableObject {
   @Published private(set) var lastShortcutSemanticBackupURL: URL?
   @Published var pijuanPDFShortcutCount = 0
   @Published var isAccessibilityAuthorizationPresented = false
-  @Published var isTranslationModelSetupPresented = false
-  private let translationModelSetupOnboarding = TranslationModelSetupOnboarding()
-  var translationModelNeedsDownloadHandler: (() async -> Bool)?
-  var makeTranslationModelSetupViewHandler: ((@escaping () -> Void) -> AnyView?)?
+
 
   @Published private(set) var authorizationRelaunchCompleted = false
   @Published private(set) var authorizationAutomaticRelaunchInProgress = false
@@ -6149,24 +6146,6 @@ final class AppModel: ObservableObject {
       "authorization_onboarding_presented",
       ["missing": missingFingerprint])
     return true
-  }
-
-  /// Defer model preparation until the permission sheet and its restart flow have settled.
-  func offerTranslationModelSetupIfNeeded() {
-    guard isInstalledInApplications, !runtimeIdentity.isInvalid,
-      let needsDownload = translationModelNeedsDownloadHandler,
-      makeTranslationModelSetupViewHandler != nil
-    else { return }
-    translationModelSetupOnboarding.offerIfNeeded(
-      needsDownload: needsDownload,
-      canPresent: { [weak self] in self?.canPresentTranslationModelSetup == true },
-      present: { [weak self] in self?.isTranslationModelSetupPresented = true })
-  }
-
-  private var canPresentTranslationModelSetup: Bool {
-    !isAccessibilityAuthorizationPresented && !isTranslationModelSetupPresented
-      && !authorizationAutomaticRelaunchInProgress && !authorizationManualRelaunchRequired
-      && pendingAuthorizationRepairServices().isEmpty
   }
 
   func dismissAuthorizationCenter() {
