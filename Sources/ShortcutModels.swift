@@ -1425,7 +1425,7 @@ func commonShortcutTemplates() -> [ShortcutItem] {
       action: .showCodexNetworkProbe,
       target: "codex-network-probe",
       enabled: true,
-      note: "一个球测下载、上传、延迟和抖动，一个球测 Codex 四轮连通与响应。"
+      note: "一个球测下载和上传，一个球测 Codex 四轮连通与响应。"
     ),
   ]
 }

@@ -257,6 +257,20 @@ struct WebsiteSpeedProgress: Equatable, Sendable {
   let stageValue: Double?
   let completedDownloadMbps: Double?
   let pauseEpoch: Int
+  var displayUnit: String? = nil
+
+  /// Batch resets belong to measurement, not to the visible readout. Never carry
+  /// a download value into upload, and never replace an observed zero with a held value.
+  func retainingReadout(from previous: WebsiteSpeedProgress?) -> WebsiteSpeedProgress {
+    let previous = previous?.stage == stage ? previous : nil
+    let validValue = stageValue.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+    let value = validValue ?? previous?.stageValue
+    let display = WebsiteSpeedDisplay.rate(value, holdingUnit: previous?.displayUnit)
+    return WebsiteSpeedProgress(
+      stage: stage, completedSamples: completedSamples, totalSamples: totalSamples,
+      stageValue: value, completedDownloadMbps: completedDownloadMbps,
+      pauseEpoch: pauseEpoch, displayUnit: display.unit.isEmpty ? nil : display.unit)
+  }
 
   var fraction: Double {
     guard totalSamples > 0 else { return 0 }
@@ -318,13 +332,30 @@ struct WebsiteSpeedDisplay: Equatable {
   }
 
   /// Match the status bar's decimal byte units; keep one decimal in the larger sphere.
-  static func rate(_ mbps: Double?) -> WebsiteSpeedDisplay {
+  static func rate(_ mbps: Double?, holdingUnit: String? = nil) -> WebsiteSpeedDisplay {
     guard let mbps, mbps.isFinite, mbps >= 0 else {
       return WebsiteSpeedDisplay(value: "—", unit: "", spokenUnit: "")
     }
     let bytesPerSecond = mbps * 125_000
     guard bytesPerSecond.isFinite else {
       return WebsiteSpeedDisplay(value: "—", unit: "", spokenUnit: "")
+    }
+    // A narrow dead band keeps live values near a unit boundary from alternating
+    // KB/s and MB/s. Final results call this without holdingUnit.
+    let units: [(name: String, divisor: Double, spoken: String)] = [
+      ("B/s", 1, "字节"), ("KB/s", 1_000, "千字节"),
+      ("MB/s", 1_000_000, "兆字节"), ("GB/s", 1_000_000_000, "吉字节"),
+    ]
+    if let index = units.firstIndex(where: { $0.name == holdingUnit }),
+      bytesPerSecond >= (index == 0 ? 0 : units[index].divisor * 0.9),
+      index == units.count - 1 || bytesPerSecond < units[index + 1].divisor * 1.1
+    {
+      let unit = units[index]
+      return WebsiteSpeedDisplay(
+        value: bytesPerSecond > 0 && bytesPerSecond < 1
+          ? "<1"
+          : String(format: index < 2 ? "%.0f" : "%.1f", bytesPerSecond / unit.divisor),
+        unit: unit.name, spokenUnit: unit.spoken)
     }
     if bytesPerSecond >= 1_000_000_000 {
       return WebsiteSpeedDisplay(
@@ -455,6 +486,10 @@ struct WebsiteSpeedSampleLedger: Equatable, Sendable {
       return NetworkProbeStatistics.percentile(uploadBitsPerSecond, probability: 0.9)
         .map { $0 / 1_000_000 }
     }
+  }
+
+  func failure(_ detail: String, during stage: WebsiteSpeedStage) -> WebsiteSpeedRunOutcome {
+    .failure(detail, completedDownloadMbps: stage == .upload ? value(for: .download) : nil)
   }
 
   var result: WebsiteSpeedResult? {
@@ -934,7 +969,7 @@ private final class WebsiteSpeedRequest: ProbeURLSessionTaskHandler, @unchecked 
 
 enum WebsiteSpeedRunOutcome: Equatable, Sendable {
   case success(WebsiteSpeedResult)
-  case failure(String)
+  case failure(String, completedDownloadMbps: Double? = nil)
   case cancelled
 }
 
@@ -1028,7 +1063,8 @@ final class WebsiteSpeedTestRunner: @unchecked Sendable {
 
     for group in WebsiteSpeedPlan.groups {
       guard deadline.remaining(at: now()) > 0 else {
-        return .failure("测速已超过 \(Int(WebsiteSpeedPlan.maximumWallClockDuration)) 秒，已自动停止")
+        return ledger.failure(
+          "测速已超过 \(Int(WebsiteSpeedPlan.maximumWallClockDuration)) 秒，已自动停止", during: group.stage)
       }
       if (group.stage == .download && stopDownload)
         || (group.stage == .upload && stopUpload)
@@ -1061,13 +1097,13 @@ final class WebsiteSpeedTestRunner: @unchecked Sendable {
             maximumRequestTimeout: WebsiteSpeedPlan.requestTimeout)
         else {
           await stopLoadedLatency(loadedLatencyTask)
-          return .failure(
-            "测速已超过 \(Int(WebsiteSpeedPlan.maximumWallClockDuration)) 秒，已自动停止")
+          return ledger.failure(
+            "测速已超过 \(Int(WebsiteSpeedPlan.maximumWallClockDuration)) 秒，已自动停止", during: group.stage)
         }
         let transferCount = group.stage == .latency ? 1 : WebsiteSpeedPlan.concurrentTransfers
         guard transferBudget.reserve(stage: group.stage, bytes: group.bytes * transferCount) else {
           await stopLoadedLatency(loadedLatencyTask)
-          return .failure("测速已达到本次流量上限，已自动停止")
+          return ledger.failure("测速已达到本次流量上限，已自动停止", during: group.stage)
         }
 
         let requestPauseEpoch = currentPauseEpoch
@@ -1138,25 +1174,26 @@ final class WebsiteSpeedTestRunner: @unchecked Sendable {
         if disposition == .retry { continue }
         guard deadline.remaining(at: now()) > 0 else {
           await stopLoadedLatency(loadedLatencyTask)
-          return .failure(
-            "测速已超过 \(Int(WebsiteSpeedPlan.maximumWallClockDuration)) 秒，已自动停止")
+          return ledger.failure(
+            "测速已超过 \(Int(WebsiteSpeedPlan.maximumWallClockDuration)) 秒，已自动停止", during: group.stage)
         }
 
         switch outcome {
         case .cancelled:
           // 用户暂停已由 pauseEpoch 接续；其他取消不能无休止消耗流量预算。
           await stopLoadedLatency(loadedLatencyTask)
-          return .failure("网络中断了测速，请重试")
+          return ledger.failure("网络中断了测速，请重试", during: group.stage)
         case .httpFailure(let status):
           if status == 429 || status >= 500, retryPolicy.registerFailure() { continue }
           await stopLoadedLatency(loadedLatencyTask)
-          return .failure(WebsiteSpeedHTTPStatus.failureDescription(status) ?? "测速节点响应异常")
+          return ledger.failure(
+            WebsiteSpeedHTTPStatus.failureDescription(status) ?? "测速节点响应异常", during: group.stage)
         case .failure(let message):
           if retryPolicy.registerFailure() {
             continue
           }
           await stopLoadedLatency(loadedLatencyTask)
-          return .failure(message)
+          return ledger.failure(message, during: group.stage)
         case .success(let bitsPerSecond, let latencyMilliseconds, let duration):
           retryPolicy.registerSuccess()
           groupDurations.append(duration)
@@ -1191,7 +1228,7 @@ final class WebsiteSpeedTestRunner: @unchecked Sendable {
     }
 
     guard let result = ledger.result else {
-      return .failure("有效样本不足，请稍后重试")
+      return ledger.failure("有效样本不足，请稍后重试", during: .upload)
     }
     return .success(result)
   }
@@ -1490,6 +1527,7 @@ final class CodexConnectivityProbe: @unchecked Sendable {
 struct NetworkProbeFailure: Equatable, Sendable {
   let title: String
   let detail: String
+  var completedDownloadMbps: Double? = nil
 }
 
 enum CodexNetworkProbePhase: Equatable {
@@ -1548,8 +1586,9 @@ final class CodexNetworkProbeController: ObservableObject {
       phases[.domestic] = .networkRunning(
         WebsiteSpeedProgress(
           stage: progress.stage, completedSamples: progress.completedSamples,
-          totalSamples: progress.totalSamples, stageValue: nil,
-          completedDownloadMbps: progress.completedDownloadMbps, pauseEpoch: progress.pauseEpoch))
+          totalSamples: progress.totalSamples, stageValue: progress.stageValue,
+          completedDownloadMbps: progress.completedDownloadMbps, pauseEpoch: progress.pauseEpoch,
+          displayUnit: progress.displayUnit))
     case (.codex, .codexRunning):
       return
     case (.domestic, _):
@@ -1597,7 +1636,13 @@ final class CodexNetworkProbeController: ObservableObject {
           runner.acceptsProgress(pauseEpoch: progress.pauseEpoch),
           case .networkRunning = self.phases[.domestic]
         else { return }
-        self.phases[.domestic] = .networkRunning(progress)
+        let previous: WebsiteSpeedProgress?
+        if case .networkRunning(let visible) = self.phases[.domestic] {
+          previous = visible
+        } else {
+          previous = nil
+        }
+        self.phases[.domestic] = .networkRunning(progress.retainingReadout(from: previous))
       }
       guard let self, stillActive(.domestic, runID: runID) else { return }
       websiteRunner = nil
@@ -1605,9 +1650,9 @@ final class CodexNetworkProbeController: ObservableObject {
       switch outcome {
       case .success(let result):
         phases[.domestic] = .networkFinished(result)
-      case .failure(let detail):
+      case .failure(let detail, let download):
         phases[.domestic] = .failed(
-          NetworkProbeFailure(title: "测速失败", detail: detail))
+          NetworkProbeFailure(title: "测速失败", detail: detail, completedDownloadMbps: download))
       case .cancelled:
         break
       }
@@ -1667,6 +1712,7 @@ final class CodexNetworkProbeController: ObservableObject {
 
 enum NetworkProbeVisualTone: Equatable {
   case brand
+  case neutral
   case latency
   case download
   case upload
@@ -1677,8 +1723,13 @@ enum NetworkProbeVisualTone: Equatable {
 
   var color: Color {
     switch self {
-    case .brand, .download: return AppVisualStyle.accent
-    case .latency, .upload: return AppVisualStyle.textPrimary
+    case .brand: return AppVisualStyle.accent
+    case .neutral, .latency: return AppVisualStyle.textSecondary
+    // Match the status bar's established transfer colors exactly.
+    case .download:
+      return Color(nsColor: NSColor(calibratedRed: 0.18, green: 0.62, blue: 1.0, alpha: 0.96))
+    case .upload:
+      return Color(nsColor: NSColor(calibratedRed: 1.0, green: 0.36, blue: 0.31, alpha: 0.96))
     case .paused: return AppVisualStyle.textSecondary
     case .success: return AppVisualStyle.success
     case .warning: return AppVisualStyle.warning
@@ -1774,8 +1825,10 @@ struct NetworkProbeSphere: View {
       case .download: return .download
       case .upload: return .upload
       }
-    case .networkPaused: return .paused
-    case .networkFinished: return .brand
+    case .networkPaused(let progress):
+      return progress.stage == .upload
+        ? .upload : progress.stage == .download ? .download : .neutral
+    case .networkFinished: return .neutral
     case .codexRunning: return .brand
     case .codexFinished(let summary):
       switch summary.state {
@@ -1807,7 +1860,11 @@ struct NetworkProbeSphere: View {
           .stroke(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 6)
           .padding(6)
 
-        if progress > 0 {
+        if direction == .domestic {
+          Circle()
+            .stroke(tone.color.opacity(0.65), lineWidth: 3)
+            .padding(8)
+        } else if progress > 0 {
           Circle()
             .trim(from: 0, to: progress)
             .stroke(tone.color, style: StrokeStyle(lineWidth: 5, lineCap: .round))
@@ -1868,14 +1925,9 @@ struct NetworkProbeSphere: View {
     case .networkPaused(let progress):
       networkProgress(progress, paused: true)
     case .networkFinished(let result):
-      VStack(spacing: 12) {
-        Text("测速完成")
-          .font(.caption.weight(.semibold))
-        HStack(alignment: .top, spacing: 14) {
-          finishedSpeed("下载", value: result.downloadMbps)
-          finishedSpeed("上传", value: result.uploadMbps)
-        }
-        actionLabel("再测一次", systemImage: "arrow.clockwise")
+      VStack(spacing: 18) {
+        finishedSpeed("上传", value: result.uploadMbps, tone: .upload, symbol: "arrow.up")
+        finishedSpeed("下载", value: result.downloadMbps, tone: .download, symbol: "arrow.down")
       }
     case .codexRunning(let completedRounds, _):
       VStack(spacing: 9) {
@@ -1909,13 +1961,27 @@ struct NetworkProbeSphere: View {
       }
     case .failed(let failure):
       if direction == .domestic {
-        VStack(spacing: 8) {
-          Text("测速未完成")
-            .font(.caption.weight(.semibold))
-          Text("请重试")
-            .font(.system(size: 27, weight: .bold))
-            .foregroundStyle(tone.color)
-          actionLabel("重新测速", systemImage: "arrow.clockwise")
+        if let download = failure.completedDownloadMbps {
+          VStack(spacing: 18) {
+            HStack {
+              Label("上传", systemImage: "arrow.up")
+                .font(.system(size: 12, weight: .medium))
+              Spacer()
+              Text("未测成")
+                .font(.system(size: 21, weight: .semibold))
+            }
+            .foregroundStyle(.secondary)
+            finishedSpeed("下载", value: download, tone: .download, symbol: "arrow.down")
+          }
+        } else {
+          VStack(spacing: 8) {
+            Text("测速未完成")
+              .font(.caption.weight(.semibold))
+            Text("请重试")
+              .font(.system(size: 27, weight: .bold))
+              .foregroundStyle(tone.color)
+            actionLabel("重新测速", systemImage: "arrow.clockwise")
+          }
         }
       } else {
         VStack(spacing: 8) {
@@ -1939,50 +2005,58 @@ struct NetworkProbeSphere: View {
       Text(paused ? "已暂停" : progress.stage.title)
         .font(.caption.weight(.semibold))
       if let value = progress.stageValue, progress.stage != .latency {
-        let display = WebsiteSpeedDisplay.rate(value)
+        let display = WebsiteSpeedDisplay.rate(value, holdingUnit: progress.displayUnit)
         HStack(alignment: .firstTextBaseline, spacing: 4) {
           Text(display.value)
             .font(.system(size: 43, weight: .bold, design: .rounded))
             .monospacedDigit()
             .lineLimit(1)
             .minimumScaleFactor(0.65)
+            .frame(width: 124, alignment: .trailing)
           Text(display.unit)
             .font(.system(size: 12, weight: .semibold))
+            .frame(width: 38, alignment: .leading)
+            .foregroundStyle(AppVisualStyle.textSecondary)
         }
         .foregroundStyle(tone.color)
       } else {
-        Text("—")
-          .font(.system(size: 43, weight: .bold, design: .rounded))
+        Text(progress.stage == .upload ? "准备上传" : progress.stage == .download ? "准备下载" : "正在准备")
+          .font(.system(size: 23, weight: .semibold))
           .foregroundStyle(tone.color)
       }
-      if progress.stage == .upload {
-        Text("下载 \(progress.completedDownloadMbps.map(speed) ?? "—")")
+      if progress.stage == .upload, let download = progress.completedDownloadMbps {
+        Text("下载 \(speed(download))")
           .font(.caption.weight(.semibold))
-          .foregroundStyle(.secondary)
-      } else if progress.stage == .download {
-        Text("上传 —")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+          .foregroundStyle(NetworkProbeVisualTone.download.color)
       }
       actionLabel(paused ? "继续" : "暂停", systemImage: paused ? "play.fill" : "pause.fill")
     }
   }
 
-  private func finishedSpeed(_ title: String, value: Double) -> some View {
+  private func finishedSpeed(
+    _ title: String, value: Double, tone: NetworkProbeVisualTone, symbol: String
+  ) -> some View {
     let display = WebsiteSpeedDisplay.rate(value)
-    return VStack(spacing: 4) {
-      Text(title)
-        .font(.caption)
-        .foregroundStyle(.secondary)
+    return HStack(alignment: .firstTextBaseline, spacing: 7) {
+      HStack(spacing: 3) {
+        Image(systemName: symbol)
+          .foregroundStyle(tone.color)
+        Text(title)
+      }
+      .font(.system(size: 12, weight: .medium))
+      .foregroundStyle(AppVisualStyle.textSecondary)
+      .frame(width: 43, alignment: .leading)
       Text(display.value)
-        .font(.system(size: 30, weight: .bold, design: .rounded))
+        .font(.system(size: 27, weight: .bold, design: .rounded))
         .monospacedDigit()
-        .foregroundStyle(tone.color)
         .lineLimit(1)
         .minimumScaleFactor(0.65)
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .foregroundStyle(tone.color)
       Text(display.unit)
         .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(.secondary)
+        .frame(width: 33, alignment: .leading)
+        .foregroundStyle(AppVisualStyle.textSecondary)
     }
     .frame(maxWidth: .infinity)
   }
@@ -2019,7 +2093,8 @@ struct NetworkProbeSphere: View {
       return "准备就绪"
     case .networkRunning(let progress):
       if progress.stage == .latency { return progress.stage.title }
-      let rate = WebsiteSpeedDisplay.rate(progress.stageValue).accessibilityText
+      let rate = WebsiteSpeedDisplay.rate(progress.stageValue, holdingUnit: progress.displayUnit)
+        .accessibilityText
       return "\(progress.stage.title)，\(rate)"
     case .networkPaused(let progress):
       return "已暂停，当前阶段 \(progress.stage.title)"
@@ -2033,6 +2108,9 @@ struct NetworkProbeSphere: View {
       return "\(summary.title)，\(summary.reachableCount) / 4 轮可达，最近失败：\(summary.latestFailureText)"
     case .failed(let failure):
       if direction == .domestic {
+        if let download = failure.completedDownloadMbps {
+          return "上传未测成，下载 \(WebsiteSpeedDisplay.rate(download).accessibilityText)，点击重试"
+        }
         return "测速未完成，请重试"
       }
       return "\(failure.title)，\(failure.detail)"
@@ -2047,6 +2125,8 @@ struct NetworkProbeSphere: View {
       return "继续本次网络测速"
     case .codexRunning:
       return "Codex 连接检测正在进行"
+    case .networkFinished:
+      return "点击圆球重新测速"
     default:
       return "点击开始测试"
     }

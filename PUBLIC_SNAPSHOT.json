@@ -417,8 +417,8 @@
     },
     "Platform/BuiltinFeatures/NetworkProbeFeatureModule.swift": {
       "executable": false,
-      "sha256": "c54fab67b179ff242b65052bbacb52f60b484560cbb5f8643231f6282cce7469",
-      "size": 1442
+      "sha256": "889419487a7a5c6a57a4b6f5d6a88834cbae4f4cfe6e567c4a9f811dd3956ec0",
+      "size": 1427
     },
     "Platform/BuiltinFeatures/YoumuFeatureModule.swift": {
       "executable": false,
@@ -462,7 +462,7 @@
     },
     "Resources/Info.plist": {
       "executable": false,
-      "sha256": "97aa7e1403184712cab5b35c15d3f0fdf91d95f470bfcf3511311158eb4aed80",
+      "sha256": "e49e8ee9278d19fe3f2bbcf8df880c24e90c1bd9f2c7d3b9c039d439188c7694",
       "size": 2719
     },
     "Resources/PijuanAppIcon.png": {
@@ -552,8 +552,8 @@
     },
     "Sources/AppModel.swift": {
       "executable": false,
-      "sha256": "fdcf598bef1f4dfcb73b2fd23ed4395db68936efa04b874dbe39b1fb4e5e7921",
-      "size": 375161
+      "sha256": "b9bfa37a6233bfe7af3c55369b46ba2f01908fdfd7f118eecbd5f749a52b0f04",
+      "size": 375107
     },
     "Sources/AppRuntimeIdentity.swift": {
       "executable": false,
@@ -572,8 +572,8 @@
     },
     "Sources/AppViews.swift": {
       "executable": false,
-      "sha256": "66f1bdf06a8d1093f4d1f91619c472e293abf12197604ab171dc27190c885877",
-      "size": 323529
+      "sha256": "206fd5aaf0f359da851688272ab897d06127344b3873a5e9d2580a64d7c17835",
+      "size": 323457
     },
     "Sources/AppVisualStyle.swift": {
       "executable": false,
@@ -667,8 +667,8 @@
     },
     "Sources/CodexNetworkProbe.swift": {
       "executable": false,
-      "sha256": "f6b4bc8224362ff4371312e3c59e2771ac4f58d97fa10015978522dace84560b",
-      "size": 68467
+      "sha256": "48e5290e5ea7f54d0844792357da267889673ececc9386a097bb56d749e17ac5",
+      "size": 72916
     },
     "Sources/CommandWProtection.swift": {
       "executable": false,
@@ -802,13 +802,13 @@
     },
     "Sources/ProductReleasePolicy.swift": {
       "executable": false,
-      "sha256": "27cd73cd6e81a0e94f5564ecdc85708b081a754209fa54373c9c36a15e9d2208",
+      "sha256": "65dbdd9baa4c0a76ddec157be51bb5bf27d51b39bde913f972874b7ec42bfd13",
       "size": 1752
     },
     "Sources/ReleaseNotes.swift": {
       "executable": false,
-      "sha256": "4f19f19ae67db8782a96b822b25b970a9ea34113ae937b428daef1ce3523dc33",
-      "size": 117824
+      "sha256": "567920cec372d19e9b80a120e78bc573201fc1d00c1cb2d6e941785973e79b7b",
+      "size": 118672
     },
     "Sources/RetiredShiftInputSourcePreferences.swift": {
       "executable": false,
@@ -842,8 +842,8 @@
     },
     "Sources/ShortcutModels.swift": {
       "executable": false,
-      "sha256": "3ae0e4b9024fecb6129e265bbdd8d7406c34099081ca5a9e58175c2790ca8892",
-      "size": 49160
+      "sha256": "c5e0f5b682420843e1f4ccdbb2d53fb6333a548e488301e8172ad1be12469de6",
+      "size": 49142
     },
     "Sources/ShortcutWindowActionMapping.swift": {
       "executable": false,
@@ -948,5 +948,5 @@
   },
   "kind": "frozen",
   "schemaVersion": 1,
-  "sourceRevision": "40f4eaf0c6d177f39466291b53204d5f07ddce95"
+  "sourceRevision": "d5d39be243d60de7dd76aefdeb9b59aa1ac9f881"
 }

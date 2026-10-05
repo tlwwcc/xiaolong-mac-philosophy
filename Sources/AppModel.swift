@@ -3172,7 +3172,7 @@ final class AppModel: ObservableObject {
     if let index = items.firstIndex(where: {
       $0.isBuiltIn != false && $0.action == .showCodexNetworkProbe
     }) {
-      let wantedNote = "一个球测下载、上传、延迟和抖动，一个球测 Codex 四轮连通与响应。"
+      let wantedNote = "一个球测下载和上传，一个球测 Codex 四轮连通与响应。"
       var changed = false
       if items[index].name != "打开测试网速"
         || items[index].scope != "常用脚本"
@@ -3213,7 +3213,7 @@ final class AppModel: ObservableObject {
       action: .showCodexNetworkProbe,
       target: "codex-network-probe",
       enabled: enabledWhenCreated,
-      note: "一个球测下载、上传、延迟和抖动，一个球测 Codex 四轮连通与响应。"
+      note: "一个球测下载和上传，一个球测 Codex 四轮连通与响应。"
     )
     clearShortcutDeletionMarkers(for: item)
     items.append(item)
@@ -3762,7 +3762,7 @@ final class AppModel: ObservableObject {
         action: .showCodexNetworkProbe,
         target: "codex-network-probe",
         enabled: true,
-        note: "一个球测下载、上传、延迟和抖动，一个球测 Codex 四轮连通与响应。"
+        note: "一个球测下载和上传，一个球测 Codex 四轮连通与响应。"
       )
       items.append(item)
       changed = true

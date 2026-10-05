@@ -18,7 +18,7 @@ public struct NetworkProbeFeatureModule: FeatureModule {
     id: NetworkProbeFeatureIDs.feature,
     manifestVersion: 3,
     displayName: "测试网速",
-    summary: "两个球：网络测速显示下载、上传、延迟和抖动，Codex 连接显示四轮连通与响应。",
+    summary: "两个球：网络测速只显示下载和上传，Codex 连接显示四轮连通与响应。",
     category: .systemUtilities,
     isEnabledByDefault: true,
     activationPolicy: .onDemand,

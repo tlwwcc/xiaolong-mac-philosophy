@@ -5293,7 +5293,7 @@ private struct NetworkProbeApplicationDetailView: View {
   var body: some View {
     Form {
       Section {
-        Text("一个球测下载、上传、延迟和抖动，一个球测 Codex 四轮连通与响应。")
+        Text("一个球测下载和上传，一个球测 Codex 四轮连通与响应。")
           .font(.body)
           .foregroundStyle(.secondary)
 
@@ -9143,7 +9143,7 @@ private func shortcutRowMenuContent(
           target: "codex-network-probe",
           name: "打开测试网速",
           scope: "常用脚本",
-          note: "一个球测下载、上传、延迟和抖动，一个球测 Codex 四轮连通与响应。")
+          note: "一个球测下载和上传，一个球测 Codex 四轮连通与响应。")
       } label: {
         Label("打开测试网速", systemImage: "gauge.with.dots.needle.67percent")
       }
@@ -9412,7 +9412,7 @@ private func shortcutHumanDescription(_ item: ShortcutItem) -> String {
   case .showClipboardHistory:
     return "打开剪贴板历史，并直接搜索或恢复之前复制的内容。"
   case .showCodexNetworkProbe:
-    return "一个球测下载、上传、延迟和抖动，一个球测 Codex 四轮连通与响应。"
+    return "一个球测下载和上传，一个球测 Codex 四轮连通与响应。"
   case .showSleepPanel:
     return "按一次无限期保持唤醒，再按一次恢复系统默认睡眠。"
   case .windowPreset:
@@ -9665,7 +9665,7 @@ struct ActionMenu: View {
             target: "codex-network-probe",
             name: "打开测试网速",
             scope: "常用脚本",
-            note: "一个球测下载、上传、延迟和抖动，一个球测 Codex 四轮连通与响应。"
+            note: "一个球测下载和上传，一个球测 Codex 四轮连通与响应。"
           )
         } label: {
           Label("打开测试网速", systemImage: "gauge.with.dots.needle.67percent")
