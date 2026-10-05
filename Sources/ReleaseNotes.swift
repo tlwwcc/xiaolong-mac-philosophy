@@ -19,9 +19,23 @@ struct ReleaseNoteEntry: Equatable, Identifiable {
 
 enum ReleaseNotes {
   static let fallbackChangelogURL = URL(
-    string: "https://aixlg.com/mac/changelog/?v=1.0.25-242")!
+    string: "https://aixlg.com/mac/changelog/?v=1.0.26-244")!
 
   static let bundled: [ReleaseNoteEntry] = [
+    ReleaseNoteEntry(
+      version: "1.0.26",
+      build: 244,
+      dateText: "2026-10-06",
+      title: "截图文字随写随改，换行更顺手",
+      summary: "在游目截图中输入文字，回车继续换行；点空白另写一段，点已有文字即可直接修改。",
+      highlights: [
+        "输入的文字自动折行，长段落和空行更清楚；双击旧文字即可修改，拖动可移动整段。",
+        "颜色和字号跟随正在编辑的段落；切换工具保留输入，复制、保存和钉图包含最后一段。",
+        "按⌘回车结束本段，Esc取消本次修改；误移或误删可以直接撤销，方便反复调整。",
+      ],
+      previousHighlights: ["保留个人快捷键与设置，无需新增权限。"],
+      changelogURL: fallbackChangelogURL
+    ),
     ReleaseNoteEntry(
       version: "1.0.25",
       build: 242,
@@ -34,7 +48,7 @@ enum ReleaseNotes {
         "上传未测成时，仍可以查看已经测到的下载结果，方便判断当前线路。",
       ],
       previousHighlights: ["保留个人快捷键与设置；测速仍反映当前线路到 Cloudflare 的表现。"],
-      changelogURL: fallbackChangelogURL
+      changelogURL: URL(string: "https://aixlg.com/mac/changelog/?v=1.0.25-242")!
     ),
     ReleaseNoteEntry(
       version: "1.0.24",

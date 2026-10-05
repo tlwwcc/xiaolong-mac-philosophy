@@ -26,6 +26,7 @@ class EditorToolbarView: VisionSurfaceView {
     private var selectedTool: EditorTool = .rectangle
     private var selectedColorIndex = 0
     private var selectedWidth: StrokeWidth = .medium
+    private var displayingTextStyle = false
     private(set) var selectedArrowStyle = ArrowStylePreference.load()
 
     override init(frame frameRect: NSRect) {
@@ -266,6 +267,14 @@ class EditorToolbarView: VisionSurfaceView {
         refreshSelectionVisuals()
     }
 
+    /// 当前编辑/选中对象的参数只用于显示，不发送修改回调。
+    func setStyleDisplay(color: NSColor, width: StrokeWidth, forText: Bool) {
+        selectedColorIndex = EditorColorPreset.allCases.firstIndex { $0.color.isEqual(color) } ?? -1
+        selectedWidth = width
+        displayingTextStyle = forText
+        refreshSelectionVisuals()
+    }
+
     // MARK: - 状态刷新
 
     func setHistoryEnabled(canUndo: Bool, canRedo: Bool) {
@@ -329,7 +338,7 @@ class EditorToolbarView: VisionSurfaceView {
             button.layer?.borderColor = VisionDesign.brandAccent.cgColor
             button.title = width.displayName
             button.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-            button.toolTip = selectedTool == .text
+            button.toolTip = displayingTextStyle || selectedTool == .text
                 ? "文字字号：\(width.displayName)"
                 : "粗细：\(width.displayName)"
             button.layer?.backgroundColor = selected
@@ -408,7 +417,7 @@ final class EditorActionBarView: VisionSurfaceView {
         let pin = makeButton(symbol: "pin", tooltip: "钉图") { [weak self] in
             self?.onPin?()
         }
-        let confirm = makePrimaryButton(title: "完成", symbol: "checkmark", tooltip: "复制到剪贴板 (Enter)") { [weak self] in
+        let confirm = makePrimaryButton(title: "完成", symbol: "checkmark", tooltip: "复制到剪贴板（文字编辑时先结束本段）") { [weak self] in
             self?.onConfirm?()
         }
         rightViews = [cancel, save, pin, confirm]

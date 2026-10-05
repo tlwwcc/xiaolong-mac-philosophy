@@ -34,7 +34,7 @@ enum EditorHistoryBudget {
             switch annotation.payload {
             case .pen(let points):
                 payloadBytes = saturatedProduct(points.count, MemoryLayout<CGPoint>.stride)
-            case .text(_, let string, _):
+            case .text(_, let string, _, _):
                 payloadBytes = min(maximumHistoryEstimatedBytes, string.utf8.count)
             case .mosaic(_, _, let image):
                 payloadBytes = image?.representations.reduce(0) { subtotal, representation in
@@ -63,9 +63,19 @@ class EditorCanvasView: NSView {
     // MARK: - 外部状态（工具栏驱动）
 
     var currentTool: EditorTool = .rectangle {
-        didSet { updateCursor(); discardTextField(commit: false) }
+        didSet {
+            if oldValue != currentTool {
+                finishTextEditing(commit: true)
+                // 切到绘制工具后，参数作用于下一笔，不误改刚结束的文字。
+                if currentTool != .select { selectedIndex = nil }
+            }
+            updateCursor()
+            syncStyleControls()
+        }
     }
-    var currentColor: NSColor = EditorColorPreset.red.color
+    var currentColor: NSColor = EditorColorPreset.red.color {
+        didSet { applyCurrentColor(); syncStyleControls() }
+    }
     var currentWidth: StrokeWidth = .medium
     var currentArrowStyle: ArrowStyle = ArrowStylePreference.load() {
         didSet { if currentTool == .arrow { needsDisplay = true } }
@@ -77,6 +87,8 @@ class EditorCanvasView: NSView {
     var onSave: (() -> Void)?
     /// 撤销/重做可用性变化（刷新工具栏按钮态）
     var onHistoryStateChange: ((Bool, Bool) -> Void)?
+    /// 只同步工具栏显示，不回写样式，避免重编辑旧段时被当前预设覆盖。
+    var onStyleDisplayChange: ((NSColor, StrokeWidth, Bool) -> Void)?
     /// 键盘请求切换工具（当前绘制工具下按 Esc → 选择/移动），由控制器同步工具栏视觉。
     var onRequestToolSwitch: ((EditorTool) -> Void)?
 
@@ -103,10 +115,15 @@ class EditorCanvasView: NSView {
     private var dragCurrent: CGPoint?
     private var dragShift = false
     private var penPoints: [CGPoint] = []
-    private(set) var selectedIndex: Int?
+    private(set) var selectedIndex: Int? { didSet { syncStyleControls() } }
     private var lastDragPoint: CGPoint?
     private var selectDragSnapshotPending = false
-    private(set) var textField: NSTextField?
+    private(set) var textEditor: EditorTextView?
+    private var textTopLeft = CGPoint.zero
+    private var textWidth: CGFloat = 0
+    private var textFontSize: CGFloat = 0
+    private var textColor: NSColor = .red
+    private var textLineWidth: CGFloat = 0
     /// 双击重编辑中的文字标注下标（编辑期间画布不绘制该标注，避免与输入框重影）
     private var editingTextIndex: Int?
 
@@ -142,7 +159,7 @@ class EditorCanvasView: NSView {
         // 普通标注先画，聚光遮罩最后覆盖，确保框外的文字/箭头也一起柔和压暗。
         for (index, annotation) in annotations.enumerated() {
             // 正在重编辑的文字标注先藏起来，由输入框呈现
-            if index == editingTextIndex, textField != nil { continue }
+            if index == editingTextIndex, textEditor != nil { continue }
             if case .highlight = annotation.payload { continue }
             AnnotationRenderer.draw(annotation)
         }
@@ -279,7 +296,7 @@ class EditorCanvasView: NSView {
     // MARK: - 鼠标逻辑（internal，单元自测可直接驱动）
 
     func handleMouseDown(at point: CGPoint, clickCount: Int, shiftDown: Bool) {
-        discardTextField(commit: true)
+        finishTextEditing(commit: true)
 
         switch currentTool {
         case .select:
@@ -314,20 +331,40 @@ class EditorCanvasView: NSView {
             ))
 
         case .text:
-            placeTextField(at: point)
+            if let index = textAnnotation(at: point) {
+                editTextAnnotation(at: index)
+            } else {
+                beginTextEditing(topLeft: point)
+            }
         }
     }
 
-    /// 双击（选择工具）：文字标注 → 重新编辑内容；空白处 → 确认复制
+    private func textAnnotation(at point: CGPoint) -> Int? {
+        guard let index = annotations.indices.reversed().first(where: { annotations[$0].hitTest(point) }),
+              case .text = annotations[index].payload else { return nil }
+        return index
+    }
+
+    /// 双击已有文字继续编辑；非文字标注只选中，空白才确认复制。
     private func handleSelectDoubleClick(at point: CGPoint) {
-        if let index = annotations.indices.reversed().first(where: { annotations[$0].hitTest(point) }),
-           case .text(let origin, let string, let fontSize) = annotations[index].payload {
-            selectedIndex = nil
-            editingTextIndex = index
-            placeTextField(at: origin, initialText: string, fontSize: fontSize)
+        if let index = textAnnotation(at: point) {
+            editTextAnnotation(at: index)
+        } else if let index = annotations.indices.reversed().first(where: { annotations[$0].hitTest(point) }) {
+            selectedIndex = index
         } else {
             onConfirm?()
         }
+    }
+
+    private func editTextAnnotation(at index: Int) {
+        guard case .text(_, let string, let fontSize, let width) = annotations[index].payload else { return }
+        let annotation = annotations[index]
+        let rect = annotation.boundingRect
+        selectedIndex = nil
+        editingTextIndex = index
+        beginTextEditing(topLeft: CGPoint(x: rect.minX, y: rect.maxY), initialText: string,
+                         fontSize: fontSize, width: width, color: annotation.color,
+                         lineWidth: annotation.lineWidth)
     }
 
     func handleMouseDragged(to point: CGPoint, shiftDown: Bool) {
@@ -458,13 +495,19 @@ class EditorCanvasView: NSView {
             isShift ? redo() : undo()
             return
         }
+        // 原生输入视图接管回车、删除与输入撤销；画布回车仅在编辑结束后输出。
+        if let editor = textEditor, keyCode == 36 || keyCode == 76 {
+            if isCommand { finishTextEditing(commit: true) }
+            else { editor.insertNewline(nil) }
+            return
+        }
         switch keyCode {
         case 36, 76: // Enter / 小键盘 Enter → 复制并关闭
-            discardTextField(commit: true)
+            finishTextEditing(commit: true)
             onConfirm?()
         case 53: // Esc：取消文字/选中；绘制工具 → 选择/移动；选择工具空闲时才退出编辑器
-            if textField != nil {
-                discardTextField(commit: false)
+            if textEditor != nil {
+                finishTextEditing(commit: false)
             } else if selectedIndex != nil {
                 selectedIndex = nil
                 needsDisplay = true
@@ -504,6 +547,7 @@ class EditorCanvasView: NSView {
     }
 
     func undo() {
+        finishTextEditing(commit: true)
         guard let snapshot = undoStack.popLast() else { return }
         redoStack.append(annotations)
         trimHistoryToBudget()
@@ -512,6 +556,8 @@ class EditorCanvasView: NSView {
     }
 
     func redo() {
+        // 新输入形成自己的历史，不能用重做覆盖尚未提交的草稿。
+        finishTextEditing(commit: true)
         guard let snapshot = redoStack.popLast() else { return }
         undoStack.append(annotations)
         trimHistoryToBudget()
@@ -542,84 +588,184 @@ class EditorCanvasView: NSView {
         }
     }
 
-    /// 工具栏线宽/字号切换：既影响下一笔，也即时更新当前选中的标注。
+    /// 工具栏参数实时作用于当前段或选中标注；改字号仍保留首行位置。
     func setWidth(_ width: StrokeWidth) {
+        defer { syncStyleControls() }
         currentWidth = width
-        if let field = textField {
-            field.font = NSFont.boldSystemFont(ofSize: width.fontSize)
-            field.frame.size.height = width.fontSize + 12
+        if textEditor != nil {
+            textFontSize = width.fontSize
+            textLineWidth = width.lineWidth
+            refreshTextStyle()
+            return
         }
-        guard let index = selectedIndex else { return }
-
+        guard let index = selectedIndex, annotations.indices.contains(index) else { return }
         var updated = annotations[index]
         updated.lineWidth = width.lineWidth
         switch updated.payload {
-        case .text(let origin, let string, _):
-            updated.payload = .text(origin: origin, string: string, fontSize: width.fontSize)
+        case .text(_, let string, _, let wrapWidth):
+            let rect = updated.boundingRect
+            let size = EditorTextLayout(string: string, fontSize: width.fontSize, width: wrapWidth).size
+            updated.payload = .text(origin: CGPoint(x: rect.minX, y: rect.maxY - size.height),
+                                    string: string, fontSize: width.fontSize, width: wrapWidth)
         case .sequence(let center, let number, _):
-            updated.payload = .sequence(
-                center: center, number: number, diameter: width.sequenceDiameter
-            )
+            updated.payload = .sequence(center: center, number: number, diameter: width.sequenceDiameter)
         default:
             break
         }
+        if sameText(annotations[index], updated) { return }
         pushUndoSnapshot()
         annotations[index] = updated
     }
 
-    // MARK: - 文字输入
+    private func syncStyleControls() {
+        if textEditor != nil {
+            let width = StrokeWidth.allCases.first { $0.fontSize == textFontSize } ?? currentWidth
+            onStyleDisplayChange?(textColor, width, true)
+        } else if let index = selectedIndex, annotations.indices.contains(index) {
+            let annotation = annotations[index]
+            if case .text(_, _, let font, _) = annotation.payload {
+                let width = StrokeWidth.allCases.first { $0.fontSize == font } ?? currentWidth
+                onStyleDisplayChange?(annotation.color, width, true)
+            } else {
+                let width = StrokeWidth.allCases.first { $0.lineWidth == annotation.lineWidth } ?? currentWidth
+                onStyleDisplayChange?(annotation.color, width, false)
+            }
+        } else {
+            onStyleDisplayChange?(currentColor, currentWidth, currentTool == .text)
+        }
+    }
 
-    private func placeTextField(at point: CGPoint, initialText: String = "", fontSize: CGFloat? = nil) {
-        let size = fontSize ?? currentWidth.fontSize
-        let field = NSTextField(frame: NSRect(x: point.x, y: point.y, width: 240, height: size + 12))
-        field.stringValue = initialText
-        field.font = NSFont.boldSystemFont(ofSize: size)
-        field.textColor = currentColor
-        field.isBezeled = false
-        field.drawsBackground = true
-        field.backgroundColor = NSColor.white.withAlphaComponent(0.25)
-        field.focusRingType = .none
-        field.delegate = self
-        field.placeholderString = "输入文字"
-        addSubview(field)
-        window?.makeFirstResponder(field)
-        textField = field
+    private func applyCurrentColor() {
+        if textEditor != nil {
+            textColor = currentColor
+            refreshTextStyle()
+        } else if let index = selectedIndex, annotations.indices.contains(index),
+                  !annotations[index].color.isEqual(currentColor) {
+            pushUndoSnapshot()
+            annotations[index].color = currentColor
+        }
+    }
+
+    // MARK: - 多行文字编辑
+
+    private func beginTextEditing(topLeft point: CGPoint, initialText: String = "",
+                                  fontSize: CGFloat? = nil, width: CGFloat? = nil,
+                                  color: NSColor? = nil, lineWidth: CGFloat? = nil) {
+        textFontSize = fontSize ?? currentWidth.fontSize
+        textColor = color ?? currentColor
+        textLineWidth = lineWidth ?? currentWidth.lineWidth
+        if editingTextIndex != nil {
+            textTopLeft = point // 重编辑绝不反复叠加 cell 的内边距。
+        } else {
+            textTopLeft = CGPoint(x: min(max(0, point.x), max(0, imageSizePoints.width - 40)),
+                                  y: min(max(textFontSize + 8, point.y), imageSizePoints.height))
+        }
+        textWidth = width ?? max(1, imageSizePoints.width - textTopLeft.x)
+        let editor = EditorTextView(frame: .zero)
+        editor.isRichText = false
+        editor.importsGraphics = false
+        editor.allowsUndo = true
+        editor.isHorizontallyResizable = false
+        editor.isVerticallyResizable = false
+        editor.textContainerInset = CGSize(width: 4, height: 4)
+        editor.textContainer?.lineFragmentPadding = 0
+        editor.textContainer?.widthTracksTextView = false
+        editor.textContainer?.heightTracksTextView = false
+        editor.textContainer?.containerSize = CGSize(width: textWidth, height: EditorTextLayout.unboundedWidth)
+        editor.drawsBackground = true
+        editor.backgroundColor = .textBackgroundColor.withAlphaComponent(0.85)
+        editor.insertionPointColor = .textColor
+        editor.isAutomaticQuoteSubstitutionEnabled = false
+        editor.isAutomaticDashSubstitutionEnabled = false
+        editor.delegate = self
+        editor.toolTip = "回车换行 · ⌘回车结束 · Esc 取消"
+        editor.setAccessibilityLabel("截图文字，回车换行，Command 回车结束，Escape 取消")
+        editor.wantsLayer = true
+        editor.layer?.borderWidth = 1
+        editor.layer?.borderColor = NSColor.controlAccentColor.cgColor
+        editor.layer?.cornerRadius = 4
+        editor.onFinish = { [weak self] commit in self?.finishTextEditing(commit: commit) }
+        editor.string = initialText
+        textEditor = editor
+        selectedIndex = nil
+        refreshTextStyle()
+        addSubview(editor)
+        editor.setSelectedRange(NSRange(location: (initialText as NSString).length, length: 0))
+        window?.makeFirstResponder(editor)
+        onHistoryStateChange?(true, false)
         needsDisplay = true
     }
 
-    func discardTextField(commit: Bool) {
-        guard let field = textField else { return }
-        textField = nil
-        let string = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        // 关键修复：文字标注原点取「输入框 cell 的文字绘制区」原点，
-        // 而不是输入框 frame 原点 —— 提交后文字位置与输入时所见一致，不跳。
-        let cellRect = field.cell?.drawingRect(forBounds: field.bounds) ?? field.bounds
-        let textOrigin = CGPoint(
-            x: field.frame.minX + cellRect.minX,
-            y: field.frame.minY + cellRect.minY
-        )
-        let fontSize = field.font?.pointSize ?? currentWidth.fontSize
-        field.removeFromSuperview()
+    private func refreshTextStyle() {
+        guard let editor = textEditor else { return }
+        let attrs = EditorTextLayout.attributes(fontSize: textFontSize, color: textColor)
+        editor.typingAttributes = attrs
+        editor.textStorage?.addAttributes(attrs, range: NSRange(location: 0, length: (editor.string as NSString).length))
+        editor.font = NSFont.boldSystemFont(ofSize: textFontSize)
+        editor.textColor = textColor
+        resizeTextEditor()
+    }
 
-        if let editingIndex = editingTextIndex {
-            // 双击重编辑：原位替换内容，取消则保留原文
-            editingTextIndex = nil
-            if commit, !string.isEmpty {
-                pushUndoSnapshot()
-                let old = annotations[editingIndex]
-                annotations[editingIndex] = Annotation(
-                    payload: .text(origin: textOrigin, string: string, fontSize: fontSize),
-                    color: old.color, lineWidth: old.lineWidth
-                )
+    private func resizeTextEditor() {
+        guard let editor = textEditor, let manager = editor.layoutManager,
+              let container = editor.textContainer else { return }
+        let size = EditorTextLayout.size(manager: manager, container: container,
+                                        font: NSFont.boldSystemFont(ofSize: textFontSize))
+        // 只有撞到底边才上移：正常增行保留首行位置，边缘输入优先留在图内。
+        if size.height > textTopLeft.y {
+            textTopLeft.y = min(imageSizePoints.height, size.height)
+        }
+        let inset = editor.textContainerInset
+        editor.frame = CGRect(x: textTopLeft.x - inset.width,
+                              y: textTopLeft.y - size.height - inset.height,
+                              width: min(textWidth, max(120, size.width)) + inset.width * 2,
+                              height: size.height + inset.height * 2)
+        editor.needsDisplay = true
+    }
+
+    /// 所有离开文字编辑的路径走这里；先清除会话，再恢复画布，防止重入或旧下标复活。
+    func finishTextEditing(commit: Bool) {
+        guard let editor = textEditor else { return }
+        // 结束输入法组词后再读最终文字；取消由原生输入法先处理 marked text。
+        if commit { editor.unmarkText() }
+        let string = editor.string
+        let index = editingTextIndex
+        let size = EditorTextLayout(string: string, fontSize: textFontSize, width: textWidth).size
+        let updated = Annotation(payload: .text(origin: CGPoint(x: textTopLeft.x, y: textTopLeft.y - size.height),
+                                                string: string, fontSize: textFontSize, width: textWidth),
+                                 color: textColor, lineWidth: textLineWidth)
+        textEditor = nil
+        editingTextIndex = nil
+        editor.delegate = nil
+        editor.onFinish = nil
+        editor.removeFromSuperview()
+        selectedIndex = nil
+        if commit {
+            let isEmpty = string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if let index, annotations.indices.contains(index) {
+                if isEmpty {
+                    pushUndoSnapshot()
+                    annotations.remove(at: index)
+                } else if !sameText(annotations[index], updated) {
+                    pushUndoSnapshot()
+                    annotations[index] = updated
+                }
+                if !isEmpty { selectedIndex = index }
+            } else if !isEmpty {
+                pushAnnotation(updated)
+                selectedIndex = annotations.indices.last
             }
-        } else if commit, !string.isEmpty {
-            pushAnnotation(Annotation(
-                payload: .text(origin: textOrigin, string: string, fontSize: fontSize),
-                color: currentColor, lineWidth: currentWidth.lineWidth
-            ))
         }
         needsDisplay = true
         window?.makeFirstResponder(self)
+        onHistoryStateChange?(!undoStack.isEmpty, !redoStack.isEmpty)
+    }
+
+    private func sameText(_ lhs: Annotation, _ rhs: Annotation) -> Bool {
+        guard case .text(let a, let s, let f, let w) = lhs.payload,
+              case .text(let b, let t, let g, let v) = rhs.payload else { return false }
+        return a == b && s == t && f == g && w == v
+            && lhs.color.isEqual(rhs.color) && lhs.lineWidth == rhs.lineWidth
     }
 
     // MARK: - 光标
@@ -641,18 +787,45 @@ class EditorCanvasView: NSView {
     }
 }
 
-// MARK: - 文字输入代理（Enter 提交 / Esc 放弃）
+// MARK: - 原生文本系统：普通回车、选择、粘贴、中文组词和文本撤销均由 NSTextView 处理。
 
-extension EditorCanvasView: NSTextFieldDelegate {
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-            discardTextField(commit: true)
-            return true
+extension EditorCanvasView: NSTextViewDelegate {
+    func textDidChange(_ notification: Notification) {
+        resizeTextEditor()
+        onHistoryStateChange?(true, false)
+    }
+}
+
+final class EditorTextView: NSTextView {
+    var onFinish: ((Bool) -> Void)?
+
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func keyDown(with event: NSEvent) {
+        // IME 正在组词时，回车和 Esc 先交给输入法，不提前结束整段。
+        if !hasMarkedText(), event.modifierFlags.contains(.command),
+           event.keyCode == 36 || event.keyCode == 76 {
+            onFinish?(true)
+            return
         }
-        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
-            discardTextField(commit: false)
-            return true
+        super.keyDown(with: event)
+    }
+
+    override func cancelOperation(_ sender: Any?) {
+        if hasMarkedText() { super.cancelOperation(sender) }
+        else { onFinish?(false) }
+    }
+
+    override func insertTab(_ sender: Any?) { onFinish?(true) }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        if string.isEmpty {
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.secondaryLabelColor
+            ]
+            ("输入文字" as NSString).draw(at: CGPoint(x: textContainerInset.width,
+                y: textContainerInset.height), withAttributes: attrs)
         }
-        return false
     }
 }

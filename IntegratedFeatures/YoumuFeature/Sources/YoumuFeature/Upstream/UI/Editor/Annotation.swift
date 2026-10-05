@@ -36,7 +36,7 @@ enum EditorTool: CaseIterable {
         case .highlight: return "聚光高亮（框内明亮、框外柔和变暗）"
         case .mosaic: return "马赛克"
         case .sequence: return "序号（点击放置，自动递增）"
-        case .text: return "文字"
+        case .text: return "文字（回车换行，点已有文字继续编辑）"
         }
     }
 }
@@ -180,8 +180,8 @@ struct Annotation {
         case highlight(CGRect)
         /// 马赛克：rect 为图像点坐标；image 为拖放结束时预生成的像素化图（点尺寸）
         case mosaic(rect: CGRect, blockSize: CGFloat, image: NSImage?)
-        /// 文字：origin 为文字块左下角（未翻转上下文里 draw(at:) 的原点语义）
-        case text(origin: CGPoint, string: String, fontSize: CGFloat)
+        /// 文字块左下角与冻结折行宽度；编辑、命中和导出共用 TextKit 排版。
+        case text(origin: CGPoint, string: String, fontSize: CGFloat, width: CGFloat? = nil)
         /// 序号：center 圆心，number 从 1 开始
         case sequence(center: CGPoint, number: Int, diameter: CGFloat)
     }
@@ -215,8 +215,8 @@ struct Annotation {
             return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
         case .mosaic(let rect, _, _):
             return rect
-        case .text(let origin, let string, let fontSize):
-            let size = AnnotationRenderer.textSize(string: string, fontSize: fontSize)
+        case .text(let origin, let string, let fontSize, let width):
+            let size = EditorTextLayout(string: string, fontSize: fontSize, width: width).size
             return CGRect(origin: origin, size: size)
         case .sequence(let center, _, let diameter):
             return CGRect(
@@ -255,10 +255,10 @@ struct Annotation {
                 rect: rect.offsetBy(dx: delta.dx, dy: delta.dy),
                 blockSize: blockSize, image: image
             )
-        case .text(let origin, let string, let fontSize):
+        case .text(let origin, let string, let fontSize, let width):
             copy.payload = .text(
                 origin: CGPoint(x: origin.x + delta.dx, y: origin.y + delta.dy),
-                string: string, fontSize: fontSize
+                string: string, fontSize: fontSize, width: width
             )
         case .sequence(let center, let number, let diameter):
             copy.payload = .sequence(
@@ -326,12 +326,9 @@ enum AnnotationRenderer {
                 rect.fill()
             }
 
-        case .text(let origin, let string, let fontSize):
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.boldSystemFont(ofSize: fontSize),
-                .foregroundColor: color
-            ]
-            NSAttributedString(string: string, attributes: attrs).draw(at: origin)
+        case .text(let origin, let string, let fontSize, let width):
+            EditorTextLayout(string: string, fontSize: fontSize, width: width, color: color)
+                .draw(at: origin)
 
         case .sequence(let center, let number, let diameter):
             let rect = CGRect(
@@ -366,10 +363,7 @@ enum AnnotationRenderer {
     }
 
     static func textSize(string: String, fontSize: CGFloat) -> CGSize {
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.boldSystemFont(ofSize: fontSize)
-        ]
-        return (string as NSString).size(withAttributes: attrs)
+        EditorTextLayout(string: string, fontSize: fontSize).size
     }
 
     /// 比直角框更接近 macOS 卡片语言：半径随短边和线宽变化，大小框都不过圆。
@@ -680,6 +674,59 @@ enum SpotlightRenderer {
             border.lineWidth = 1.5
             border.stroke()
         }
+        NSGraphicsContext.restoreGraphicsState()
+    }
+}
+
+
+/// 原生多行排版：和 NSTextView 一样的字体、段落、零行边距与冻结宽度。
+/// 保留末尾空行，增长时首行锚点不变；绘制只转换一次上下坐标。
+final class EditorTextLayout {
+    static let unboundedWidth: CGFloat = 100_000
+    let storage: NSTextStorage
+    let manager: NSLayoutManager
+    let container: NSTextContainer
+    let size: CGSize
+
+    static func attributes(fontSize: CGFloat, color: NSColor) -> [NSAttributedString.Key: Any] {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byWordWrapping
+        paragraph.lineSpacing = 2
+        return [.font: NSFont.boldSystemFont(ofSize: fontSize),
+                .foregroundColor: color, .paragraphStyle: paragraph]
+    }
+
+    static func size(manager: NSLayoutManager, container: NSTextContainer, font: NSFont) -> CGSize {
+        manager.ensureLayout(for: container)
+        var rect = manager.usedRect(for: container)
+        if manager.extraLineFragmentTextContainer === container {
+            rect = rect.union(manager.extraLineFragmentUsedRect)
+        }
+        return CGSize(width: max(1, ceil(rect.maxX)),
+                      height: max(ceil(manager.defaultLineHeight(for: font)), ceil(rect.maxY)))
+    }
+
+    init(string: String, fontSize: CGFloat, width: CGFloat? = nil, color: NSColor = .textColor) {
+        storage = NSTextStorage(string: string, attributes: Self.attributes(fontSize: fontSize, color: color))
+        manager = NSLayoutManager()
+        container = NSTextContainer(containerSize: CGSize(width: max(1, width ?? Self.unboundedWidth),
+                                                          height: Self.unboundedWidth))
+        container.lineFragmentPadding = 0
+        storage.addLayoutManager(manager)
+        manager.addTextContainer(container)
+        size = Self.size(manager: manager, container: container,
+                         font: NSFont.boldSystemFont(ofSize: fontSize))
+    }
+
+    func draw(at origin: CGPoint) {
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        NSGraphicsContext.saveGraphicsState()
+        context.translateBy(x: origin.x, y: origin.y + size.height)
+        context.scaleBy(x: 1, y: -1)
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
+        let glyphs = manager.glyphRange(for: container)
+        manager.drawBackground(forGlyphRange: glyphs, at: .zero)
+        manager.drawGlyphs(forGlyphRange: glyphs, at: .zero)
         NSGraphicsContext.restoreGraphicsState()
     }
 }

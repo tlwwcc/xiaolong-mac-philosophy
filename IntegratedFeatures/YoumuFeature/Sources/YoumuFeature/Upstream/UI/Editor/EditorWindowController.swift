@@ -203,6 +203,9 @@ class EditorWindowController: NSObject {
         canvas.onConfirm = { [weak self] in self?.confirm() }
         canvas.onCancel = { [weak self] in self?.cancel() }
         canvas.onSave = { [weak self] in self?.save() }
+        canvas.onStyleDisplayChange = { [weak self] color, width, forText in
+            self?.toolbar.setStyleDisplay(color: color, width: width, forText: forText)
+        }
         canvas.onHistoryStateChange = { [weak self] canUndo, canRedo in
             self?.toolbar.setHistoryEnabled(canUndo: canUndo, canRedo: canRedo)
         }
@@ -217,6 +220,7 @@ class EditorWindowController: NSObject {
 
     /// ✓ / Enter：合成 → 复制剪贴板（PNG+TIFF）→ 关闭
     private func confirm() {
+        canvas.finishTextEditing(commit: true)
         ImageComposer.copyToPasteboard(
             base: baseCGImage, pixelScale: pixelScale, annotations: canvas.annotations
         )
@@ -226,6 +230,7 @@ class EditorWindowController: NSObject {
 
     /// 💾：合成 → NSSavePanel 存 PNG → 保存成功后关闭
     private func save() {
+        canvas.finishTextEditing(commit: true)
         ImageComposer.savePNGWithPanel(
             base: baseCGImage, pixelScale: pixelScale, annotations: canvas.annotations
         ) { [weak self] saved in
@@ -238,6 +243,7 @@ class EditorWindowController: NSObject {
 
     /// 📌：合成当前编辑结果 → 钉成桌面最前端的浮动图窗（编辑器保持打开）
     private func pin() {
+        canvas.finishTextEditing(commit: true)
         guard let rep = ImageComposer.composedRep(
             base: baseCGImage, pixelScale: pixelScale, annotations: canvas.annotations
         ), let composed = rep.cgImage else { return }

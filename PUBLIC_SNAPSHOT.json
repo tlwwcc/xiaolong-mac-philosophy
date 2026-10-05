@@ -222,23 +222,23 @@
     },
     "IntegratedFeatures/YoumuFeature/Sources/YoumuFeature/Upstream/UI/Editor/Annotation.swift": {
       "executable": false,
-      "sha256": "aa5002a13f395949c74849b88bd695455f4b2ba29e30d4fdd41995076c23fe62",
-      "size": 24953
+      "sha256": "b7cedb9b6141face8bac45c307865f46e90df1fdafceed877e10d234ade69ac2",
+      "size": 27392
     },
     "IntegratedFeatures/YoumuFeature/Sources/YoumuFeature/Upstream/UI/Editor/EditorCanvasView.swift": {
       "executable": false,
-      "sha256": "5623d88cd8a8600bba2e6b61fa6ce4f517328f15ed254ed8aa81e7053504adeb",
-      "size": 25892
+      "sha256": "7696b5fa2f5ff2cf4c1a7d35643161048208d787d01eeea8cf6a6276ced8b7bc",
+      "size": 34426
     },
     "IntegratedFeatures/YoumuFeature/Sources/YoumuFeature/Upstream/UI/Editor/EditorToolbarView.swift": {
       "executable": false,
-      "sha256": "31e1e83ce4f8f5edd20569449810d98ad10c32d0e55f902e0284c0f7e765b245",
-      "size": 20759
+      "sha256": "1a2fc9a73bc5006756143b083b2eaa0e406b33e3e369cbdba7830cacd67da83c",
+      "size": 21227
     },
     "IntegratedFeatures/YoumuFeature/Sources/YoumuFeature/Upstream/UI/Editor/EditorWindowController.swift": {
       "executable": false,
-      "sha256": "001f4c01f5262ee434c14ebcb072fb26db8ebf1750a43491bf3f8fa59f56721a",
-      "size": 14643
+      "sha256": "3ab62cf9af511fe34f8c5272fed847309521653f5d58455261001b0c5bd0242f",
+      "size": 14959
     },
     "IntegratedFeatures/YoumuFeature/Sources/YoumuFeature/Upstream/UI/Editor/ImageComposer.swift": {
       "executable": false,
@@ -355,6 +355,11 @@
       "sha256": "90ec1643fccb26abb17a28f4a5f208bb1865abc7be31ca4ce5ace00fd0fb9ac8",
       "size": 3384
     },
+    "IntegratedFeatures/YoumuFeature/Tests/YoumuFeatureTests/EditorTextInteractionTests.swift": {
+      "executable": false,
+      "sha256": "b8ceb0b5b15592a68dbba6dce7f11b04e720653a6146e35130a3629af48ddf61",
+      "size": 16860
+    },
     "IntegratedFeatures/YoumuFeature/Tests/YoumuFeatureTests/InPlaceTranslationRecoveryTests.swift": {
       "executable": false,
       "sha256": "4e04a66cef60f58bb5fa4a0a12bc8717f3d18b2f8af61fdd1f98b22afde1f462",
@@ -462,7 +467,7 @@
     },
     "Resources/Info.plist": {
       "executable": false,
-      "sha256": "e49e8ee9278d19fe3f2bbcf8df880c24e90c1bd9f2c7d3b9c039d439188c7694",
+      "sha256": "54ef7a33ae3b9640843d1925ae907064cff729fd5a8bd7a52b9bcee43ae61955",
       "size": 2719
     },
     "Resources/PijuanAppIcon.png": {
@@ -802,13 +807,13 @@
     },
     "Sources/ProductReleasePolicy.swift": {
       "executable": false,
-      "sha256": "65dbdd9baa4c0a76ddec157be51bb5bf27d51b39bde913f972874b7ec42bfd13",
+      "sha256": "3cd3d12fd6fb8437ba2a93abcf80a6c4bb294fe6ae150733c4dfe241ea31443a",
       "size": 1752
     },
     "Sources/ReleaseNotes.swift": {
       "executable": false,
-      "sha256": "567920cec372d19e9b80a120e78bc573201fc1d00c1cb2d6e941785973e79b7b",
-      "size": 118672
+      "sha256": "2678ce0d28c8330534b3b4551973c1a49822de50e3e6fbf9419f2718913a7b7c",
+      "size": 119538
     },
     "Sources/RetiredShiftInputSourcePreferences.swift": {
       "executable": false,
@@ -948,5 +953,5 @@
   },
   "kind": "frozen",
   "schemaVersion": 1,
-  "sourceRevision": "d5d39be243d60de7dd76aefdeb9b59aa1ac9f881"
+  "sourceRevision": "8e1905a2e3c3d527ab811d853e8e77cce3775df4"
 }
