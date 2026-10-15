@@ -34,6 +34,47 @@ enum CaptureSessionGate {
     }
 }
 
+/// Each copied image is its own pin invocation. Copying another image starts a new window;
+/// repeating the shortcut without changing the clipboard closes only that image's owner.
+/// Keep every owner until dismissal so lifecycle invalidation can still drain all shortcut pins.
+struct PinClipboardSessionRegistry {
+    private var ownersByRevision: [Int: CaptureCommandOwner] = [:]
+    private var revisionsByOwner: [CaptureCommandOwner: Int] = [:]
+
+    var count: Int { ownersByRevision.count }
+
+    mutating func begin(clipboardChangeCount: Int) -> CaptureCommandOwner? {
+        guard ownersByRevision[clipboardChangeCount] == nil else { return nil }
+        let owner = CaptureCommandOwner(mode: .pinClipboard, sessionID: UUID())
+        ownersByRevision[clipboardChangeCount] = owner
+        revisionsByOwner[owner] = clipboardChangeCount
+        return owner
+    }
+
+    mutating func take(clipboardChangeCount: Int) -> CaptureCommandSession? {
+        guard let owner = ownersByRevision.removeValue(forKey: clipboardChangeCount) else {
+            return nil
+        }
+        revisionsByOwner.removeValue(forKey: owner)
+        return CaptureCommandSession(owner: owner, phase: .presenting)
+    }
+
+    mutating func finish(_ owner: CaptureCommandOwner) {
+        guard let revision = revisionsByOwner.removeValue(forKey: owner),
+              ownersByRevision[revision] == owner else { return }
+        ownersByRevision.removeValue(forKey: revision)
+    }
+
+    mutating func takeAll() -> [CaptureCommandSession] {
+        let removed = ownersByRevision.values.map {
+            CaptureCommandSession(owner: $0, phase: .presenting)
+        }
+        ownersByRevision.removeAll(keepingCapacity: true)
+        revisionsByOwner.removeAll(keepingCapacity: true)
+        return removed
+    }
+}
+
 /// 屏幕截图服务：触发区域选择 → 截图 → 按模式交给后续流程
 @MainActor
 final class ScreenCaptureService {
@@ -49,6 +90,7 @@ final class ScreenCaptureService {
     private var inPlaceOwner: CaptureCommandOwner?
     private var activeLongScreenshotOwner: CaptureCommandOwner?
     private var sessions = CaptureCommandSessionRegistry()
+    private var pinSessions = PinClipboardSessionRegistry()
     private var processingTasks: [CaptureCommandOwner: Task<Void, Never>] = [:]
     private var longScreenshotActivityChanged: ((Bool) -> Void)?
 
@@ -62,7 +104,7 @@ final class ScreenCaptureService {
     }
 
     func cancelAllCommandSessions() {
-        let invalidated = sessions.takeAll()
+        let invalidated = sessions.takeAll() + pinSessions.takeAll()
         invalidated.forEach(cancel(session:))
     }
 
@@ -70,13 +112,22 @@ final class ScreenCaptureService {
         let modes = CaptureCommandInvalidationPolicy.modes(affectedBy: reason)
         let phases = CaptureCommandInvalidationPolicy.phases(affectedBy: reason)
         let invalidated = sessions.take(modes: modes, phases: phases)
-        invalidated.forEach(cancel(session:))
+        let invalidatedPins = modes.contains(.pinClipboard) && phases.contains(.presenting)
+            ? pinSessions.takeAll() : []
+        (invalidated + invalidatedPins).forEach(cancel(session:))
     }
 
     /// Host preflight calls this before entitlement and permission gates. Therefore an existing
     /// result can always honor the family toggle contract even if new invocations are now denied.
     @discardableResult
     func cancelIfActive(mode: TranslateMode) -> Bool {
+        if mode == .pinClipboard {
+            guard let active = pinSessions.take(
+                clipboardChangeCount: NSPasteboard.general.changeCount
+            ) else { return false }
+            cancel(session: active)
+            return true
+        }
         guard let active = sessions.take(mode: mode) else { return false }
         cancel(session: active)
         return true
@@ -98,12 +149,14 @@ final class ScreenCaptureService {
         }
         // 钉截图：探测剪贴板直接钉出，不需要选区，也不需要屏幕录制权限
         if mode == .pinClipboard {
-            guard let owner = sessions.begin(mode: mode, phase: .presenting) else { return }
+            guard let owner = pinSessions.begin(
+                clipboardChangeCount: NSPasteboard.general.changeCount
+            ) else { return }
             if !PinWindowController.pinFromClipboard(
                 owner: owner,
                 onDismiss: presentationDidDismiss
             ) {
-                sessions.finish(owner)
+                pinSessions.finish(owner)
                 ToastWindow.show(message: "剪贴板没有图片")
             } else {
                 successfulUse?()
@@ -425,6 +478,9 @@ final class ScreenCaptureService {
 
     private func presentationDidDismiss(_ owner: CaptureCommandOwner) {
         processingTasks.removeValue(forKey: owner)?.cancel()
+        if owner.mode == .pinClipboard {
+            pinSessions.finish(owner)
+        }
         sessions.finish(owner)
     }
 

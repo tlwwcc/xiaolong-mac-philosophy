@@ -4,58 +4,23 @@
 <dict>
 	<key>AIXLGBuildChannel</key>
 	<string>stable</string>
-	<key>SUFeedURL</key>
-	<string>https://aixlg.com/updates/appcast.xml</string>
-	<key>SUPublicEDKey</key>
-	<string>GUWrq5FHfWqcrXUPdGYo1XyqaHl5rjQx+35+a6KsOUE=</string>
-	<key>SUEnableAutomaticChecks</key>
-	<true/>
-	<key>SUScheduledCheckInterval</key>
-	<integer>3600</integer>
-	<key>SUAutomaticallyUpdate</key>
-	<false/>
-	<key>SUAllowsAutomaticUpdates</key>
-	<false/>
-	<key>SUVerifyUpdateBeforeExtraction</key>
-	<true/>
-	<key>SURequireSignedFeed</key>
-	<true/>
-	<key>AIXLGLicenseUIEnabled</key>
-	<false/>
 	<key>AIXLGLicenseEnforcementEnabled</key>
 	<false/>
+	<key>AIXLGLicenseUIEnabled</key>
+	<false/>
 	<key>AIXLGReleasePublishedAt</key>
-	<string>2026-10-06T00:00:00+08:00</string>
+	<string>2026-10-16T00:00:00+08:00</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>zh_CN</string>
 	<key>CFBundleDisplayName</key>
 	<string>小龙哥Mac哲学</string>
-	<key>CFBundleExecutable</key>
-	<string>aixlg-hotkeys</string>
-	<key>CFBundleIconFile</key>
-	<string>AppIcon</string>
-	<key>CFBundleIdentifier</key>
-	<string>cn.tlww.aixlg.hotkeys</string>
-	<key>CFBundleInfoDictionaryVersion</key>
-	<string>6.0</string>
-	<key>CFBundleName</key>
-	<string>小龙哥Mac哲学</string>
-	<key>CFBundleURLTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleURLName</key>
-			<string>cn.tlww.aixlg.hotkeys.invitation</string>
-			<key>CFBundleTypeRole</key>
-			<string>Viewer</string>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>aixlg-hotkeys</string>
-			</array>
-		</dict>
-	</array>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>pdf</string>
+			</array>
 			<key>CFBundleTypeName</key>
 			<string>PDF 文档</string>
 			<key>CFBundleTypeRole</key>
@@ -66,18 +31,37 @@
 			<array>
 				<string>com.adobe.pdf</string>
 			</array>
-			<key>CFBundleTypeExtensions</key>
-			<array>
-				<string>pdf</string>
-			</array>
 		</dict>
 	</array>
+	<key>CFBundleExecutable</key>
+	<string>aixlg-hotkeys</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>cn.tlww.aixlg.hotkeys</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>小龙哥Mac哲学</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.26</string>
+	<string>1.0.28</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>cn.tlww.aixlg.hotkeys.invitation</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>aixlg-hotkeys</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
-	<string>244</string>
+	<string>246</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 	<key>NSAppleEventsUsageDescription</key>
@@ -86,5 +70,21 @@
 	<true/>
 	<key>NSInputMonitoringUsageDescription</key>
 	<string>仅在你录制快捷键、启用实体修饰键双击、Caps 核心键、快捷短语、游目长截图或鼠标插件时监听对应输入事件；不会保存或上传输入内容。</string>
+	<key>SUAllowsAutomaticUpdates</key>
+	<false/>
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://aixlg.com/updates/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>GUWrq5FHfWqcrXUPdGYo1XyqaHl5rjQx+35+a6KsOUE=</string>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>3600</integer>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
 </dict>
 </plist>

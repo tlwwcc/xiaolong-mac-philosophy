@@ -3,41 +3,43 @@ import SwiftUI
 
 struct FreeSoftwareSettingsView: View {
   private let shareCopy = """
-  小龙哥 Mac 哲学，把快捷键练成你的连招。
-  像 LOL 里的英雄连招：游戏里，伤害打满；Mac 上，效率拉满。
-  截图、切到微信、粘贴，一气呵成。用成习惯，把时间留给真正想做的事。
-  全部功能永久免费，无需注册。
-  https://aixlg.com/mac/
-  """
-  @State private var copyStatus = ""
+    小龙哥 Mac 哲学，左手，掌控 Mac 一切。
+    全部功能免费开源，无需注册；顺手分享给你。
+    https://aixlg.com/mac/
+    """
+  @State private var copySucceeded: Bool?
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 14) {
-      Label("所有功能，永久免费", systemImage: "heart.fill").font(.headline)
-      Text("无需登录，没有使用期限。把快捷键串成连招，也把这份顺手分享给朋友。")
-        .font(.subheadline).foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
+    VStack(alignment: .leading, spacing: 12) {
       Button {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(shareCopy, forType: .string)
-        copyStatus = "已复制，粘贴到微信或飞书即可。"
+        copySucceeded = NSPasteboard.general.setString(shareCopy, forType: .string)
       } label: {
-        Label("复制分享文案", systemImage: "doc.on.doc")
+        Label("分享给身边的朋友", systemImage: "square.and.arrow.up")
       }
       .buttonStyle(.borderedProminent)
-      if !copyStatus.isEmpty {
-        Text(copyStatus)
+      .controlSize(.large)
+      .help("点一下即可复制，粘贴给朋友就好。")
+      .accessibilityIdentifier("about.shareFriends")
+      .accessibilityValue(copySucceeded == true ? "分享内容已复制" : "")
+      if let copySucceeded {
+        Text(copySucceeded ? "已复制，粘贴给朋友就好。" : "复制失败，可在下方选中内容复制。")
           .font(.caption)
-          .foregroundStyle(.secondary)
-          .accessibilityLabel(copyStatus)
+          .foregroundStyle(copySucceeded ? Color.secondary : Color.orange)
+          .accessibilityIdentifier("about.shareFeedback")
+        if !copySucceeded {
+          Text(shareCopy)
+            .font(.caption)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+        }
       }
-      Divider()
-      Text("感谢最初的支持").font(.headline)
-      Text("感谢最早购买或收到赠送的 14 位朋友。既有的永久 AI 答疑支持继续保留，遇到问题，随时联系小龙哥。")
-        .font(.subheadline).foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
-      Text("联系小龙哥").font(.subheadline)
-      FeedbackRequestPanelView()
+      HStack(spacing: 16) {
+        Link("官网", destination: URL(string: "https://aixlg.com/mac/")!)
+        Link("隐私", destination: URL(string: "https://aixlg.com/privacy.html")!)
+      }
+      .font(.caption)
+      .buttonStyle(.link)
     }
   }
 }

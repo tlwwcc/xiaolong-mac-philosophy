@@ -52,7 +52,8 @@ enum PinImageBudget {
     static let maximumRetainedPixelCount = 16 * 1_024 * 1_024
     static let maximumRetainedBytes = 64 * 1_024 * 1_024
     static let maximumTotalRetainedBytes = 256 * 1_024 * 1_024
-    static let maximumWindowCount = 8
+    // Reserve window/layer overhead as well, so many tiny images cannot evade the memory budget.
+    static let reservedWindowBytes = 1 * 1_024 * 1_024
 
     static func acceptsInputDimensions(width: Int, height: Int) -> Bool {
         guard width > 0, height > 0,
@@ -212,16 +213,16 @@ final class PinWindowController {
         owner: CaptureCommandOwner? = nil,
         onDismiss: ((CaptureCommandOwner) -> Void)? = nil
     ) -> Bool {
-        guard pins.count < PinImageBudget.maximumWindowCount else {
-            ToastWindow.show(message: "定图已达 8 张上限，请先关闭一张")
-            return false
-        }
         guard let preparedImage = PinImageBudget.preparedImage(image),
               let retainedBytes = PinImageBudget.retainedBytes(of: preparedImage),
-              retainedBytes <= PinImageBudget.maximumRetainedBytes,
-              pins.reduce(0, { $0 + $1.retainedBytes })
-                <= PinImageBudget.maximumTotalRetainedBytes - retainedBytes else {
+              retainedBytes <= PinImageBudget.maximumRetainedBytes else {
             ToastWindow.show(message: "图片过大，无法安全定图")
+            return false
+        }
+        guard pins.reduce(0, { $0 + $1.retainedBytes + PinImageBudget.reservedWindowBytes })
+                <= PinImageBudget.maximumTotalRetainedBytes
+                    - retainedBytes - PinImageBudget.reservedWindowBytes else {
+            ToastWindow.show(message: "贴图占用较多内存，请先关闭几张再贴")
             return false
         }
         let controller = PinWindowController(

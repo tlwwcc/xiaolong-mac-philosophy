@@ -19,9 +19,24 @@ struct ReleaseNoteEntry: Equatable, Identifiable {
 
 enum ReleaseNotes {
   static let fallbackChangelogURL = URL(
-    string: "https://aixlg.com/mac/changelog/?v=1.0.26-244")!
+    string: "https://aixlg.com/mac/changelog/?v=1.0.28-246")!
 
   static let bundled: [ReleaseNoteEntry] = [
+    ReleaseNoteEntry(
+      version: "1.0.28",
+      build: 246,
+      dateText: "2026-10-16",
+      title: "设置更清爽，顺手分享给朋友",
+      summary: "关于与更新合在一页，分享点一下就好；做教程时，多张贴图可以一起留在桌面。",
+      highlights: [
+        "通用、权限、关于与更新三页更简洁；点“分享给身边的朋友”即可复制分享内容，重复说明和二维码已收起。",
+        "复制新图片再贴图，上一张继续保留；每张可以单独移动、缩放和关闭。",
+        "Edge 朗读按所选声音播放，失败不会偷偷换声；新功能优先体验可填写昵称报名。",
+        "新安装的快捷短语从空白开始，不用清理示例；菜单默认显示剪贴板，进程查看器和保持唤醒按需添加。",
+      ],
+      previousHighlights: ["已有短语和个人设置保留；不报名优先体验，也能正常使用和更新。"],
+      changelogURL: fallbackChangelogURL
+    ),
     ReleaseNoteEntry(
       version: "1.0.26",
       build: 244,
@@ -34,7 +49,7 @@ enum ReleaseNotes {
         "按⌘回车结束本段，Esc取消本次修改；误移或误删可以直接撤销，方便反复调整。",
       ],
       previousHighlights: ["保留个人快捷键与设置，无需新增权限。"],
-      changelogURL: fallbackChangelogURL
+      changelogURL: URL(string: "https://aixlg.com/mac/changelog/?v=1.0.26-244")!
     ),
     ReleaseNoteEntry(
       version: "1.0.25",

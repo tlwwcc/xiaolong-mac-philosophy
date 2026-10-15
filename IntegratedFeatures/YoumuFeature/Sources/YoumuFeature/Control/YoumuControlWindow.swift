@@ -95,6 +95,7 @@ struct YoumuControlView: View {
   @State private var onlineTestTask: Task<Void, Never>?
   @State private var onlineTestID: UUID?
   @State private var previousAPIOrigin: String?
+  @State private var speechSnapshot = SpeechService.shared.snapshot
 
   let canOpenShortcutManager: Bool
   let openShortcutManager: @MainActor () -> Void
@@ -309,6 +310,7 @@ struct YoumuControlView: View {
         .disabled(settings.speechBackend == .macLocal)
         .onChange(of: settings.speechVoice) { _ in
           SpeechService.shared.stop()
+          settings.speechBackend = .edgeOnline
           persistSettings()
         }
 
@@ -318,7 +320,10 @@ struct YoumuControlView: View {
               text: "游目，看见哪里，就从哪里开始理解。",
               language: "zh-CN")
           } label: {
-            Label("试听", systemImage: "speaker.wave.2")
+            Label(
+              SpeechService.shared.isSpeaking ? "停止" : (speechSnapshot.state == .failed ? "重试" : "试听"),
+              systemImage: SpeechService.shared.isSpeaking ? "stop.fill" : "speaker.wave.2"
+            )
           }
 
           if settings.speechBackend != .macLocal {
@@ -326,6 +331,12 @@ struct YoumuControlView: View {
               OnlineDataConsentManager.shared.reset(.edgeSpeech)
             }
           }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: SpeechService.stateDidChangeNotification)) { _ in
+          speechSnapshot = SpeechService.shared.snapshot
+        }
+        if let notice = speechSnapshot.notice {
+          Text(notice).font(.caption).foregroundStyle(.secondary)
         }
       }
     }

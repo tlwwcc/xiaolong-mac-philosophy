@@ -6,6 +6,7 @@ enum SpeechPlaybackState: String {
     case playing
     case paused
     case finished
+    case failed
 }
 
 enum SpeechPlaybackBackend: String {
@@ -28,6 +29,17 @@ struct SpeechPlaybackSnapshot {
     let rate: Float
     let backend: SpeechPlaybackBackend?
     let canSeek: Bool
+    let notice: String?
+    let voiceIdentifier: String?
+
+    var backendDescription: String {
+        guard let backend else { return "声音未启动" }
+        guard backend == .edge else { return "Mac 本机声音 · 文字不离开本机" }
+        if let voiceIdentifier, let voice = EdgeSpeechVoice(rawValue: voiceIdentifier) {
+            return "Edge · " + voice.displayName
+        }
+        return "Edge 神经声音 · 自然朗读"
+    }
 }
 
 struct SpeechRequestFence {
@@ -57,7 +69,7 @@ enum SpeechRateChangePolicy {
     }
 }
 
-/// 朗读服务：Edge 在线神经声音优先，网络或协议失败时回落 AVSpeechSynthesizer。
+/// 朗读服务：遵守选定来源；只有自动模式允许明示后回落到本机声音。
 ///
 /// Edge 使用真实 WordBoundary 时间轴驱动“歌词式”高亮；本机声音使用 Apple 的
 /// willSpeakRangeOfSpeechString 回调。所有公开控制均由主线程 UI 调用。
@@ -73,12 +85,21 @@ final class SpeechService: NSObject, @unchecked Sendable {
     private let synthesizer = AVSpeechSynthesizer()
     private var audioPlayer: AVAudioPlayer?
     private var edgeTask: Task<Void, Never>?
-    private var edgeFallback: (text: String, language: String)?
     private var progressTimer: Timer?
     private var timedRanges: [SpeechTimedRange] = []
     private var sourceText = ""
     private var sourceLanguage = "en-US"
     private var sourceVoice: EdgeSpeechVoice = .yunjian
+    private var sourcePreference: SpeechBackendPreference = .automatic
+    private var loadSettings: () -> AppSettings = { AppSettings.load() }
+    private var requestConsent: () -> Bool = {
+        OnlineDataConsentManager.shared.request(.edgeSpeech, endpoint: EdgeOnlineSpeechClient.onlineConsentEndpoint)
+    }
+    private var synthesize: (String, String, EdgeSpeechVoice) async throws -> EdgeSpeechResult = { text, language, voice in
+        try await EdgeOnlineSpeechClient().synthesize(text: text, language: language, preferredChineseVoice: voice)
+    }
+    private var reportNotice: (String) -> Void = { ToastWindow.show(message: $0) }
+    private var localSpeechHandler: ((AVSpeechUtterance) -> Void)?
     private var requestFence = SpeechRequestFence()
     private var localUtteranceOwner: (identity: ObjectIdentifier, generation: UInt64)?
     private var localUtteranceGeneration: UInt64 = 0
@@ -89,6 +110,7 @@ final class SpeechService: NSObject, @unchecked Sendable {
     private(set) var duration: TimeInterval = 0
     private(set) var currentRange: NSRange?
     private(set) var backend: SpeechPlaybackBackend?
+    private(set) var notice: String?
 
     var isSpeaking: Bool {
         state == .loading || state == .playing || state == .paused
@@ -103,11 +125,32 @@ final class SpeechService: NSObject, @unchecked Sendable {
             currentRange: currentRange,
             rate: playbackRate,
             backend: backend,
-            canSeek: audioPlayer != nil
+            canSeek: audioPlayer != nil,
+            notice: notice,
+            voiceIdentifier: backend == .edge
+                ? EdgeOnlineSpeechClient.voiceIdentifier(for: sourceLanguage, preferredChineseVoice: sourceVoice)
+                : nil
         )
     }
 
     private override init() {
+        super.init()
+        synthesizer.delegate = self
+    }
+
+    /// Isolated dependencies keep provider/error/late-response tests off the network and speakers.
+    init(
+        loadSettings: @escaping () -> AppSettings,
+        requestConsent: @escaping () -> Bool,
+        synthesize: @escaping (String, String, EdgeSpeechVoice) async throws -> EdgeSpeechResult,
+        reportNotice: @escaping (String) -> Void,
+        localSpeechHandler: ((AVSpeechUtterance) -> Void)? = nil
+    ) {
+        self.loadSettings = loadSettings
+        self.requestConsent = requestConsent
+        self.synthesize = synthesize
+        self.reportNotice = reportNotice
+        self.localSpeechHandler = localSpeechHandler
         super.init()
         synthesizer.delegate = self
     }
@@ -135,7 +178,8 @@ final class SpeechService: NSObject, @unchecked Sendable {
         sourceText = trimmed
         let resolvedLanguage = language ?? Self.voiceLanguage(for: trimmed)
         sourceLanguage = resolvedLanguage
-        let settings = AppSettings.load()
+        let settings = loadSettings()
+        sourcePreference = settings.speechBackend
         let preferredVoice = Self.resolvedVoice(
             explicit: explicitVoice,
             configured: settings.speechVoice
@@ -151,36 +195,27 @@ final class SpeechService: NSObject, @unchecked Sendable {
         setState(.loading)
 
         edgeTask = Task { [weak self] in
-            guard let service = self else { return }
-            let allowed = OnlineDataConsentManager.shared.request(
-                .edgeSpeech,
-                endpoint: EdgeOnlineSpeechClient.onlineConsentEndpoint
-            )
+            guard let service = self, !Task.isCancelled,
+                  service.requestFence.accepts(requestID),
+                  service.state == .loading else { return }
+            let allowed = service.requestConsent()
             guard allowed else {
                 await MainActor.run {
                     guard service.requestFence.accepts(requestID),
                           service.state == .loading else { return }
                     service.edgeTask = nil
-                    service.speakLocally(text: trimmed, language: resolvedLanguage)
+                    service.handleEdgeFailure(EdgeOnlineSpeechError.consentRequired)
                 }
                 return
             }
             do {
-                let result = try await EdgeOnlineSpeechClient().synthesize(
-                    text: trimmed,
-                    language: resolvedLanguage,
-                    preferredChineseVoice: preferredVoice
-                )
+                let result = try await service.synthesize(trimmed, resolvedLanguage, preferredVoice)
                 try Task.checkCancellation()
                 await MainActor.run {
                     guard service.requestFence.accepts(requestID),
                           service.state == .loading else { return }
                     service.edgeTask = nil
-                    service.startEdgePlayback(
-                        result: result,
-                        fallbackText: trimmed,
-                        language: resolvedLanguage
-                    )
+                    service.startEdgePlayback(result: result)
                 }
             } catch is CancellationError {
                 // 用户停止：不启动本机兜底。
@@ -189,8 +224,7 @@ final class SpeechService: NSObject, @unchecked Sendable {
                     guard service.requestFence.accepts(requestID),
                           service.state == .loading else { return }
                     service.edgeTask = nil
-                    PrivacySafeLog.event("edge_speech_fallback", error: error)
-                    service.speakLocally(text: trimmed, language: resolvedLanguage)
+                    service.handleEdgeFailure(error)
                 }
             }
         }
@@ -208,12 +242,15 @@ final class SpeechService: NSObject, @unchecked Sendable {
             }
         case .paused:
             if let player = audioPlayer {
-                guard player.play() else { return }
+                guard player.play() else {
+                    handleEdgeFailure(EdgeOnlineSpeechError.playbackFailed)
+                    return
+                }
                 setState(.playing)
             } else {
                 if synthesizer.continueSpeaking() { setState(.playing) }
             }
-        case .finished, .idle:
+        case .finished, .idle, .failed:
             guard !sourceText.isEmpty else { return }
             speak(
                 text: sourceText,
@@ -256,7 +293,6 @@ final class SpeechService: NSObject, @unchecked Sendable {
         invalidateProgressTimer()
         audioPlayer?.stop()
         audioPlayer = nil
-        edgeFallback = nil
         if synthesizer.isSpeaking || synthesizer.isPaused {
             synthesizer.stopSpeaking(at: .immediate)
         }
@@ -265,42 +301,54 @@ final class SpeechService: NSObject, @unchecked Sendable {
         duration = 0
         currentRange = nil
         backend = nil
+        notice = nil
         setState(.idle)
     }
 
-    private func startEdgePlayback(
-        result: EdgeSpeechResult,
-        fallbackText: String,
-        language: String
-    ) {
+    private func startEdgePlayback(result: EdgeSpeechResult) {
         do {
             let player = try AVAudioPlayer(data: result.audio)
             player.delegate = self
             player.enableRate = true
             player.rate = playbackRate
-            player.prepareToPlay()
+            guard player.prepareToPlay(), player.duration > 0 else {
+                throw EdgeOnlineSpeechError.playbackFailed
+            }
             audioPlayer = player
-            edgeFallback = (fallbackText, language)
             backend = .edge
             duration = player.duration
             elapsed = 0
-            timedRanges = Self.timedRanges(
-                in: fallbackText,
-                boundaries: result.wordBoundaries
-            )
-            guard player.play() else {
-                audioPlayer = nil
-                edgeFallback = nil
-                speakLocally(text: fallbackText, language: language)
-                return
-            }
+            timedRanges = Self.timedRanges(in: sourceText, boundaries: result.wordBoundaries)
+            guard player.play() else { throw EdgeOnlineSpeechError.playbackFailed }
             setState(.playing)
             startProgressTimer()
         } catch {
-            PrivacySafeLog.event("edge_audio_playback_fallback", error: error)
-            audioPlayer = nil
-            edgeFallback = nil
-            speakLocally(text: fallbackText, language: language)
+            handleEdgeFailure(error)
+        }
+    }
+
+    private func handleEdgeFailure(_ error: Error) {
+        PrivacySafeLog.event("edge_speech_failed", error: error)
+        invalidateProgressTimer()
+        audioPlayer?.stop()
+        audioPlayer = nil
+        currentRange = nil
+        let consentDenied = (error as? EdgeOnlineSpeechError) == .consentRequired
+        if sourcePreference == .automatic {
+            notice = consentDenied
+                ? "未开启在线朗读，正在使用 Mac 本机声音"
+                : "Edge 暂不可用，已改用 Mac 本机声音"
+            reportNotice(notice!)
+            speakLocally(text: sourceText, language: sourceLanguage)
+        } else {
+            notice = consentDenied
+                ? "请在朗读设置中允许联网后重试"
+                : "Edge 声音暂不可用，请重试"
+            elapsed = 0
+            duration = 0
+            backend = .edge
+            setState(.failed)
+            reportNotice(notice!)
         }
     }
 
@@ -323,7 +371,11 @@ final class SpeechService: NSObject, @unchecked Sendable {
         localUtteranceGeneration &+= 1
         localUtteranceOwner = (ObjectIdentifier(utterance), localUtteranceGeneration)
         setState(.playing)
-        synthesizer.speak(utterance)
+        if let localSpeechHandler {
+            localSpeechHandler(utterance)
+        } else {
+            synthesizer.speak(utterance)
+        }
     }
 
     private func ownsLocalUtterance(_ identity: ObjectIdentifier) -> Bool {
@@ -544,7 +596,7 @@ extension SpeechService: AVSpeechSynthesizerDelegate, AVAudioPlayerDelegate {
 
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         let identity = ObjectIdentifier(player)
-        Task { @MainActor [weak self] in self?.handleAudioFinished(identity: identity) }
+        Task { @MainActor [weak self] in self?.handleAudioFinished(identity: identity, successfully: flag) }
     }
 
     nonisolated func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
@@ -557,30 +609,21 @@ extension SpeechService: AVSpeechSynthesizerDelegate, AVAudioPlayerDelegate {
 }
 
 private extension SpeechService {
-    func handleAudioFinished(identity: ObjectIdentifier) {
+    func handleAudioFinished(identity: ObjectIdentifier, successfully: Bool) {
         guard let player = audioPlayer, ObjectIdentifier(player) == identity else { return }
+        guard successfully else {
+            handleEdgeFailure(EdgeOnlineSpeechError.playbackFailed)
+            return
+        }
         invalidateProgressTimer()
         elapsed = duration
         currentRange = nil
         audioPlayer = nil
-        edgeFallback = nil
         setState(.finished)
     }
 
     func handleAudioDecodeError(identity: ObjectIdentifier, errorCode: Int?) {
         guard let player = audioPlayer, ObjectIdentifier(player) == identity else { return }
-        let fallback = edgeFallback
-        invalidateProgressTimer()
-        audioPlayer = nil
-        edgeFallback = nil
-        if let fallback {
-            PrivacySafeLog.event(
-                "edge_audio_decode_fallback",
-                metadata: ["errorCode": errorCode ?? 0]
-            )
-            speakLocally(text: fallback.text, language: fallback.language)
-        } else {
-            setState(.finished)
-        }
+        handleEdgeFailure(EdgeOnlineSpeechError.playbackFailed)
     }
 }

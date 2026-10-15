@@ -519,6 +519,10 @@ final class SelectionReaderPanelController: NSObject, NSWindowDelegate {
             stateTitle = "朗读完成"
             buttonTitle = "重新播放"
             symbol = "arrow.counterclockwise"
+        case .failed:
+            stateTitle = "语音未就绪"
+            buttonTitle = "重试"
+            symbol = "arrow.clockwise"
         }
         statusLabel?.stringValue = stateTitle
         statusLabel?.textColor = snapshot.state == .playing || snapshot.state == .loading
@@ -532,9 +536,7 @@ final class SelectionReaderPanelController: NSObject, NSWindowDelegate {
         playPauseButton?.title = buttonTitle
         playPauseButton?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: buttonTitle)
         playPauseButton?.isEnabled = snapshot.state != .loading
-        backendLabel?.stringValue = snapshot.backend == .local
-            ? "Mac 本机声音 · 文字不离开本机"
-            : "Edge 神经声音 · 自然朗读"
+        backendLabel?.stringValue = snapshot.notice ?? snapshot.backendDescription
         elapsedLabel?.stringValue = Self.timeString(snapshot.elapsed)
         durationLabel?.stringValue = Self.timeString(snapshot.duration)
         progressSlider?.doubleValue = snapshot.progress
@@ -711,6 +713,7 @@ final class SelectionReaderPanelController: NSObject, NSWindowDelegate {
         let previousVoice = settings.speechVoice
         guard selectedVoice != previousVoice else { return }
         settings.speechVoice = selectedVoice
+        settings.speechBackend = .edgeOnline
         guard settings.save() else {
             voiceButton?.selectItem(withTitle: Self.voiceTitle(previousVoice))
             NSSound.beep()

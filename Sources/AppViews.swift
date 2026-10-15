@@ -6820,8 +6820,7 @@ struct KeepAwakeSheetView: View {
 private enum SettingsArea: String, CaseIterable, Identifiable {
   case general = "通用"
   case permissions = "权限"
-  case updates = "软件更新"
-  case about = "关于"
+  case about = "关于与更新"
 
   var id: String { rawValue }
 
@@ -6829,7 +6828,6 @@ private enum SettingsArea: String, CaseIterable, Identifiable {
     switch self {
     case .general: return "gearshape"
     case .permissions: return "lock.shield"
-    case .updates: return "arrow.down.app"
     case .about: return "info.circle"
     }
   }
@@ -6840,7 +6838,8 @@ struct AboutPanelView: View {
   @State private var isClearPermissionConfirmationPresented = false
   @State private var isBestConfigurationConfirmationPresented = false
   @State private var isPermissionRecoveryExpanded = false
-  @State private var isDiagnosticsExpanded = false
+  @State private var isRecoveryExpanded = false
+  @State private var hoveredArea: SettingsArea?
 
   private var updateStateText: String {
     if model.isUpdateBusy {
@@ -6963,7 +6962,7 @@ struct AboutPanelView: View {
     HStack(spacing: 0) {
       settingsSidebar
       Divider()
-      selectedSettingsPage
+      selectedSettingsPage.id(activeSettingsArea)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Color(nsColor: .controlBackgroundColor))
@@ -6989,25 +6988,20 @@ struct AboutPanelView: View {
       model.refreshLaunchAtLoginStatus()
       model.refreshFileAssociationStatus()
       model.checkForUpdatesIfNeeded()
-      if SettingsArea(rawValue: model.selectedAboutSection) == nil {
-        model.selectedAboutSection = SettingsArea.general.rawValue
-      }
+      model.selectedAboutSection = SettingsNavigationPolicy.normalized(model.selectedAboutSection)
     }
   }
 
   private var activeSettingsArea: SettingsArea {
-    SettingsArea(rawValue: model.selectedAboutSection) ?? .general
+    SettingsArea(rawValue: SettingsNavigationPolicy.normalized(model.selectedAboutSection)) ?? .general
   }
 
   private var settingsSidebar: some View {
     VStack(alignment: .leading, spacing: 0) {
       VStack(alignment: .leading, spacing: 4) {
-        Text("设置与关于")
+        Text("设置")
           .font(.headline)
           .foregroundStyle(.primary)
-        Text("外观、权限与更新")
-          .font(.caption)
-          .foregroundStyle(.secondary)
       }
       .padding(.horizontal, 18)
       .padding(.top, 22)
@@ -7026,7 +7020,7 @@ struct AboutPanelView: View {
             Text(area.rawValue)
               .font(.system(size: 13, weight: activeSettingsArea == area ? .semibold : .medium))
               .foregroundStyle(.primary)
-            if area == .updates, model.hasAvailableUpdate {
+            if area == .about, model.hasAvailableUpdate {
               Image(systemName: "arrow.down.circle.fill")
                 .foregroundStyle(UpdateReminderAppearance.blue)
                 .accessibilityLabel("有可用更新")
@@ -7036,17 +7030,19 @@ struct AboutPanelView: View {
           .padding(.horizontal, 12)
           .frame(height: 38)
           .background(
-            activeSettingsArea == area ? AppVisualStyle.selection : Color.clear,
+            activeSettingsArea == area ? AppVisualStyle.selection
+              : hoveredArea == area ? Color.primary.opacity(0.045) : Color.clear,
             in: RoundedRectangle(cornerRadius: 9, style: .continuous)
           )
           .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hoveredArea = $0 ? area : nil }
         .accessibilityLabel("设置，\(area.rawValue)")
         .accessibilityAddTraits(activeSettingsArea == area ? .isSelected : [])
         .accessibilityValue(
           (activeSettingsArea == area ? "已选" : "未选")
-            + (area == .updates && model.hasAvailableUpdate ? "，有可用更新" : ""))
+            + (area == .about && model.hasAvailableUpdate ? "，有可用更新" : ""))
         .overlay(alignment: .leading) {
           if activeSettingsArea == area {
             Capsule()
@@ -7076,165 +7072,88 @@ struct AboutPanelView: View {
       generalSettingsPage
     case .permissions:
       permissionSettingsPage
-    case .updates:
-      updateSettingsPage
     case .about:
       aboutSettingsPage
     }
   }
 
   private var generalSettingsPage: some View {
-    settingsPage(
-      title: "外观、启动与恢复",
-      subtitle: "最常用的入口和故障恢复都集中在这里。",
-      systemImage: "gearshape"
-    ) {
-      SettingsGroup(title: "外观") {
+    settingsPage(title: "通用", subtitle: "顺手，按你的习惯来。", systemImage: "gearshape") {
+      SettingsGroup(title: "日常使用") {
         AppAppearanceSetting()
-      }
-
-      SettingsGroup(title: "菜单栏") {
-        HStack(spacing: 12) {
-          SettingsToggleLabel(
-            title: "自定义菜单栏",
-            detail: "管理菜单栏图标、系统健康、内存、CPU、GPU 和快捷入口。")
-          Spacer(minLength: 8)
-          Button("打开…") {
-            model.presentMenuBarCustomization()
-          }
-          .buttonStyle(.borderedProminent)
-          .tint(AppVisualStyle.emphasizedSelection)
-        }
-      }
-
-      SettingsGroup(title: "启动与显示") {
-        Toggle(
-          isOn: Binding(
-            get: { model.launchAtLoginEnabled },
-            set: { model.setLaunchAtLoginEnabled($0) })
-        ) {
-          SettingsToggleLabel(
-            title: "登录时启动",
-            detail: "开启后，重新登录 Mac 时快捷键会自动恢复。")
+        Divider()
+        Toggle(isOn: Binding(
+          get: { model.launchAtLoginEnabled },
+          set: { model.setLaunchAtLoginEnabled($0) }
+        )) { Text("登录时启动") }
+        .toggleStyle(.switch)
+        Divider()
+        Toggle(isOn: Binding(
+          get: { !model.isPaused },
+          set: { enabled in if enabled == model.isPaused { model.togglePaused() } }
+        )) {
+          SettingsToggleLabel(title: "全局快捷键", detail: model.isPaused ? "已暂停" : "在其他 App 中也能使用")
         }
         .toggleStyle(.switch)
-
         Divider()
-        SettingsToggleLabel(
-          title: "程序坞入口",
-          detail: "安装后直接出现在程序坞，也可以从菜单栏打开。")
+        HStack(spacing: 12) {
+          SettingsToggleLabel(title: "菜单栏", detail: "选择要显示的图标与快捷入口")
+          Spacer(minLength: 8)
+          Button("自定义…") { model.presentMenuBarCustomization() }
+            .buttonStyle(.bordered)
+        }
       }
-
       SettingsGroup(title: "防止误关") {
         CommandWProtectionSettingsView()
       }
-
-      SettingsGroup(title: "后台快捷键") {
-        Toggle(
-          isOn: Binding(
-            get: { !model.isPaused },
-            set: { enabled in
-              if enabled == model.isPaused { model.togglePaused() }
-            })
-        ) {
-          SettingsToggleLabel(
-            title: "全局快捷键",
-            detail: model.isPaused
-              ? "已暂停，仍可查看和修改设置。"
-              : "已启用，可在其他 App 中使用。")
-        }
-        .toggleStyle(.switch)
-      }
-
-      SettingsGroup(title: "配置恢复") {
-        HStack(alignment: .center, spacing: 12) {
-          SettingsToggleLabel(
-            title: "一键恢复小龙哥最佳配置",
-            detail: "配置日期：\(XLGConfigImporter.bundledConfigurationDate)。自动备份后清空旧设置，再完整恢复，不合并冲突。")
-          Spacer(minLength: 8)
-          if model.isImportingXLGConfig {
-            ProgressView()
-              .controlSize(.small)
-              .accessibilityLabel("正在恢复小龙哥最佳配置")
-          }
-          Button(model.isImportingXLGConfig ? "恢复中" : "恢复…") {
-            isBestConfigurationConfirmationPresented = true
-          }
-          .buttonStyle(.bordered)
-          .disabled(model.isImportingXLGConfig)
-        }
-
-        if model.lastXLGConfigImportBackupURL != nil {
-          Divider()
-          HStack {
-            SettingsToggleLabel(
-              title: "最近一次恢复前备份",
-              detail: "需要找回旧设置时，可以直接打开备份目录。")
-            Spacer(minLength: 8)
-            Button("打开备份") {
-              model.openLastBestConfigurationBackup()
+      SettingsGroup(title: "恢复设置") {
+        DisclosureGroup("恢复小龙哥默认配置", isExpanded: $isRecoveryExpanded) {
+          VStack(alignment: .leading, spacing: 12) {
+            Text("先备份，再恢复 \(XLGConfigImporter.bundledConfigurationDate) 的默认设置。")
+              .font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+              if model.isImportingXLGConfig { ProgressView().controlSize(.small) }
+              Button(model.isImportingXLGConfig ? "恢复中…" : "备份并恢复…") {
+                isBestConfigurationConfirmationPresented = true
+              }
+              .buttonStyle(.bordered)
+              .disabled(model.isImportingXLGConfig)
+              if model.lastXLGConfigImportBackupURL != nil {
+                Button("打开上次备份") { model.openLastBestConfigurationBackup() }
+                  .buttonStyle(.bordered)
+              }
             }
-            .buttonStyle(.bordered)
           }
+          .padding(.top, 8)
         }
       }
     }
   }
 
   private var permissionSettingsPage: some View {
-    settingsPage(
-      title: "权限",
-      subtitle: "只在功能需要时使用系统权限，并清楚说明用途。",
-      systemImage: "lock.shield"
-    ) {
-      SettingsGroup(title: "权限状态") {
-        HStack(alignment: .top, spacing: 10) {
-          Image(
-            systemName: model.allRequiredPermissionsComplete
-              ? "checkmark.shield.fill" : "exclamationmark.triangle.fill"
-          )
-          .foregroundStyle(model.allRequiredPermissionsComplete ? teal : amber)
-          .accessibilityHidden(true)
-          VStack(alignment: .leading, spacing: 3) {
-            Text(
-              model.allRequiredPermissionsComplete
-                ? "三项必要权限均已开启。"
-                : "还有必要权限未完成，软件会按顺序带你设置。"
-            )
-            .font(.body.weight(.medium))
-            .foregroundStyle(.primary)
-            Text("辅助功能用于快捷键与窗口操作；输入监控用于 Caps 与滚轮；屏幕录制只在你主动使用游目时读取画面。")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-              .fixedSize(horizontal: false, vertical: true)
-          }
-        }
-
-        SettingsStatusRow(
-          title: "辅助功能",
-          value: model.advancedListeningAuthorized ? "已开启" : "待开启",
-          color: model.advancedListeningAuthorized ? teal : amber)
-        SettingsStatusRow(
-          title: "输入监控",
-          value: model.inputMonitoringAuthorized ? "已开启" : "待开启",
-          color: model.inputMonitoringAuthorized ? teal : amber)
-        SettingsStatusRow(
-          title: "屏幕录制",
-          value: model.screenRecordingAuthorized ? "已开启" : "待开启",
-          color: model.screenRecordingAuthorized ? teal : amber)
-
+    settingsPage(title: "权限", subtitle: "看清用途，再开启。", systemImage: "lock.shield") {
+      SettingsGroup(title: model.allRequiredPermissionsComplete ? "已就绪" : "完成授权即可使用") {
+        permissionRow("辅助功能", detail: "快捷键与窗口操作", granted: model.advancedListeningAuthorized)
+        Divider()
+        permissionRow("输入监控", detail: "Caps 与鼠标滚轮", granted: model.inputMonitoringAuthorized)
+        Divider()
+        permissionRow("屏幕录制", detail: "仅主动截图时读取画面", granted: model.screenRecordingAuthorized)
+        Divider()
         HStack {
           permissionManagementButton
-          Spacer(minLength: 0)
+          Spacer(minLength: 8)
+          Button { model.refreshAccessibilityStatus() } label: {
+            Label("刷新", systemImage: "arrow.clockwise")
+          }
+          .buttonStyle(.borderless)
+          .help("重新读取系统权限状态")
         }
       }
-
       SettingsGroup(title: "遇到问题") {
-        DisclosureGroup("权限已经打开，但功能仍不生效？", isExpanded: $isPermissionRecoveryExpanded) {
+        DisclosureGroup("已开启，仍无法使用？", isExpanded: $isPermissionRecoveryExpanded) {
           VStack(alignment: .leading, spacing: 10) {
-            Text("仅在系统权限记录失效时使用。确认后会清理本软件的旧记录、重新打开软件，并再次引导授权。")
-              .font(.caption)
-              .foregroundStyle(.secondary)
+            Text("修复会清理本软件的失效权限记录，重启后重新授权。")
+              .font(.caption).foregroundStyle(.secondary)
               .fixedSize(horizontal: false, vertical: true)
             clearPermissionButton
           }
@@ -7242,172 +7161,80 @@ struct AboutPanelView: View {
         }
       }
     }
+    .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+      model.refreshAccessibilityStatus()
+    }
   }
 
-  private var updateSettingsPage: some View {
-    settingsPage(
-      title: "软件更新",
-      subtitle: "自动发现新版，确认后更新。所有功能永久免费。",
-      systemImage: "arrow.down.app"
-    ) {
-      if let version = model.availableUpdateVersion {
-        AvailableUpdateCard(version: version, isBusy: model.isUpdateBusy) {
-          model.runPrimaryUpdateAction()
-        }
-      }
-      SettingsGroup(title: "软件更新") {
-        SettingsInfoLine(title: "当前版本", value: model.appVersionText)
-        SettingsInfoLine(title: "可用版本", value: model.updateLatestVersionText)
+  private func permissionRow(_ title: String, detail: String, granted: Bool) -> some View {
+    HStack(spacing: 12) {
+      SettingsToggleLabel(title: title, detail: detail)
+      Spacer(minLength: 8)
+      Label(granted ? "已开启" : "未开启", systemImage: granted ? "checkmark.circle.fill" : "circle")
+        .font(.callout)
+        .foregroundStyle(granted ? teal : amber)
+    }
+    .padding(.vertical, 3)
+    .accessibilityElement(children: .combine)
+  }
 
-        ViewThatFits(in: .horizontal) {
-          HStack(alignment: .center, spacing: 14) {
-            updateStatusView
-            Spacer(minLength: 10)
-            updateActionButton
+  private var aboutSettingsPage: some View {
+    settingsPage(title: "关于与更新", subtitle: "左手，掌控 Mac 一切。", systemImage: "info.circle") {
+      SettingsGroup(title: "小龙哥 Mac 哲学") {
+        HStack(spacing: 12) {
+          Image(nsImage: brandIcon())
+            .resizable().interpolation(.high)
+            .frame(width: 44, height: 44)
+            .accessibilityHidden(true)
+          VStack(alignment: .leading, spacing: 3) {
+            Text(model.appVersionText).font(.title3.weight(.semibold))
+            Text("永久免费 · 自动检查，确认后更新")
+              .font(.caption).foregroundStyle(.secondary)
           }
-          VStack(alignment: .leading, spacing: 12) {
-            updateStatusView
-            updateActionButton
+          Spacer(minLength: 8)
+          updateActionButton
+        }
+        .accessibilityElement(children: .contain)
+        Divider()
+        updateStatusView
+        if let version = model.availableUpdateVersion {
+          AvailableUpdateCard(version: version, isBusy: model.isUpdateBusy) {
+            model.runPrimaryUpdateAction()
           }
         }
-
-        if model.updateFailureMessage != nil {
-          Link(destination: URL(string: "https://aixlg.com/downloads/小龙哥Mac哲学.dmg")!) {
-            Label("下载完整安装包", systemImage: "arrow.down.doc")
-          }
-          .help("从官网下载正式安装包，安装前核对版本。本机版本高于官网时无需覆盖安装；已有个人配置保留。")
-          .accessibilityIdentifier("update.downloadFullInstaller")
-        }
-
         if let progress = model.updateDownloadProgress {
           ProgressView(value: progress)
             .progressViewStyle(.linear)
             .accessibilityLabel("更新下载进度")
             .accessibilityValue("\(Int((progress * 100).rounded(.down)))%")
         }
-      }
-
-      SettingsGroup(title: "免费与分享") {
-        FreeSoftwareSettingsView()
-      }
-
-    }
-  }
-
-  private var aboutSettingsPage: some View {
-    settingsPage(
-      title: "关于",
-      subtitle: "产品信息、帮助入口与必要的诊断工具。",
-      systemImage: "info.circle"
-    ) {
-      SettingsGroup(title: "小龙哥 Mac 哲学") {
-        HStack(alignment: .center, spacing: 16) {
-          Image(nsImage: brandIcon())
-            .resizable()
-            .interpolation(.high)
-            .frame(width: 64, height: 64)
-            .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
-            .shadow(color: Color.black.opacity(0.08), radius: 5, x: 0, y: 3)
-            .accessibilityHidden(true)
-          VStack(alignment: .leading, spacing: 5) {
-            Text("左手掌控 Mac 一切。")
-              .font(.headline)
-              .foregroundStyle(.primary)
-            Text("把快捷键、常用应用和效率工具集中在一个入口。")
-              .font(.body)
-              .foregroundStyle(.secondary)
-              .fixedSize(horizontal: false, vertical: true)
-            Text(model.appVersionText)
-              .font(.caption)
-              .foregroundStyle(.tertiary)
+        if model.updateFailureMessage != nil {
+          Link(destination: URL(string: "https://aixlg.com/downloads/小龙哥Mac哲学.dmg")!) {
+            Label("下载完整安装包", systemImage: "arrow.down.doc")
           }
+          .help("从官网下载正式安装包；已有个人配置保留。")
+          .accessibilityIdentifier("update.downloadFullInstaller")
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("小龙哥 Mac 哲学。\(model.appVersionAccessibilityText)")
+        if !model.isInstalledInApplications {
+          Divider()
+          HStack(spacing: 12) {
+            Label("请移到“应用程序”后重新打开。", systemImage: "exclamationmark.circle")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            Button("打开应用程序") { model.openApplicationsFolder() }
+              .buttonStyle(.bordered)
+          }
+          .accessibilityIdentifier("about.installLocationWarning")
+        }
       }
-
-      SettingsGroup(title: "👋 让小龙哥认识你") {
+      SettingsGroup(title: "新功能优先体验") {
         FriendProfileSettingsView()
       }
-
-      SettingsGroup(title: "帮助与隐私") {
-        FeedbackRequestPanelView()
-        Divider().padding(.leading, 32)
-        AboutLinkButton(
-          title: "使用支持",
-          systemImage: "questionmark.circle",
-          help: "显示交流群二维码",
-          accessibilityLabel: "使用支持，显示入群二维码"
-        ) { model.presentCommunityQRCode() }
-        Divider().padding(.leading, 32)
-        AboutLinkButton(
-          title: "隐私政策",
-          systemImage: "hand.raised",
-          help: "打开隐私政策",
-          accessibilityLabel: "隐私政策，打开隐私页"
-        ) { model.openPrivacyWebsite() }
-        Divider().padding(.leading, 32)
-        AboutLinkButton(
-          title: "官方网站",
-          systemImage: "safari",
-          help: "打开 aixlg.com",
-          accessibilityLabel: "官方网站，打开 aixlg.com"
-        ) { model.openProductWebsite() }
-      }
-
-      SettingsGroup(title: "安装与运行") {
-        SettingsHealthRow(
-          title: "安装位置",
-          detail: model.appBundlePath,
-          ok: model.isInstalledInApplications,
-          okText: "位置正确",
-          warningText: "建议移动")
-        HStack {
-          Button("打开“应用程序”文件夹") {
-            model.openApplicationsFolder()
-          }
-          .buttonStyle(.bordered)
-          Spacer(minLength: 0)
-        }
-
-        DisclosureGroup("诊断与技术信息", isExpanded: $isDiagnosticsExpanded) {
-          VStack(alignment: .leading, spacing: 12) {
-            Toggle(
-              isOn: Binding(
-                get: { model.diagnosticsEnabled },
-                set: { model.setDiagnosticsEnabled($0) })
-            ) {
-              SettingsToggleLabel(
-                title: "诊断日志",
-                detail: "只在排查问题时临时开启。")
-            }
-            .toggleStyle(.switch)
-
-            SettingsInfoLine(title: "日志位置", value: model.diagnosticsLogPath)
-
-            ViewThatFits(in: .horizontal) {
-              HStack(spacing: 10) {
-                diagnosticsButtons
-              }
-              VStack(alignment: .leading, spacing: 8) {
-                diagnosticsButtons
-              }
-            }
-          }
-          .padding(.top, 8)
-        }
+      SettingsGroup(title: "分享") {
+        FreeSoftwareSettingsView()
       }
     }
-  }
-
-  @ViewBuilder
-  private var diagnosticsButtons: some View {
-    Button("在访达中显示日志") { model.openDiagnosticsLog() }
-      .buttonStyle(.bordered)
-    Button("复制日志") { model.copyDiagnosticsLog() }
-      .buttonStyle(.bordered)
-    Button("在访达中显示配置文件") { model.openConfigFile() }
-      .buttonStyle(.bordered)
   }
 
   private func settingsPage<Content: View>(
@@ -7417,7 +7244,7 @@ struct AboutPanelView: View {
     @ViewBuilder content: () -> Content
   ) -> some View {
     ScrollView {
-      VStack(alignment: .leading, spacing: 20) {
+      VStack(alignment: .leading, spacing: 16) {
         HStack(alignment: .center, spacing: 13) {
           Image(systemName: systemImage)
             .font(.system(size: 17, weight: .semibold))
@@ -7438,7 +7265,7 @@ struct AboutPanelView: View {
         }
         content()
       }
-      .frame(maxWidth: 720, alignment: .topLeading)
+      .frame(maxWidth: 680, alignment: .topLeading)
       .frame(maxWidth: .infinity, alignment: .top)
       .padding(.horizontal, 28)
       .padding(.vertical, 24)
@@ -7452,7 +7279,7 @@ struct AboutPanelView: View {
       model.presentAuthorizationCenter()
     } label: {
       Label(
-        model.allRequiredPermissionsComplete ? "检测 / 管理权限" : "立即检测并授权",
+        model.allRequiredPermissionsComplete ? "管理权限…" : "开启权限…",
         systemImage: model.allRequiredPermissionsComplete
           ? "checkmark.shield" : "lock.open.fill")
     }
@@ -7517,42 +7344,6 @@ private struct SettingsGroup<Content: View>: View {
       RoundedRectangle(cornerRadius: 13, style: .continuous)
         .stroke(AppVisualStyle.separator, lineWidth: 1)
     )
-  }
-}
-
-struct AboutLinkButton: View {
-  let title: String
-  let systemImage: String
-  let help: String
-  let accessibilityLabel: String
-  let action: () -> Void
-
-  var body: some View {
-    Button(action: action) {
-      HStack(spacing: 12) {
-        Image(systemName: systemImage)
-          .font(.system(size: 14, weight: .semibold))
-          .foregroundStyle(accent)
-          .frame(width: 20, height: 20)
-          .accessibilityHidden(true)
-
-        Text(title)
-          .font(.body.weight(.medium))
-          .foregroundStyle(.primary)
-
-        Spacer(minLength: 12)
-
-        Image(systemName: "arrow.up.right")
-          .font(.system(size: 11, weight: .semibold))
-          .foregroundStyle(.secondary)
-          .accessibilityHidden(true)
-      }
-      .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
-      .contentShape(Rectangle())
-    }
-    .buttonStyle(.plain)
-    .help(help)
-    .accessibilityLabel(accessibilityLabel)
   }
 }
 
@@ -7789,61 +7580,6 @@ struct SettingsStatusRow: View {
       Spacer()
       StatusPill(text: value, color: color)
     }
-  }
-}
-
-struct SettingsHealthRow: View {
-  let title: String
-  let detail: String
-  let ok: Bool
-  let okText: String
-  let warningText: String
-
-  var body: some View {
-    HStack(alignment: .top, spacing: 10) {
-      Image(systemName: ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-        .font(.system(size: 15, weight: .semibold))
-        .foregroundStyle(ok ? teal : amber)
-        .frame(width: 22)
-        .padding(.top, 1)
-
-      VStack(alignment: .leading, spacing: 3) {
-        Text(title)
-          .font(.system(size: 13, weight: .semibold))
-          .foregroundStyle(ink)
-        Text(detail)
-          .font(.system(size: 11, weight: .medium))
-          .foregroundStyle(muted)
-          .lineLimit(2)
-          .truncationMode(.middle)
-      }
-
-      Spacer(minLength: 10)
-
-      StatusPill(text: ok ? okText : warningText, color: ok ? teal : amber)
-    }
-    .padding(.vertical, 2)
-  }
-}
-
-struct SettingsInfoLine: View {
-  let title: String
-  let value: String
-
-  var body: some View {
-    HStack(alignment: .firstTextBaseline, spacing: 10) {
-      Text(title)
-        .font(.system(size: 12, weight: .medium))
-        .foregroundStyle(ink)
-        .frame(width: 72, alignment: .leading)
-      Text(value)
-        .font(.system(size: 11, weight: .medium))
-        .foregroundStyle(muted)
-        .lineLimit(2)
-        .truncationMode(.middle)
-      Spacer(minLength: 0)
-    }
-    .padding(.top, 2)
   }
 }
 

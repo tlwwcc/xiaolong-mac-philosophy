@@ -1525,10 +1525,6 @@ final class AppModel: ObservableObject {
     return "未运行"
   }
 
-  var diagnosticsLogPath: String {
-    AppDiagnostics.logURL.path
-  }
-
   func setDiagnosticsEnabled(_ enabled: Bool) {
     diagnosticsEnabled = enabled
     AppDiagnostics.setEnabled(enabled)
@@ -5207,44 +5203,9 @@ final class AppModel: ObservableObject {
     NSWorkspace.shared.activateFileViewerSelecting([fileURL])
   }
 
-  func openDiagnosticsLog() {
-    let url = AppDiagnostics.logURL
-    if FileManager.default.fileExists(atPath: url.path) {
-      NSWorkspace.shared.activateFileViewerSelecting([url])
-    } else {
-      NSWorkspace.shared.open(url.deletingLastPathComponent())
-      statusMessage = "诊断日志还没有生成。"
-    }
-  }
-
-  func copyDiagnosticsLog() {
-    let url = AppDiagnostics.logURL
-    guard let text = try? String(contentsOf: url, encoding: .utf8), !text.isEmpty else {
-      statusMessage = "诊断日志为空。"
-      return
-    }
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(text, forType: .string)
-    statusMessage = "已复制诊断日志。"
-  }
-
-  func openPhraseConfigFile() {
-    NSWorkspace.shared.activateFileViewerSelecting([phraseURL])
-  }
-
-  func openProductWebsite() {
-    guard let url = URL(string: "https://aixlg.com/") else { return }
-    NSWorkspace.shared.open(url)
-  }
-
   func presentCommunityQRCode() {
     presentWindowHandler?()
     isCommunityQRCodePresented = true
-  }
-
-  func openPrivacyWebsite() {
-    guard let url = URL(string: "https://aixlg.com/privacy.html") else { return }
-    NSWorkspace.shared.open(url)
   }
 
   func openApplicationsFolder() {

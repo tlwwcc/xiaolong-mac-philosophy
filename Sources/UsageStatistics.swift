@@ -382,7 +382,7 @@ final class UsageStatistics: ObservableObject {
         defaults.set(!nickname.isEmpty, forKey: Self.profileKnownKey)
         defaults.synchronize()
         profileChange += 1
-        profileMessage = nickname.isEmpty ? "昵称和报名已清除。" : value == nil ? "已同步。" : "昵称已保存，小龙哥能在后台看到。"
+        profileMessage = nickname.isEmpty ? "昵称和报名已清除。" : value == nil ? "已同步。" : (earlyAccess ? "已报名，新邀请会显示在这里。" : "昵称已保存。")
       } catch {
         guard profileOwner == owner, !Task.isCancelled else { return }
         profileFailed = true
@@ -406,43 +406,65 @@ final class UsageStatistics: ObservableObject {
 struct FriendProfileSettingsView: View {
   @ObservedObject private var statistics: UsageStatistics
   @State private var draft = ""
-  @State private var earlyAccess = false
+  @State private var earlyAccess = true
   @State private var confirmsRemoval = false
   @State private var copyMessage: String?
 
   init(statistics: UsageStatistics? = nil) { self.statistics = statistics ?? .shared }
 
+  private var canSave: Bool {
+    guard !statistics.profileBusy, !statistics.deleting,
+      let name = UsageStatistics.normalizedNickname(draft), !name.isEmpty else { return false }
+    return name != statistics.nickname || earlyAccess != statistics.earlyAccess || statistics.profileFailed
+  }
+
+  private var saveTitle: String {
+    if statistics.profileBusy { return "正在同步…" }
+    if statistics.profileFailed { return "重试保存" }
+    if statistics.nickname.isEmpty { return "报名优先体验" }
+    return canSave ? "保存修改" : "已保存"
+  }
+
+  private func save() {
+    guard canSave else { return }
+    statistics.saveProfile(nickname: draft, earlyAccess: earlyAccess)
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Text("用微信群里的称呼，方便小龙哥认出你。")
+      Text("留个昵称，有新功能时优先邀请你。")
         .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-      TextField("微信群昵称，或小龙哥认识的称呼", text: $draft)
-        .textFieldStyle(.roundedBorder)
-        .accessibilityLabel("你的昵称")
-        .accessibilityIdentifier("friendProfile.nickname")
-        .disabled(statistics.profileBusy || statistics.deleting)
-      UsageDeviceCodeView(statistics: statistics)
-      Toggle("报名老朋友尝鲜", isOn: $earlyAccess)
-        .disabled(statistics.profileBusy || statistics.deleting)
-        .accessibilityIdentifier("friendProfile.earlyAccess")
-      Text("新功能优先体验；有邀请时，到这里查看。不会自动安装。")
-        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-      HStack {
-        Button(statistics.profileBusy ? "正在同步…" : "保存昵称") {
-          statistics.saveProfile(nickname: draft, earlyAccess: earlyAccess)
-        }
-        .disabled(statistics.profileBusy || statistics.deleting || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        .accessibilityIdentifier("friendProfile.save")
-        if !statistics.nickname.isEmpty {
-          Button("删除昵称", role: .destructive) { confirmsRemoval = true }
-            .disabled(statistics.profileBusy || statistics.deleting)
-            .accessibilityIdentifier("friendProfile.remove")
-        }
+      ViewThatFits(in: .horizontal) {
+        HStack(spacing: 10) { nicknameField; saveButton }
+        VStack(alignment: .leading, spacing: 10) { nicknameField; saveButton }
       }
-      if let message = statistics.profileMessage {
-        Text(message).font(.caption)
-          .foregroundStyle(statistics.profileFailed ? AppVisualStyle.danger : AppVisualStyle.textSecondary)
+      if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        UsageStatistics.normalizedNickname(draft) == nil {
+        Text("昵称限 24 个字，请去掉换行或特殊控制字符。")
+          .font(.caption).foregroundStyle(AppVisualStyle.danger)
           .fixedSize(horizontal: false, vertical: true)
+          .accessibilityIdentifier("friendProfile.validation")
+      }
+      if !statistics.nickname.isEmpty {
+        Toggle("参与新功能优先体验", isOn: $earlyAccess)
+          .toggleStyle(.switch)
+          .disabled(statistics.profileBusy || statistics.deleting)
+          .accessibilityIdentifier("friendProfile.earlyAccess")
+      }
+      Text("自愿报名；不影响现有功能和正常更新。")
+        .font(.caption).foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+      if let message = statistics.profileMessage {
+        HStack(alignment: .top, spacing: 6) {
+          if statistics.profileBusy { ProgressView().controlSize(.small) }
+          else {
+            Image(systemName: statistics.profileFailed ? "exclamationmark.circle" : "checkmark.circle")
+              .accessibilityHidden(true)
+          }
+          Text(message).fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.caption)
+        .foregroundStyle(statistics.profileFailed ? AppVisualStyle.danger : AppVisualStyle.textSecondary)
         if statistics.profileFailed {
           Button("重新同步") { statistics.refreshProfile() }
             .disabled(statistics.profileBusy || statistics.deleting)
@@ -453,29 +475,30 @@ struct FriendProfileSettingsView: View {
           VStack(alignment: .leading, spacing: 6) {
             Text(invitation.title).font(.headline)
             Text(invitation.detail).font(.callout).fixedSize(horizontal: false, vertical: true)
-            Link("查看尝鲜邀请", destination: url)
+            Link("查看体验邀请", destination: url)
           }
-        } else {
-          Text(statistics.profileBusy ? "正在查看尝鲜邀请…" : statistics.profileFailed ? "上次已报名；本次未能确认邀请。" : "已报名，目前暂无尝鲜邀请。")
-            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        } else if !statistics.profileBusy && !statistics.profileFailed {
+          Label("已报名，有邀请会显示在这里。", systemImage: "checkmark.seal")
+            .font(.caption).foregroundStyle(.secondary)
         }
       }
-      if !statistics.nickname.isEmpty {
-        Button("复制反馈信息") {
-          copyMessage = statistics.copyFeedbackInfo() ? "已复制昵称、设备编号和版本，可粘贴到交流群并补充问题。" : "未能复制，请稍后重试。"
-        }
-        .disabled(statistics.profileBusy || statistics.deleting)
-        .accessibilityIdentifier("friendProfile.copyFeedback")
-        if let copyMessage {
-          Text(copyMessage).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-        }
-      }
-      Text("昵称仅小龙哥可见，可改可删；设备统计可在下方关闭。")
-        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       DisclosureGroup("昵称与隐私") {
         VStack(alignment: .leading, spacing: 12) {
-          Text("保存后，昵称与上方本机编号关联，不用再找小龙哥登记。关闭统计也能保存昵称；不会读取微信、通讯录或计算机名。昵称与报名最长保留一年，重新保存续期。删除昵称同时退出尝鲜；不影响其他功能。")
+          Text("昵称仅小龙哥可见，可改可删；与本机编号关联。不会读取微信、通讯录或计算机名。昵称与报名保留一年，重新保存续期；邀请不会自动安装。")
             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+          UsageDeviceCodeView(statistics: statistics)
+          if !statistics.nickname.isEmpty {
+            HStack(spacing: 12) {
+              Button("复制反馈信息") {
+                copyMessage = statistics.copyFeedbackInfo() ? "已复制，可粘贴后补充问题。" : "未能复制，请重试。"
+              }
+              .accessibilityIdentifier("friendProfile.copyFeedback")
+              Button("删除昵称", role: .destructive) { confirmsRemoval = true }
+                .accessibilityIdentifier("friendProfile.remove")
+            }
+            .disabled(statistics.profileBusy || statistics.deleting)
+            if let copyMessage { Text(copyMessage).font(.caption).foregroundStyle(.secondary) }
+          }
           Divider()
           UsageStatisticsSettingsView(statistics: statistics)
         }
@@ -484,21 +507,37 @@ struct FriendProfileSettingsView: View {
       .accessibilityIdentifier("friendProfile.privacy")
       .font(.caption)
     }
-    .onAppear {
-      draft = statistics.nickname
-      earlyAccess = statistics.earlyAccess
-      statistics.refreshProfile()
-    }
-    .onReceive(statistics.$profileChange) { _ in
-      draft = statistics.nickname
-      earlyAccess = statistics.earlyAccess
-      copyMessage = nil
-    }
-    .confirmationDialog("删除昵称并退出老朋友尝鲜？", isPresented: $confirmsRemoval) {
+    .onAppear { synchronizeDraft(); statistics.refreshProfile() }
+    .onReceive(statistics.$profileChange) { _ in synchronizeDraft() }
+    .confirmationDialog("删除昵称并退出优先体验？", isPresented: $confirmsRemoval) {
       Button("删除昵称并退出", role: .destructive) { statistics.removeProfile() }
     } message: {
-      Text("不影响免费使用，也不改变使用量统计的开关。")
+      Text("不影响现有功能和正常更新，也不改变设备统计开关。")
     }
+  }
+
+  private var nicknameField: some View {
+    TextField("你在群里的昵称", text: $draft)
+      .textFieldStyle(.roundedBorder)
+      .frame(minWidth: 160)
+      .accessibilityLabel("你的昵称")
+      .accessibilityIdentifier("friendProfile.nickname")
+      .disabled(statistics.profileBusy || statistics.deleting)
+      .onSubmit(save)
+  }
+
+  private var saveButton: some View {
+    Button(saveTitle, action: save)
+      .buttonStyle(.borderedProminent)
+      .fixedSize()
+      .disabled(!canSave)
+      .accessibilityIdentifier("friendProfile.save")
+  }
+
+  private func synchronizeDraft() {
+    draft = statistics.nickname
+    earlyAccess = statistics.nickname.isEmpty ? true : statistics.earlyAccess
+    copyMessage = nil
   }
 }
 

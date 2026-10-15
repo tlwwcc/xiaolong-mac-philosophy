@@ -56,7 +56,7 @@ enum MenuBarCatalog {
       title: "永不睡眠",
       detail: "打开保持唤醒面板",
       systemImage: "moon.zzz.fill",
-      isVisibleByDefault: true),
+      isVisibleByDefault: false),
     MenuBarCatalogItemDescriptor(
       id: .launcher,
       title: "启动器",
@@ -74,7 +74,7 @@ enum MenuBarCatalog {
       title: "进程查看器",
       detail: "查看当前进程与资源占用",
       systemImage: "cpu",
-      isVisibleByDefault: true),
+      isVisibleByDefault: false),
     MenuBarCatalogItemDescriptor(
       id: .pijuanPDF,
       title: "披卷",
@@ -86,7 +86,7 @@ enum MenuBarCatalog {
       title: "剪贴板历史",
       detail: "打开最近复制记录",
       systemImage: "doc.on.clipboard",
-      isVisibleByDefault: false),
+      isVisibleByDefault: true),
   ]
 
   static let defaultVisibleItemIDs: Set<MenuBarCatalogItemID> = Set(

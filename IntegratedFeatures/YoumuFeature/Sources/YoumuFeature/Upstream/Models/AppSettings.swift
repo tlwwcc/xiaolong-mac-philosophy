@@ -50,7 +50,7 @@ enum SpeechBackendPreference: String, Codable, CaseIterable {
         case .macLocal:
             return "文字只在本机处理，不发送到在线语音服务。"
         case .edgeOnline:
-            return "文字会发送到 Microsoft Edge 在线语音服务；该网络接口可能随服务变化。"
+            return "按所选音色朗读；无法连接时可重试，不自动改用本机声音。文字会发送到 Microsoft Edge。"
         }
     }
 }
