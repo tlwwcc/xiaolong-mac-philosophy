@@ -56,7 +56,7 @@ enum FileOpenBatchValidation: Equatable, Sendable {
     case .accepted:
       return nil
     case .tooManyPDFs(let count):
-      return "披卷当前一次打开一个 PDF；这次选择了 \(count) 个，请逐个打开。"
+      return "PDF 浏览器当前一次打开一个 PDF；这次选择了 \(count) 个，请逐个打开。"
     }
   }
 }

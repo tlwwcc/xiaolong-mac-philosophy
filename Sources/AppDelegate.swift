@@ -58,7 +58,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   private let model: AppModel
   private let runtimeIdentity = AppRuntimeIdentity.current
   private var window: NSWindow?
-  private var mainWindowTitlebarAccessory: NSTitlebarAccessoryViewController?
+  private var automationServer: AutomationSocketServer?
+  private var automationService: AutomationService?
   private var launcherWindow: NSWindow?
   private var processViewerWindow: NSWindow?
   private var clipboardHistoryWindow: NSWindow?
@@ -101,6 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   private var sleepStatusHelperCapabilityToken: String?
   private var backgroundActivity: NSObjectProtocol?
   private var didPerformTerminationCleanup = false
+  private var terminationIntent: AuthorizationTerminationIntent = .ordinary
   private var pendingFileOpenBatches: [[URL]] = []
   private var didCompleteLaunchPresentation = false
   private var didOpenAssociatedFilesDuringLaunch = false
@@ -156,8 +158,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     self.model.authorizationPollingRequestHandler = { [weak self] reason in
       self?.startPermissionPolling(reason: reason)
     }
-    self.model.authorizationTerminationHandler = { [weak self] in
-      self?.terminateForAuthorizationRelaunch()
+    self.model.authorizationTerminationHandler = { [weak self] intent in
+      self?.terminateForAuthorizationRelaunch(intent: intent) ?? false
     }
   }
 
@@ -170,6 +172,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   func bootstrapIfNeeded() {
+    guard !didPerformTerminationCleanup else { return }
     guard !didBootstrap else { return }
     didBootstrap = true
     UsageStatistics.shared.start()
@@ -179,6 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     buildWindow()
     buildLauncherWindow()
     integratedFeatureComposition = installIntegratedFeaturesIfAvailable(into: model)
+    startAutomationService()
     if !pendingFileOpenBatches.isEmpty {
       didOpenAssociatedFilesDuringLaunch = true
       let batches = pendingFileOpenBatches
@@ -206,6 +210,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
   @MainActor
   func showWindowAfterLaunch() {
+    guard !didPerformTerminationCleanup else { return }
     defer { didCompleteLaunchPresentation = true }
     guard !didOpenAssociatedFilesDuringLaunch else { return }
     showWindowWithStartupRetries()
@@ -220,6 +225,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   func applicationDidBecomeActive(_ notification: Notification) {
+    guard !didPerformTerminationCleanup else { return }
     sparkleUpdateController?.checkForUpdatesIfNeeded()
     _ = model.refreshGlobalInputOwnership(trigger: "becameActive")
     let changed = model.refreshAuthorizationAndReloadIfNeeded()
@@ -233,6 +239,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   func application(_ application: NSApplication, open urls: [URL]) {
+    guard !didPerformTerminationCleanup else { return }
     guard !urls.isEmpty, urls.allSatisfy(\.isFileURL) else {
       model.statusMessage = "这个链接不受支持，未更改任何内容。"
       return
@@ -241,11 +248,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   func application(_ sender: NSApplication, openFiles filenames: [String]) {
+    guard !didPerformTerminationCleanup else {
+      sender.reply(toOpenOrPrint: .failure)
+      return
+    }
     let urls = filenames.map { URL(fileURLWithPath: $0).standardizedFileURL }
     guard !urls.isEmpty,
       urls.allSatisfy({ FileAssociationManager.fileKind(for: $0) != nil })
     else {
-      model.statusMessage = "当前仅由披卷打开 PDF。请用相应软件打开其他文件，未更改任何内容。"
+      model.statusMessage = "当前仅由PDF 浏览器打开 PDF。请用相应软件打开其他文件，未更改任何内容。"
       sender.reply(toOpenOrPrint: .failure)
       return
     }
@@ -275,6 +286,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
   @MainActor
   private func openAssociatedFilesOnMainActor(_ urls: [URL]) {
+    guard !didPerformTerminationCleanup else { return }
     let batchValidation = FileAssociationManager.validateOpenBatch(urls)
     guard batchValidation == .accepted else {
       model.statusMessage = batchValidation.customerMessage ?? "这批文件暂时无法一起打开。"
@@ -337,6 +349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   func applicationDidUnhide(_ notification: Notification) {
+    guard !didPerformTerminationCleanup else { return }
     settlePendingShortcutWindowRestorations()
     let isViewerVisible =
       processViewerWindow?.isVisible == true
@@ -348,6 +361,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   func applicationDidResignActive(_ notification: Notification) {
+    guard !didPerformTerminationCleanup else { return }
     model.cancelRecordingIfNeeded()
     if launcherWindow?.isVisible == true {
     }
@@ -355,6 +369,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool
   {
+    guard !didPerformTerminationCleanup else { return false }
     if shouldSuppressMainWindowForLauncher {
       presentShortcutWindow(.launcher)
     } else {
@@ -364,23 +379,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-    model.prepareAuthorizationRelaunchForSystemTerminationIfNeeded()
+    guard prepareUserDataForTermination() else { return .terminateCancel }
+    terminationIntent = model.prepareAuthorizationRelaunchForSystemTerminationIfNeeded()
     AppDiagnostics.log(
       "app_should_terminate",
       ["pid": "\(ProcessInfo.processInfo.processIdentifier)", "decision": "terminateNow"])
     return .terminateNow
   }
 
-  func applicationWillTerminate(_ notification: Notification) {
-    performTerminationCleanup()
+  private func prepareUserDataForTermination() -> Bool {
+    guard !model.hasActiveUninstallTransaction else {
+      model.statusMessage = "正在完成 App 卸载与配置保存，请完成后再退出。"
+      presentMainWindow()
+      AppDiagnostics.log("app_termination_deferred", ["reason": "uninstall_reference_transaction"])
+      return false
+    }
+    guard model.configRestore.prepareForTermination() else {
+      model.statusMessage = "正在恢复配置，请完成后再退出。"
+      presentMainWindow()
+      AppDiagnostics.log("app_termination_deferred", ["reason": "configuration_restore"])
+      return false
+    }
+    guard model.fileAssociationWorkspace.prepareForTermination() else {
+      presentMainWindow()
+      AppDiagnostics.log("app_termination_deferred", ["reason": "file_association_transaction"])
+      return false
+    }
+    guard model.phraseWorkspace.flushPendingSave(reload: false) else {
+      model.showPhraseWindow()
+      AppDiagnostics.log("app_termination_deferred", ["reason": "unsaved_phrases"])
+      return false
+    }
+    return true
   }
 
-  private func terminateForAuthorizationRelaunch() {
+  func applicationWillTerminate(_ notification: Notification) {
+    performTerminationCleanup(intent: terminationIntent)
+  }
+
+  private func terminateForAuthorizationRelaunch(intent: AuthorizationTerminationIntent) -> Bool {
+    guard !didPerformTerminationCleanup else { return false }
+    guard prepareUserDataForTermination() else { return false }
     let processIdentifier = ProcessInfo.processInfo.processIdentifier
     AppDiagnostics.log(
       "authorization_run_loop_stop_requested",
       ["pid": "\(processIdentifier)"])
-    performTerminationCleanup()
+    terminationIntent = intent
+    performTerminationCleanup(intent: intent)
 
     DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) {
       guard Darwin.kill(processIdentifier, 0) == 0 else { return }
@@ -401,13 +446,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     {
       NSApp.postEvent(wakeEvent, atStart: true)
     }
+    return true
   }
 
-  private func performTerminationCleanup() {
+  private func performTerminationCleanup(intent: AuthorizationTerminationIntent = .ordinary) {
     UsageStatistics.shared.stop()
     guard !didPerformTerminationCleanup else { return }
     didPerformTerminationCleanup = true
-    model.shutdown()
+    shortcutWindowToggleState.invalidate()
+    pendingRestorationTickets.removeAll()
+    pendingFileOpenBatches.removeAll()
+    model.sparkleCheckForUpdatesHandler = nil
+    automationServer?.stop()
+    automationServer = nil
+    automationService = nil
+    model.shutdown(authorizationIntent: intent)
     permissionTimer?.invalidate()
     statusHelperWatchdogTimer?.invalidate()
     globalInputOwnershipTimer?.invalidate()
@@ -448,6 +501,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       NotificationCenter.default.removeObserver(volumeFeedbackObserver)
     }
     updateReminderSubscription = nil
+    sparkleUpdateController = nil
     if let updateWakeObserver {
       NSWorkspace.shared.notificationCenter.removeObserver(updateWakeObserver)
       self.updateWakeObserver = nil
@@ -473,9 +527,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     stopSleepStatusHelper(killStale: false)
   }
 
+  private func startAutomationService() {
+    guard !didPerformTerminationCleanup else { return }
+    let service = AutomationService(model: model)
+    let server = AutomationSocketServer()
+    do {
+      try server.start { request in service.handle(request) }
+      automationService = service
+      automationServer = server
+    } catch {
+      AppDiagnostics.log("automation_server_unavailable", ["error": error.localizedDescription])
+    }
+  }
+
   private func buildWindow() {
     let root = RootView().environmentObject(model)
-    let hosting = NSHostingView(rootView: root)
     let window = NSWindow(
       contentRect: NSRect(origin: .zero, size: defaultWindowSize),
       styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -483,21 +549,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       defer: false
     )
     window.title = appDisplayName
-    window.titleVisibility = .hidden
-    window.minSize = NSSize(width: 820, height: 600)
+    window.titleVisibility = .visible
+    window.minSize = NSSize(width: 860, height: 600)
     window.isReleasedWhenClosed = false
     window.isRestorable = false
     window.delegate = self
-    window.contentView = hosting
-    let titlebarHosting = NSHostingView(
-      rootView: MainWindowTitlebarView(title: appDisplayName).environmentObject(model))
-    titlebarHosting.sizingOptions = [.intrinsicContentSize]
-    titlebarHosting.frame = NSRect(x: 0, y: 0, width: 320, height: 28)
-    let titlebarAccessory = NSTitlebarAccessoryViewController()
-    titlebarAccessory.layoutAttribute = .left
-    titlebarAccessory.view = titlebarHosting
-    window.addTitlebarAccessoryViewController(titlebarAccessory)
-    mainWindowTitlebarAccessory = titlebarAccessory
+    window.contentViewController = NSHostingController(rootView: root)
     window.center()
     self.window = window
   }
@@ -763,10 +820,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   private func startCloseWindowKeyMonitor() {
+    guard !didPerformTerminationCleanup else { return }
     guard closeWindowKeyMonitor == nil else { return }
     closeWindowKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
       [weak self] event in
-      guard let self else { return event }
+      guard let self, !self.didPerformTerminationCleanup else { return event }
       guard self.isCommandW(event) else { return event }
       return self.closeFrontmostWindowForCommandW() ? nil : event
     }
@@ -789,6 +847,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   private func startBackgroundActivity() {
+    guard !didPerformTerminationCleanup else { return }
     backgroundActivity = ProcessInfo.processInfo.beginActivity(
       options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
       reason: "Keep global hotkeys responsive while the window is hidden."
@@ -796,6 +855,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   private func startGlobalInputOwnershipMonitoring() {
+    guard !didPerformTerminationCleanup else { return }
     guard workspaceLaunchObserver == nil, workspaceTerminateObserver == nil else { return }
     let center = NSWorkspace.shared.notificationCenter
     workspaceLaunchObserver = center.addObserver(
@@ -809,7 +869,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       guard bundleIdentifier == nil || bundleIdentifier == AppRuntimeIdentity.stableBundleIdentifier
       else { return }
       MainActor.assumeIsolated {
-        guard let self else { return }
+        guard let self, !self.didPerformTerminationCleanup else { return }
         _ = self.model.refreshGlobalInputOwnership(trigger: "workspaceLaunch")
       }
     }
@@ -824,7 +884,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       guard bundleIdentifier == nil || bundleIdentifier == AppRuntimeIdentity.stableBundleIdentifier
       else { return }
       MainActor.assumeIsolated {
-        guard let self else { return }
+        guard let self, !self.didPerformTerminationCleanup else { return }
         _ = self.model.refreshGlobalInputOwnership(trigger: "workspaceTerminate")
       }
     }
@@ -832,7 +892,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     globalInputOwnershipTimer?.invalidate()
     let timer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
       MainActor.assumeIsolated {
-        _ = self?.model.refreshGlobalInputOwnership(trigger: "watchdog")
+        guard let self, !self.didPerformTerminationCleanup else { return }
+        _ = self.model.refreshGlobalInputOwnership(trigger: "watchdog")
       }
     }
     RunLoop.main.add(timer, forMode: .common)
@@ -886,6 +947,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   private func startNetworkSpeedHelperIfNeeded() {
+    guard !didPerformTerminationCleanup else { return }
     if networkSpeedHelperProcess?.isRunning == true { return }
     guard ProcessInfo.processInfo.systemUptime >= networkSpeedHelperRestartNotBefore else { return }
     stopNetworkSpeedHelper(killStale: true)
@@ -919,22 +981,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     environment["AIXLG_APP_DISPLAY_NAME"] = runtimeIdentity.displayName
     process.environment = environment
     let helperOutput = helperToParent.fileHandleForReading
-    helperOutput.readabilityHandler = { [weak self] handle in
+    helperOutput.readabilityHandler = { [weak self, weak process] handle in
       let data = handle.availableData
       guard !data.isEmpty else {
         handle.readabilityHandler = nil
         return
       }
       DispatchQueue.main.async {
-        self?.receiveNetworkSpeedHelperOutput(data)
+        guard let process else { return }
+        self?.receiveNetworkSpeedHelperOutput(data, from: process)
       }
     }
     process.terminationHandler = { [weak self, weak process] _ in
       DispatchQueue.main.async {
-        if self?.networkSpeedHelperProcess === process {
-          self?.networkSpeedHelperProcess = nil
-          self?.resetNetworkSpeedHelperIPC()
-          self?.registerNetworkSpeedHelperFailure()
+        guard let self, !self.didPerformTerminationCleanup, let process else { return }
+        if self.networkSpeedHelperProcess === process {
+          self.networkSpeedHelperProcess = nil
+          self.resetNetworkSpeedHelperIPC()
+          self.registerNetworkSpeedHelperFailure()
         }
       }
     }
@@ -961,6 +1025,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   private func startSleepStatusHelperIfNeeded() {
+    guard !didPerformTerminationCleanup else { return }
     if sleepStatusHelperProcess?.isRunning == true {
       publishSleepStatusHelperState()
       return
@@ -997,11 +1062,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     process.environment = environment
     process.terminationHandler = { [weak self, weak process] _ in
       DispatchQueue.main.async {
-        if self?.sleepStatusHelperProcess === process {
-          self?.sleepStatusHelperProcess = nil
-          self?.lastSleepStatusHelperStateSignature = nil
-          self?.sleepStatusHelperCapabilityToken = nil
-          self?.registerSleepStatusHelperFailure()
+        guard let self, !self.didPerformTerminationCleanup, let process else { return }
+        if self.sleepStatusHelperProcess === process {
+          self.sleepStatusHelperProcess = nil
+          self.lastSleepStatusHelperStateSignature = nil
+          self.sleepStatusHelperCapabilityToken = nil
+          self.registerSleepStatusHelperFailure()
         }
       }
     }
@@ -1014,8 +1080,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         ["pid": "\(process.processIdentifier)", "name": sleepStatusHelperExecutableName])
       markSleepStatusHelperStableIfStillRunning(process)
       publishSleepStatusHelperState(force: true)
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-        self?.publishSleepStatusHelperState(force: true)
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self, weak process] in
+        guard let self, !self.didPerformTerminationCleanup, let process,
+          self.sleepStatusHelperProcess === process else { return }
+        self.publishSleepStatusHelperState(force: true)
       }
     } catch {
       if sleepStatusHelperCapabilityToken == capabilityToken {
@@ -1048,7 +1116,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     networkSpeedHelperReadBuffer.removeAll(keepingCapacity: false)
   }
 
-  private func receiveNetworkSpeedHelperOutput(_ data: Data) {
+  private func receiveNetworkSpeedHelperOutput(_ data: Data, from process: Process) {
+    guard !didPerformTerminationCleanup, networkSpeedHelperProcess === process else { return }
     networkSpeedHelperReadBuffer.append(data)
     guard networkSpeedHelperReadBuffer.count <= 16_384 else {
       networkSpeedHelperReadBuffer.removeAll(keepingCapacity: false)
@@ -1175,7 +1244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     DispatchQueue.main.asyncAfter(
       deadline: .now() + HelperRestartBackoff.stableRunDuration
     ) { [weak self, weak process] in
-      guard let self, let process,
+      guard let self, !self.didPerformTerminationCleanup, let process,
         self.networkSpeedHelperProcess === process,
         process.isRunning
       else { return }
@@ -1188,7 +1257,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     DispatchQueue.main.asyncAfter(
       deadline: .now() + HelperRestartBackoff.stableRunDuration
     ) { [weak self, weak process] in
-      guard let self, let process,
+      guard let self, !self.didPerformTerminationCleanup, let process,
         self.sleepStatusHelperProcess === process,
         process.isRunning
       else { return }
@@ -1202,6 +1271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   private func publishNetworkStatusMenuSnapshot() {
+    guard !didPerformTerminationCleanup else { return }
     guard networkSpeedHelperProcess?.isRunning == true,
       let networkSpeedHelperInputHandle
     else { return }
@@ -1221,7 +1291,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       var isEnabled = commandsAvailable
       var toolTip: String?
       if !handlerAvailable {
-        toolTip = "游目功能尚未就绪。"
+        toolTip = "截图功能尚未就绪。"
       } else if !model.hasGlobalInputOwnership {
         toolTip = model.globalInputOwnershipBlockedMessage
       }
@@ -1294,7 +1364,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     states.append(
       NetworkStatusMenuItemState(
         id: "host.pijuanPDF",
-        title: "披卷",
+        title: "PDF 浏览器",
         isEnabled: true,
         isHidden: !isVisible("host.pijuanPDF"),
         toolTip: nil))
@@ -1373,6 +1443,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   private func startStatusHelperWatchdog() {
+    guard !didPerformTerminationCleanup else { return }
     updateStatusHelperWatchdog()
     statusHelperWatchdogTimer?.invalidate()
     let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
@@ -1385,6 +1456,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   private func updateStatusHelperWatchdog() {
+    guard !didPerformTerminationCleanup else { return }
     if model.sleepStatusItemVisible, sleepStatusHelperProcess?.isRunning != true {
       startSleepStatusHelperIfNeeded()
     }
@@ -1395,6 +1467,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   private func syncSleepStatusItemVisibility() {
+    guard !didPerformTerminationCleanup else { return }
     if model.sleepStatusItemVisible {
       removeSleepStatusItem()
       startSleepStatusHelperIfNeeded()
@@ -1415,6 +1488,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   private func syncNetworkSpeedStatusItemVisibility() {
+    guard !didPerformTerminationCleanup else { return }
     startNetworkSpeedHelperIfNeeded()
     updateStatusHelperWatchdog()
     AppDiagnostics.log(
@@ -1455,6 +1529,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   private func publishSleepStatusHelperState(force: Bool = false) {
+    guard !didPerformTerminationCleanup else { return }
     guard sleepStatusHelperProcess?.isRunning == true,
       let sleepStatusHelperCapabilityToken
     else { return }
@@ -1499,6 +1574,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   private func startPermissionPolling(reason: String) {
+    guard !didPerformTerminationCleanup else { return }
     permissionTimer?.invalidate()
     permissionTimer = nil
     guard !model.allRequiredPermissionsComplete else { return }
@@ -1510,7 +1586,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     permissionTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) {
       [weak self] _ in
       MainActor.assumeIsolated {
-        guard let self else { return }
+        guard let self, !self.didPerformTerminationCleanup else { return }
         self.permissionPollsRemaining -= 1
         if self.model.refreshAuthorizationAndReloadIfNeeded() {
           self.refreshStatusMenu()
@@ -1583,7 +1659,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     ) { [weak self] notification in
       let capabilityToken = notification.object as? String
       MainActor.assumeIsolated {
-        guard let self,
+        guard let self, !self.didPerformTerminationCleanup,
           capabilityToken == self.sleepStatusHelperCapabilityToken,
           self.sleepStatusHelperProcess?.isRunning == true
         else { return }
@@ -1601,7 +1677,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     ) { [weak self] notification in
       let capabilityToken = notification.object as? String
       MainActor.assumeIsolated {
-        guard let self,
+        guard let self, !self.didPerformTerminationCleanup,
           capabilityToken == self.sleepStatusHelperCapabilityToken,
           self.sleepStatusHelperProcess?.isRunning == true
         else { return }
@@ -1634,7 +1710,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       queue: .main
     ) { [weak self] _ in
       MainActor.assumeIsolated {
-        guard let self else { return }
+        guard let self, !self.didPerformTerminationCleanup else { return }
         self.syncNetworkSpeedStatusItemVisibility()
       }
     }
@@ -1663,30 +1739,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   private func configureSparkleUpdaterIfRequired() {
+    guard !didPerformTerminationCleanup else { return }
     guard model.usesSparkleUpdater, runtimeIdentity.allowsOnlineUpdates else { return }
-    let controller = SparkleUpdateController { [weak model] state in
-      model?.handleSparkleUpdateState(state)
+    let controller = SparkleUpdateController { [weak self] state in
+      guard let self, !self.didPerformTerminationCleanup else { return }
+      self.model.handleSparkleUpdateState(state)
     }
     sparkleUpdateController = controller
-    model.sparkleCheckForUpdatesHandler = { [weak controller] in
+    model.sparkleCheckForUpdatesHandler = { [weak self, weak controller] in
       Task { @MainActor in
-        controller?.checkForUpdates()
+        guard let self, !self.didPerformTerminationCleanup, let controller,
+          self.sparkleUpdateController === controller else { return }
+        controller.checkForUpdates()
       }
     }
-    updateReminderSubscription = model.$sparkleUpdateReminder
-      .combineLatest(model.$latestUpdate, model.$isUpdateBusy)
+    updateReminderSubscription = model.updateWorkspace.$sparkleUpdateReminder
+      .combineLatest(model.updateWorkspace.$latestUpdate, model.updateWorkspace.$isUpdateBusy)
       .sink { [weak self] _ in
         Task { @MainActor [weak self] in self?.refreshUpdateReminder() }
       }
     updateWakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
       forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
-    ) { [weak controller] _ in
-      MainActor.assumeIsolated { controller?.checkForUpdatesIfNeeded() }
+    ) { [weak self, weak controller] _ in
+      MainActor.assumeIsolated {
+        guard let self, !self.didPerformTerminationCleanup, let controller,
+          self.sparkleUpdateController === controller else { return }
+        controller.checkForUpdatesIfNeeded()
+      }
     }
     controller.start()
   }
 
   private func refreshUpdateReminder() {
+    guard !didPerformTerminationCleanup else { return }
     updateMenuItem?.title = updateMenuTitle
     updateMenuItem?.toolTip = model.hasAvailableUpdate ? "查看新版并更新" : "检查是否有新版本"
     publishNetworkStatusMenuSnapshot()
@@ -1699,6 +1784,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   private func handleVolumeFeedback(volume: Double, source: String) {
+    guard !didPerformTerminationCleanup else { return }
     sendNetworkStatusHelperMessage(
       NetworkStatusHelperMessage(
         type: "volume",
@@ -1715,6 +1801,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   private func showWindow(ticket: ShortcutWindowToggleTicket) {
+    guard !didPerformTerminationCleanup else { return }
     guard !shouldSuppressMainWindowForLauncher else { return }
     guard !model.isLongScreenshotCaptureActive else {
       AppDiagnostics.log("main_window_suppressed", ["reason": "youmuLongScreenshot"])
@@ -1730,7 +1817,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     NSApp.activate(ignoringOtherApps: true)
 
     DispatchQueue.main.async { [weak self] in
-      guard let self,
+      guard let self, !self.didPerformTerminationCleanup,
         self.shortcutWindowToggleState.accepts(ticket),
         ticket.wantsPresented,
         !self.model.isLongScreenshotCaptureActive
@@ -1766,6 +1853,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   private func presentShortcutWindow(
     _ target: ShortcutWindowTarget
   ) -> ShortcutWindowToggleOutcome {
+    guard !didPerformTerminationCleanup else { return .unavailable }
     prepareShortcutWindowRoute(target)
     let snapshot = shortcutWindowSnapshot(for: target)
     let ticket = shortcutWindowToggleState.present(target: target)
@@ -1783,6 +1871,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   private func toggleShortcutWindow(
     _ target: ShortcutWindowTarget
   ) -> ShortcutWindowToggleOutcome {
+    guard !didPerformTerminationCleanup else { return .unavailable }
     let snapshot = shortcutWindowSnapshot(for: target)
     let ticket = shortcutWindowToggleState.toggle(
       target: target,
@@ -1862,6 +1951,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   private func settlePendingShortcutWindowRestorations() {
+    guard !didPerformTerminationCleanup else { return }
     for target in Array(pendingRestorationTickets.keys) {
       settlePendingShortcutWindowRestoration(for: target)
     }
@@ -1870,6 +1960,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   private func settlePendingShortcutWindowRestoration(
     for target: ShortcutWindowTarget
   ) {
+    guard !didPerformTerminationCleanup else { return }
     guard let ticket = pendingRestorationTickets[target] else { return }
     if shortcutWindowToggleState.accepts(ticket), ticket.wantsPresented {
       let snapshot = shortcutWindowSnapshot(for: target)
@@ -2026,6 +2117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   private func showLauncher(ticket: ShortcutWindowToggleTicket) {
+    guard !didPerformTerminationCleanup else { return }
     if launcherWindow == nil {
       buildLauncherWindow()
     }
@@ -2042,7 +2134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     launcherWindow?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
     DispatchQueue.main.async { [weak self] in
-      guard let self,
+      guard let self, !self.didPerformTerminationCleanup,
         self.shortcutWindowToggleState.accepts(ticket),
         ticket.wantsPresented
       else { return }
@@ -2086,10 +2178,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   private func handleClipboardHistoryEntryActivation(_ entry: ClipboardHistoryEntry) {
+    guard !didPerformTerminationCleanup else { return }
     model.clipboardHistory.copyToPasteboard(entry: entry) { [weak self] succeeded in
+      guard let self, !self.didPerformTerminationCleanup else { return }
       ClipboardReplayFeedback.deliver(didCommit: succeeded)
       guard succeeded else { return }
-      self?.completeClipboardHistorySelection()
+      self.completeClipboardHistorySelection()
     }
   }
 
@@ -2107,6 +2201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   private func completeClipboardHistorySelection() {
+    guard !didPerformTerminationCleanup else { return }
     shortcutWindowToggleState.invalidate()
     settlePendingShortcutWindowRestorations()
     let returnApplication = clipboardHistoryReturnApplication
@@ -2212,6 +2307,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   private func syncClassicTabSwitcherHUD(_ state: ClassicTabSwitcherHUDState) {
+    guard !didPerformTerminationCleanup else { return }
     guard state.isVisible else {
       classicTabSwitcherWindow?.orderOut(nil)
       return
@@ -2271,30 +2367,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   private func showPhraseWindow() {
+    guard !didPerformTerminationCleanup else { return }
     model.showPhraseWindow()
   }
 
   private func showWindowWithStartupRetries() {
+    guard !didPerformTerminationCleanup else { return }
     let ticket = shortcutWindowToggleState.present(target: .main)
     settlePendingShortcutWindowRestorations()
     showPrimaryWindowOnStartup(ticket: ticket)
     shortcutWindowToggleState.finish(ticket)
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.20) { [weak self] in
-      guard let self, self.shortcutWindowToggleState.accepts(ticket) else { return }
+      guard let self, !self.didPerformTerminationCleanup, self.shortcutWindowToggleState.accepts(ticket) else { return }
       self.showPrimaryWindowOnStartup(ticket: ticket)
     }
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.80) { [weak self] in
-      guard let self, self.shortcutWindowToggleState.accepts(ticket) else { return }
+      guard let self, !self.didPerformTerminationCleanup, self.shortcutWindowToggleState.accepts(ticket) else { return }
       self.showPrimaryWindowOnStartup(ticket: ticket)
     }
   }
 
   private func showAuthorizationRelaunchResultWithRetries() {
+    guard !didPerformTerminationCleanup else { return }
     let ticket = shortcutWindowToggleState.present(target: .main)
     settlePendingShortcutWindowRestorations()
     for (attempt, delay) in [0.0, 0.6, 1.8].enumerated() {
       DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-        guard let self, self.shortcutWindowToggleState.accepts(ticket) else { return }
+        guard let self, !self.didPerformTerminationCleanup, self.shortcutWindowToggleState.accepts(ticket) else { return }
         self.showWindow(ticket: ticket)
         if attempt == 0 {
           self.shortcutWindowToggleState.finish(ticket)
@@ -2313,6 +2412,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   private func showPrimaryWindowOnStartup(ticket: ShortcutWindowToggleTicket) {
+    guard !didPerformTerminationCleanup else { return }
     model.selectPlugin(id: nil)
     model.selectedModuleName = "插件中心"
     showWindow(ticket: ticket)
@@ -2376,6 +2476,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
   @discardableResult
   private func closeFrontmostWindowForCommandW() -> Bool {
+    guard !didPerformTerminationCleanup else { return false }
     if let keyWindow = NSApp.keyWindow, keyWindow.isVisible {
       if keyWindow == launcherWindow {
         hideLauncher()
@@ -2426,40 +2527,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   @objc private func showWindowAction() {
+    guard !didPerformTerminationCleanup else { return }
     presentMainWindow()
   }
 
   @objc private func showPrimaryPanelAction() {
+    guard !didPerformTerminationCleanup else { return }
     model.selectedModuleName = "功能快捷键"
     presentMainWindow()
   }
 
   @objc private func showShortcutGuideAction() {
+    guard !didPerformTerminationCleanup else { return }
     model.showShortcutGuidePanel()
   }
 
   @objc private func showLauncherAction() {
+    guard !didPerformTerminationCleanup else { return }
     model.showLauncher()
   }
 
   @objc private func showPhraseWindowAction() {
+    guard !didPerformTerminationCleanup else { return }
     showPhraseWindow()
   }
 
   @objc private func showCodexNetworkProbeStatusAction() {
+    guard !didPerformTerminationCleanup else { return }
     presentShortcutWindow(.networkProbe)
   }
 
   @objc private func showProcessViewerStatusAction() {
+    guard !didPerformTerminationCleanup else { return }
     presentShortcutWindow(.processViewer)
   }
 
   @objc private func showPluginCenterAction() {
+    guard !didPerformTerminationCleanup else { return }
     model.selectedModuleName = "插件中心"
     presentMainWindow()
   }
 
   @objc private func showSleepManagementAction() {
+    guard !didPerformTerminationCleanup else { return }
     AppDiagnostics.log(
       "sleep_status_item_open_sleep_management",
       [
@@ -2470,6 +2580,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   @objc private func sleepStatusItemClicked(_ sender: NSStatusBarButton) {
+    guard !didPerformTerminationCleanup else { return }
     if NSApp.currentEvent?.type == .rightMouseUp {
       showSleepManagementAction()
     } else {
@@ -2478,10 +2589,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   @objc private func toggleSleepStatusItemAction() {
+    guard !didPerformTerminationCleanup else { return }
     toggleSleepStatus(source: "native")
   }
 
   private func toggleSleepStatus(source: String) {
+    guard !didPerformTerminationCleanup else { return }
     let wasActive = model.keepAwakeEnabled
     switch sleepStatusToggleAction(isAwake: wasActive) {
     case .stop:
@@ -2499,54 +2612,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   @objc private func showSettingsAction() {
+    guard !didPerformTerminationCleanup else { return }
     model.showSettings()
     presentMainWindow()
   }
 
   @objc private func createShortcutAction() {
+    guard !didPerformTerminationCleanup else { return }
     presentMainWindow()
     model.requestCreateShortcut()
   }
 
   @objc private func showCommunityQRCodeAction() {
+    guard !didPerformTerminationCleanup else { return }
     model.presentCommunityQRCode()
   }
 
   @objc private func checkForUpdatesAction() {
+    guard !didPerformTerminationCleanup else { return }
     model.showAvailableUpdate()
     presentMainWindow()
     if !model.hasAvailableUpdate || model.isUpdateBusy { model.checkForUpdates() }
   }
 
   @objc private func closeWindowAction() {
+    guard !didPerformTerminationCleanup else { return }
     closeFrontmostWindowForCommandW()
   }
 
   @objc private func togglePaused() {
+    guard !didPerformTerminationCleanup else { return }
     model.togglePaused()
     refreshStatusMenu()
   }
 
   @objc private func reloadHotkeys() {
+    guard !didPerformTerminationCleanup else { return }
     model.reloadHotkeys()
     refreshStatusMenu()
   }
 
   @objc private func openAccessibility() {
+    guard !didPerformTerminationCleanup else { return }
     presentMainWindow()
     model.presentAuthorizationCenter()
   }
 
   @objc private func openConfig() {
+    guard !didPerformTerminationCleanup else { return }
     model.openConfigFile()
   }
 
   @objc private func toggleLoginItem() {
+    guard !didPerformTerminationCleanup else { return }
     model.setLaunchAtLoginEnabled(!model.launchAtLoginEnabled)
     refreshStatusMenu()
   }
 
   @objc private func quit() {
+    guard !didPerformTerminationCleanup else { return }
     NSApp.terminate(nil)
   }
 

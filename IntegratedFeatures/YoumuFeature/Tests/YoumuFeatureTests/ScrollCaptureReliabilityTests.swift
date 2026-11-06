@@ -1,23 +1,24 @@
 import AppKit
-import XCTest
+import Testing
 
 @testable import YoumuFeature
 
 @MainActor
-final class ScrollCaptureReliabilityTests: XCTestCase {
+@Suite(.serialized)
+final class ScrollCaptureReliabilityTests {
+  @Test
   func testCaptureGateRejectsSecondLongScreenshotSession() {
-    XCTAssertTrue(
-      CaptureSessionGate.canStart(
+    #expect(CaptureSessionGate.canStart(
         hasSelection: false,
         hasInPlaceSession: false,
         hasLongScreenshotSession: false))
-    XCTAssertFalse(
-      CaptureSessionGate.canStart(
+    #expect(!(CaptureSessionGate.canStart(
         hasSelection: false,
         hasInPlaceSession: false,
-        hasLongScreenshotSession: true))
+        hasLongScreenshotSession: true)))
   }
 
+  @Test
   func testSelectionResolvesTheExactWindowBelowTheRegion() throws {
     let hostPID: pid_t = 100
     let browserPID: pid_t = 200
@@ -32,16 +33,16 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
         bounds: CGRect(x: 1_300, y: 0, width: 900, height: 900)),
     ]
 
-    let selected = try XCTUnwrap(
-      RegionSelectionSourceResolver.preferredCandidate(
+    let selected = try #require(RegionSelectionSourceResolver.preferredCandidate(
         for: CGRect(x: 120, y: 140, width: 800, height: 600),
         candidates: candidates,
         hostProcessIdentifier: hostPID))
 
-    XCTAssertEqual(selected.ownerProcessIdentifier, browserPID)
-    XCTAssertEqual(selected.windowID, 42)
+    #expect((selected.ownerProcessIdentifier) == (browserPID))
+    #expect((selected.windowID) == (42))
   }
 
+  @Test
   func testSelectedWindowGateRejectsAnotherFrontWindowFromTheSameBrowserProcess() {
     let region = CGRect(x: 100, y: 100, width: 500, height: 400)
     let selected = RegionSelectionWindowCandidate(
@@ -53,15 +54,13 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
       windowID: 99,
       bounds: CGRect(x: 0, y: 0, width: 900, height: 700))
 
-    XCTAssertFalse(
-      ScrollCaptureSourceWindowPolicy.matchesSelectedWindow(
+    #expect(!(ScrollCaptureSourceWindowPolicy.matchesSelectedWindow(
         region: region,
         candidates: [otherFrontWindow, selected],
         hostProcessIdentifier: 100,
         sourceProcessIdentifier: 200,
-        sourceWindowID: 42))
-    XCTAssertTrue(
-      ScrollCaptureSourceWindowPolicy.matchesSelectedWindow(
+        sourceWindowID: 42)))
+    #expect(ScrollCaptureSourceWindowPolicy.matchesSelectedWindow(
         region: region,
         candidates: [selected, otherFrontWindow],
         hostProcessIdentifier: 100,
@@ -69,6 +68,7 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
         sourceWindowID: 42))
   }
 
+  @Test
   func testSelectedWindowGateRejectsAHostWindowCoveringTheSelection() {
     let region = CGRect(x: 100, y: 100, width: 500, height: 400)
     let hostWindow = RegionSelectionWindowCandidate(
@@ -80,23 +80,22 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
       windowID: 42,
       bounds: CGRect(x: 0, y: 0, width: 900, height: 700))
 
-    XCTAssertFalse(
-      ScrollCaptureSourceWindowPolicy.matchesSelectedWindow(
+    #expect(!(ScrollCaptureSourceWindowPolicy.matchesSelectedWindow(
         region: region,
         candidates: [hostWindow, selectedSourceWindow],
         hostProcessIdentifier: 100,
         sourceProcessIdentifier: 200,
-        sourceWindowID: 42))
+        sourceWindowID: 42)))
   }
 
+  @Test
   func testExactSelectedWindowGateDoesNotDependOnTheFrontmostApplication() {
     let selectedSourceWindow = RegionSelectionWindowCandidate(
       ownerProcessIdentifier: 200,
       windowID: 42,
       bounds: CGRect(x: 0, y: 0, width: 900, height: 700))
 
-    XCTAssertTrue(
-      ScrollCaptureSourceWindowPolicy.matchesSelectedWindow(
+    #expect(ScrollCaptureSourceWindowPolicy.matchesSelectedWindow(
         region: CGRect(x: 100, y: 100, width: 500, height: 400),
         candidates: [selectedSourceWindow],
         hostProcessIdentifier: 100,
@@ -104,168 +103,153 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
         sourceWindowID: 42))
   }
 
+  @Test
   func testPlainSpaceKeyDownFinishesAndIsConsumed() {
-    XCTAssertEqual(
-      ScrollCaptureCommandPolicy.disposition(
+    #expect((ScrollCaptureCommandPolicy.disposition(
         keyCode: 49,
         flags: [],
         eventType: .keyDown,
         isCapturing: true,
         isFinishing: false,
-        isRepeat: false),
-      .consumeAndDispatch(.finish))
+        isRepeat: false)) == (.consumeAndDispatch(.finish)))
   }
 
+  @Test
   func testPlainSpaceKeyUpIsConsumedWithoutDispatchingAgain() {
-    XCTAssertEqual(
-      ScrollCaptureCommandPolicy.disposition(
+    #expect((ScrollCaptureCommandPolicy.disposition(
         keyCode: 49,
         flags: [],
         eventType: .keyUp,
         isCapturing: true,
         isFinishing: false,
-        isRepeat: false),
-      .consume)
+        isRepeat: false)) == (.consume))
   }
 
+  @Test
   func testRepeatedPlainSpaceKeyDownIsConsumedWithoutDispatchingAgain() {
-    XCTAssertEqual(
-      ScrollCaptureCommandPolicy.disposition(
+    #expect((ScrollCaptureCommandPolicy.disposition(
         keyCode: 49,
         flags: [],
         eventType: .keyDown,
         isCapturing: true,
         isFinishing: false,
-        isRepeat: true),
-      .consume)
+        isRepeat: true)) == (.consume))
   }
 
+  @Test
   func testModifiedSpacePassesThroughToTheSourceApplication() {
     for flags: CGEventFlags in [.maskCommand, .maskControl, .maskAlternate, .maskShift] {
-      XCTAssertEqual(
-        ScrollCaptureCommandPolicy.disposition(
+      #expect((ScrollCaptureCommandPolicy.disposition(
           keyCode: 49,
           flags: flags,
           eventType: .keyDown,
           isCapturing: true,
           isFinishing: false,
-          isRepeat: false),
-        .passThrough,
-        "flags=\(flags.rawValue)")
+          isRepeat: false)) == (.passThrough), Comment(rawValue: "flags=\(flags.rawValue)"))
     }
   }
 
+  @Test
   func testPlainSpaceRemainsConsumedWhileFinishing() {
     for eventType: CGEventType in [.keyDown, .keyUp] {
-      XCTAssertEqual(
-        ScrollCaptureCommandPolicy.disposition(
+      #expect((ScrollCaptureCommandPolicy.disposition(
           keyCode: 49,
           flags: [],
           eventType: eventType,
           isCapturing: false,
           isFinishing: true,
-          isRepeat: false),
-        .consume,
-        "eventType=\(eventType.rawValue)")
+          isRepeat: false)) == (.consume), Comment(rawValue: "eventType=\(eventType.rawValue)"))
     }
   }
 
+  @Test
   func testConsumedSpaceKeyUpStaysConsumedWhenModifierAppearsMidPress() {
     var router = ScrollCaptureCommandRouter()
-    XCTAssertEqual(
-      router.disposition(
+    #expect((router.disposition(
         keyCode: 49,
         flags: [],
         eventType: .keyDown,
         isCapturing: true,
         isFinishing: false,
-        isRepeat: false),
-      .consumeAndDispatch(.finish))
-    XCTAssertEqual(
-      router.disposition(
+        isRepeat: false)) == (.consumeAndDispatch(.finish)))
+    #expect((router.disposition(
         keyCode: 49,
         flags: .maskCommand,
         eventType: .keyUp,
         isCapturing: false,
         isFinishing: true,
-        isRepeat: false),
-      .consume)
+        isRepeat: false)) == (.consume))
   }
 
+  @Test
   func testPassedModifiedSpaceKeyUpStaysPassedWhenModifierLeavesMidPress() {
     var router = ScrollCaptureCommandRouter()
-    XCTAssertEqual(
-      router.disposition(
+    #expect((router.disposition(
         keyCode: 49,
         flags: .maskCommand,
         eventType: .keyDown,
         isCapturing: true,
         isFinishing: false,
-        isRepeat: false),
-      .passThrough)
-    XCTAssertEqual(
-      router.disposition(
+        isRepeat: false)) == (.passThrough))
+    #expect((router.disposition(
         keyCode: 49,
         flags: [],
         eventType: .keyUp,
         isCapturing: true,
         isFinishing: false,
-        isRepeat: false),
-      .passThrough)
+        isRepeat: false)) == (.passThrough))
   }
 
+  @Test
   func testThirtyCompleteFramesCanClaimTheFirstBaselineOnlyOnce() {
     var gate = ScrollCaptureFirstCompleteFrameGate()
     var claims = 0
     for _ in 0..<30 where gate.claim() { claims += 1 }
-    XCTAssertEqual(claims, 1)
-    XCTAssertTrue(gate.hasClaimedFrame)
+    #expect((claims) == (1))
+    #expect(gate.hasClaimedFrame)
     gate.reset()
-    XCTAssertTrue(gate.claim())
+    let reclaimed = gate.claim()
+    #expect(reclaimed)
   }
 
+  @Test
   func testStreamSourceRectUsesQuartzTopLeftCoordinatesWithoutASecondYFlip() throws {
-    XCTAssertEqual(
-      try ScrollCaptureStreamGeometry.sourceRect(
+    #expect((try ScrollCaptureStreamGeometry.sourceRect(
         globalRegion: CGRect(x: 120, y: 180, width: 800, height: 600),
-        displayBounds: CGRect(x: 0, y: 0, width: 1_440, height: 900)),
-      CGRect(x: 120, y: 180, width: 800, height: 600))
+        displayBounds: CGRect(x: 0, y: 0, width: 1_440, height: 900))) == (CGRect(x: 120, y: 180, width: 800, height: 600)))
 
-    XCTAssertEqual(
-      try ScrollCaptureStreamGeometry.sourceRect(
+    #expect((try ScrollCaptureStreamGeometry.sourceRect(
         globalRegion: CGRect(x: -1_800, y: 260, width: 500, height: 400),
-        displayBounds: CGRect(x: -1_920, y: 100, width: 1_920, height: 1_080)),
-      CGRect(x: 120, y: 160, width: 500, height: 400))
+        displayBounds: CGRect(x: -1_920, y: 100, width: 1_920, height: 1_080))) == (CGRect(x: 120, y: 160, width: 500, height: 400)))
   }
 
+  @Test
   func testStreamSourceRectRejectsASelectionThatCrossesDisplays() {
-    XCTAssertThrowsError(
+    expectThrowsError(
       try ScrollCaptureStreamGeometry.sourceRect(
         globalRegion: CGRect(x: 1_300, y: 100, width: 300, height: 400),
         displayBounds: CGRect(x: 0, y: 0, width: 1_440, height: 900))) { error in
           guard case ScrollCaptureStreamError.regionCrossesDisplays = error else {
-            return XCTFail("unexpected error: \(error)")
+            Issue.record(Comment(rawValue: "unexpected error: \(error)")); return
           }
         }
   }
 
+  @Test
   func testRetinaStreamOutputKeepsNativePixelDensity() {
-    XCTAssertEqual(
-      ScrollCaptureStreamGeometry.fallbackPointPixelScale(
+    #expect((ScrollCaptureStreamGeometry.fallbackPointPixelScale(
         pixelWidth: 3_840,
         pixelHeight: 2_160,
-        displayBounds: CGRect(x: 0, y: 0, width: 1_920, height: 1_080)),
-      2)
-    XCTAssertEqual(
-      ScrollCaptureStreamGeometry.outputPixelSize(
+        displayBounds: CGRect(x: 0, y: 0, width: 1_920, height: 1_080))) == (2))
+    #expect((ScrollCaptureStreamGeometry.outputPixelSize(
         sourceRect: CGRect(x: 0, y: 0, width: 232, height: 519),
-        pointPixelScale: 2),
-      CGSize(width: 464, height: 1_038))
-    XCTAssertEqual(ScrollCapturePolicy.firstCompleteFrameTimeout, 4)
+        pointPixelScale: 2)) == (CGSize(width: 464, height: 1_038)))
+    #expect((ScrollCapturePolicy.firstCompleteFrameTimeout) == (4))
   }
 
+  @Test
   func testFrameRingKeepsOnlyEightNewestCompleteFrames() throws {
-    let image = try XCTUnwrap(makeSolidImage(width: 12, height: 12, gray: 80))
+    let image = try #require(makeSolidImage(width: 12, height: 12, gray: 80))
     var ring = ScrollCaptureFrameRing(capacity: 8)
 
     for sequence in 1...12 {
@@ -278,15 +262,16 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
           containsVisualChange: true))
     }
 
-    XCTAssertEqual(ring.frames.map(\.sequenceNumber), Array(5...12))
-    XCTAssertEqual(ring.latest(after: 10)?.sequenceNumber, 12)
-    XCTAssertEqual(ring.latest(after: 6, through: 9)?.sequenceNumber, 9)
-    XCTAssertNil(ring.latest(after: 9, through: 9))
-    XCTAssertNil(ring.latest(after: 12))
+    #expect((ring.frames.map(\.sequenceNumber)) == (Array(5...12)))
+    #expect((ring.latest(after: 10)?.sequenceNumber) == (12))
+    #expect((ring.latest(after: 6, through: 9)?.sequenceNumber) == (9))
+    #expect((ring.latest(after: 9, through: 9)) == nil)
+    #expect((ring.latest(after: 12)) == nil)
   }
 
+  @Test
   func testFrameRingOrdersOutOfOrderDeliveriesBySequence() throws {
-    let image = try XCTUnwrap(makeSolidImage(width: 12, height: 12, gray: 80))
+    let image = try #require(makeSolidImage(width: 12, height: 12, gray: 80))
     var ring = ScrollCaptureFrameRing(capacity: 8)
     for sequence in [3, 1, 2] {
       ring.append(
@@ -297,15 +282,16 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
           displayTime: UInt64(sequence),
           containsVisualChange: true))
     }
-    XCTAssertEqual(ring.frames.map(\.sequenceNumber), [1, 2, 3])
-    XCTAssertEqual(ring.latest(after: 0)?.sequenceNumber, 3)
-    XCTAssertEqual(ring.oldest(after: 0)?.sequenceNumber, 1)
-    XCTAssertEqual(ring.earliest(after: 1)?.sequenceNumber, 2)
-    XCTAssertEqual(ring.ordered(after: 0).map(\.sequenceNumber), [1, 2, 3])
+    #expect((ring.frames.map(\.sequenceNumber)) == ([1, 2, 3]))
+    #expect((ring.latest(after: 0)?.sequenceNumber) == (3))
+    #expect((ring.oldest(after: 0)?.sequenceNumber) == (1))
+    #expect((ring.earliest(after: 1)?.sequenceNumber) == (2))
+    #expect((ring.ordered(after: 0).map(\.sequenceNumber)) == ([1, 2, 3]))
   }
 
+  @Test
   func testFrameRingRejectsPreEventDisplayTimesAndKeepsFIFOOrder() throws {
-    let image = try XCTUnwrap(makeSolidImage(width: 12, height: 12, gray: 80))
+    let image = try #require(makeSolidImage(width: 12, height: 12, gray: 80))
     var ring = ScrollCaptureFrameRing(capacity: 8)
     for (sequence, displayTime) in [(1, 90), (2, 100), (3, 101), (4, 104)] {
       ring.append(
@@ -317,70 +303,63 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
           containsVisualChange: true))
     }
 
-    XCTAssertEqual(
-      ring.ordered(after: 0, displayedAfter: 100).map(\.sequenceNumber),
-      [3, 4])
-    XCTAssertEqual(ring.oldest(after: 0, displayedAfter: 100)?.sequenceNumber, 3)
-    XCTAssertNil(ring.oldest(after: 0, through: 2, displayedAfter: 100))
+    #expect((ring.ordered(after: 0, displayedAfter: 100).map(\.sequenceNumber)) == ([3, 4]))
+    #expect((ring.oldest(after: 0, displayedAfter: 100)?.sequenceNumber) == (3))
+    #expect((ring.oldest(after: 0, through: 2, displayedAfter: 100)) == nil)
   }
 
+  @Test
   func testFirstLiveFrameIsTheOnlyBaselineAndDuplicateDoesNotPoisonIt() throws {
-    let firstLiveFrame = try XCTUnwrap(
-      makeScrollingViewport(width: 232, height: 519, logicalYOffset: 0))
+    let firstLiveFrame = try #require(makeScrollingViewport(width: 232, height: 519, logicalYOffset: 0))
     let stitcher = ScrollingCaptureStitcher()
 
-    let initial = try XCTUnwrap(stitcher.start(with: firstLiveFrame))
-    XCTAssertEqual(initial.acceptedFrameCount, 1)
-    XCTAssertEqual(initial.outputHeight, 519)
-    XCTAssertEqual(initial.alignmentDebug?.path, .initialFrame)
+    let initial = try #require(stitcher.start(with: firstLiveFrame))
+    #expect((initial.acceptedFrameCount) == (1))
+    #expect((initial.outputHeight) == (519))
+    #expect((initial.alignmentDebug?.path) == (.initialFrame))
 
-    let duplicate = try XCTUnwrap(
-      stitcher.append(
+    let duplicate = try #require(stitcher.append(
         firstLiveFrame,
         maxOutputHeight: ScrollCapturePolicy.maximumOutputHeight(
           pixelWidth: firstLiveFrame.width),
         expectedSignedDeltaPixels: nil))
     assertNoMovement(duplicate.outcome)
-    XCTAssertTrue(duplicate.likelyReachedBoundary)
-    XCTAssertEqual(duplicate.acceptedFrameCount, 1)
-    XCTAssertEqual(duplicate.outputHeight, 519)
+    #expect(duplicate.likelyReachedBoundary)
+    #expect((duplicate.acceptedFrameCount) == (1))
+    #expect((duplicate.outputHeight) == (519))
   }
 
+  @Test
   func testMismatchedLiveFrameIsRejectedInsteadOfChangingTheBaseline() throws {
-    let first = try XCTUnwrap(
-      makeScrollingViewport(width: 232, height: 519, logicalYOffset: 0))
-    let wrongSize = try XCTUnwrap(
-      makeScrollingViewport(width: 231, height: 519, logicalYOffset: 80))
-    let validNext = try XCTUnwrap(
-      makeScrollingViewport(width: 232, height: 519, logicalYOffset: 80))
+    let first = try #require(makeScrollingViewport(width: 232, height: 519, logicalYOffset: 0))
+    let wrongSize = try #require(makeScrollingViewport(width: 231, height: 519, logicalYOffset: 80))
+    let validNext = try #require(makeScrollingViewport(width: 232, height: 519, logicalYOffset: 80))
     let stitcher = ScrollingCaptureStitcher()
     _ = stitcher.start(with: first)
 
-    let rejected = try XCTUnwrap(
-      stitcher.append(
+    let rejected = try #require(stitcher.append(
         wrongSize,
         maxOutputHeight: ScrollCapturePolicy.maximumOutputHeight(pixelWidth: wrongSize.width)))
     assertAlignmentFailed(rejected.outcome)
-    XCTAssertEqual(rejected.safety, .unsafe(reason: "alignment-failed"))
-    XCTAssertEqual(rejected.acceptedFrameCount, 1)
+    #expect((rejected.safety) == (.unsafe(reason: "alignment-failed")))
+    #expect((rejected.acceptedFrameCount) == (1))
 
-    let recovered = try XCTUnwrap(
-      stitcher.append(
+    let recovered = try #require(stitcher.append(
         validNext,
         maxOutputHeight: ScrollCapturePolicy.maximumOutputHeight(pixelWidth: validNext.width),
         expectedSignedDeltaPixels: 80))
     assertAppended(recovered.outcome, expectedDelta: 80)
-    XCTAssertEqual(recovered.acceptedFrameCount, 2)
+    #expect((recovered.acceptedFrameCount) == (2))
   }
 
+  @Test
   func testNarrowInternalScrollPanelBuildsAContinuousLongImage() throws {
     let width = 232
     let height = 519
     let offsets = [0, 68, 136, 204, 272, 340]
     let stitcher = ScrollingCaptureStitcher()
 
-    let first = try XCTUnwrap(
-      makeScrollingViewport(
+    let first = try #require(makeScrollingViewport(
         width: width,
         height: height,
         logicalYOffset: offsets[0],
@@ -389,15 +368,13 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
     _ = stitcher.start(with: first)
 
     for offset in offsets.dropFirst() {
-      let frame = try XCTUnwrap(
-        makeScrollingViewport(
+      let frame = try #require(makeScrollingViewport(
           width: width,
           height: height,
           logicalYOffset: offset,
           fixedHeaderHeight: 32,
           fixedFooterHeight: 24))
-      let update = try XCTUnwrap(
-        stitcher.append(
+      let update = try #require(stitcher.append(
           frame,
           maxOutputHeight: ScrollCapturePolicy.maximumOutputHeight(pixelWidth: frame.width),
           expectedSignedDeltaPixels: 68,
@@ -405,90 +382,85 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
       assertAppended(update.outcome, expectedDelta: 68)
     }
 
-    XCTAssertEqual(stitcher.acceptedFrameCount, offsets.count)
-    XCTAssertGreaterThan(stitcher.outputHeight, height)
-    let output = try XCTUnwrap(stitcher.mergedImage())
-    XCTAssertEqual(output.width, width)
-    XCTAssertEqual(output.height, stitcher.outputHeight)
+    #expect((stitcher.acceptedFrameCount) == (offsets.count))
+    #expect((stitcher.outputHeight) > (height))
+    let output = try #require(stitcher.mergedImage())
+    #expect((output.width) == (width))
+    #expect((output.height) == (stitcher.outputHeight))
   }
 
+  @Test
   func testAcceptedTimelineRetainsOnlyCompactOutputRows() throws {
     let width = 232
     let height = 519
     let offsets = [0, 40, 80, 120, 160, 200]
     let stitcher = ScrollingCaptureStitcher()
-    _ = stitcher.start(with: try XCTUnwrap(
-      makeScrollingViewport(width: width, height: height, logicalYOffset: offsets[0])))
+    _ = stitcher.start(with: try #require(makeScrollingViewport(width: width, height: height, logicalYOffset: offsets[0])))
 
     for offset in offsets.dropFirst() {
-      let update = try XCTUnwrap(
-        stitcher.append(
-          try XCTUnwrap(
-            makeScrollingViewport(width: width, height: height, logicalYOffset: offset)),
+      let updateFrame = try #require(makeScrollingViewport(width: width, height: height, logicalYOffset: offset))
+      let update = try #require(stitcher.append(
+          updateFrame,
           maxOutputHeight: ScrollCapturePolicy.maximumOutputHeight(pixelWidth: width),
           expectedSignedDeltaPixels: 40,
           renderMergedImage: false))
       assertAppended(update.outcome, expectedDelta: 40)
     }
 
-    XCTAssertEqual(stitcher.retainedPixelBytes, stitcher.outputHeight * width * 4)
+    #expect((stitcher.retainedPixelBytes) == (stitcher.outputHeight * width * 4))
     let oldWholeFrameRetention = offsets.count * width * height * 4
-    XCTAssertLessThan(stitcher.retainedPixelBytes, oldWholeFrameRetention / 2)
+    #expect((stitcher.retainedPixelBytes) < (oldWholeFrameRetention / 2))
   }
 
+  @Test
   func testReverseMovementDoesNotPoisonTheAcceptedForwardTimeline() throws {
     let width = 232
     let height = 519
     let stitcher = ScrollingCaptureStitcher()
-    _ = stitcher.start(with: try XCTUnwrap(
-      makeScrollingViewport(width: width, height: height, logicalYOffset: 0)))
+    _ = stitcher.start(with: try #require(makeScrollingViewport(width: width, height: height, logicalYOffset: 0)))
 
-    let firstForward = try XCTUnwrap(
-      stitcher.append(
-        try XCTUnwrap(
-          makeScrollingViewport(width: width, height: height, logicalYOffset: 80)),
+    let firstForwardFrame = try #require(makeScrollingViewport(width: width, height: height, logicalYOffset: 80))
+    let firstForward = try #require(stitcher.append(
+        firstForwardFrame,
         maxOutputHeight: ScrollCapturePolicy.maximumOutputHeight(pixelWidth: width),
         expectedSignedDeltaPixels: 80,
         renderMergedImage: false))
     assertAppended(firstForward.outcome, expectedDelta: 80)
 
-    let reversed = try XCTUnwrap(
-      stitcher.append(
-        try XCTUnwrap(
-          makeScrollingViewport(width: width, height: height, logicalYOffset: 20)),
+    let reversedFrame = try #require(makeScrollingViewport(width: width, height: height, logicalYOffset: 20))
+    let reversed = try #require(stitcher.append(
+        reversedFrame,
         maxOutputHeight: ScrollCapturePolicy.maximumOutputHeight(pixelWidth: width),
         expectedSignedDeltaPixels: -60,
         renderMergedImage: false))
     assertNoMovement(reversed.outcome)
-    XCTAssertFalse(reversed.likelyReachedBoundary)
-    XCTAssertEqual(stitcher.acceptedFrameCount, 2)
-    XCTAssertEqual(stitcher.outputHeight, height + 80)
+    #expect(!(reversed.likelyReachedBoundary))
+    #expect((stitcher.acceptedFrameCount) == (2))
+    #expect((stitcher.outputHeight) == (height + 80))
 
-    let resumedForward = try XCTUnwrap(
-      stitcher.append(
-        try XCTUnwrap(
-          makeScrollingViewport(width: width, height: height, logicalYOffset: 160)),
+    let resumedForwardFrame = try #require(makeScrollingViewport(width: width, height: height, logicalYOffset: 160))
+    let resumedForward = try #require(stitcher.append(
+        resumedForwardFrame,
         maxOutputHeight: ScrollCapturePolicy.maximumOutputHeight(pixelWidth: width),
         expectedSignedDeltaPixels: 80,
         renderMergedImage: false))
     assertAppended(resumedForward.outcome, expectedDelta: 80)
-    XCTAssertEqual(stitcher.outputHeight, height + 160)
+    #expect((stitcher.outputHeight) == (height + 160))
   }
 
+  @Test
   func testFixedHeaderAndLatestFooterArePreservedExactlyOnce() throws {
     let width = 232
     let height = 519
     let headerHeight = 32
     let footerHeight = 24
-    let first = try XCTUnwrap(
-      makeScrollingViewport(
+    let first = try #require(makeScrollingViewport(
         width: width,
         height: height,
         logicalYOffset: 0,
         fixedHeaderHeight: headerHeight,
         fixedFooterHeight: footerHeight))
-    let last = try XCTUnwrap(
-      makeScrollingViewport(
+    let last = try #require(makeScrollingViewport(
         width: width,
         height: height,
         logicalYOffset: 136,
@@ -497,35 +469,31 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
     let stitcher = ScrollingCaptureStitcher()
     _ = stitcher.start(with: first)
     for offset in [68, 136] {
-      let update = try XCTUnwrap(
-        stitcher.append(
-          try XCTUnwrap(
-            makeScrollingViewport(
+      let updateFrame = try #require(makeScrollingViewport(
               width: width,
               height: height,
               logicalYOffset: offset,
               fixedHeaderHeight: headerHeight,
-              fixedFooterHeight: footerHeight)),
+              fixedFooterHeight: footerHeight))
+      let update = try #require(stitcher.append(
+          updateFrame,
           maxOutputHeight: ScrollCapturePolicy.maximumOutputHeight(pixelWidth: width),
           expectedSignedDeltaPixels: 68,
           renderMergedImage: false))
       assertAppended(update.outcome, expectedDelta: 68)
     }
 
-    let merged = try XCTUnwrap(stitcher.mergedImage())
-    XCTAssertEqual(merged.height, height + 136)
+    let merged = try #require(stitcher.mergedImage())
+    #expect((merged.height) == (height + 136))
     let rowBytes = width * 4
     let firstBytes = try rgbaBytes(first)
     let lastBytes = try rgbaBytes(last)
     let mergedBytes = try rgbaBytes(merged)
-    XCTAssertEqual(
-      Array(mergedBytes.prefix(headerHeight * rowBytes)),
-      Array(firstBytes.prefix(headerHeight * rowBytes)))
-    XCTAssertEqual(
-      Array(mergedBytes.suffix(footerHeight * rowBytes)),
-      Array(lastBytes.suffix(footerHeight * rowBytes)))
+    #expect((Array(mergedBytes.prefix(headerHeight * rowBytes))) == (Array(firstBytes.prefix(headerHeight * rowBytes))))
+    #expect((Array(mergedBytes.suffix(footerHeight * rowBytes))) == (Array(lastBytes.suffix(footerHeight * rowBytes))))
   }
 
+  @Test
   func testViewportFixedControlIsNotRepeatedAcrossAcceptedSlices() throws {
     let width = 232
     let height = 519
@@ -533,31 +501,28 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
     let fixedControl = CGRect(x: 92, y: 422, width: 48, height: 48)
     let stitcher = ScrollingCaptureStitcher()
 
-    _ = stitcher.start(with: try XCTUnwrap(
-      makeScrollingViewport(
+    _ = stitcher.start(with: try #require(makeScrollingViewport(
         width: width,
         height: height,
         logicalYOffset: offsets[0],
         fixedOverlayRect: fixedControl)))
     for offset in offsets.dropFirst() {
-      let update = try XCTUnwrap(
-        stitcher.append(
-          try XCTUnwrap(
-            makeScrollingViewport(
+      let updateFrame = try #require(makeScrollingViewport(
               width: width,
               height: height,
               logicalYOffset: offset,
-              fixedOverlayRect: fixedControl)),
+              fixedOverlayRect: fixedControl))
+      let update = try #require(stitcher.append(
+          updateFrame,
           maxOutputHeight: ScrollCapturePolicy.maximumOutputHeight(pixelWidth: width),
           expectedSignedDeltaPixels: 120,
           renderMergedImage: false))
       assertAppended(update.outcome, expectedDelta: 120)
     }
 
-    let merged = try XCTUnwrap(stitcher.mergedImage())
+    let merged = try #require(stitcher.mergedImage())
     let expectedTailControl = fixedControl.offsetBy(dx: 0, dy: CGFloat(offsets.last!))
-    let expected = try XCTUnwrap(
-      makeScrollingViewport(
+    let expected = try #require(makeScrollingViewport(
         width: width,
         height: height + offsets.last!,
         logicalYOffset: 0,
@@ -567,12 +532,10 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
       expected,
       message: "the only unresolved copy must remain at the real tail document coordinate")
     let overlayPixelCount = try countFixedOverlayPixels(in: merged)
-    XCTAssertLessThanOrEqual(
-      overlayPixelCount,
-      Int(fixedControl.width * fixedControl.height),
-      "a viewport-fixed control may remain only at the unresolved tail, never once per slice")
+    #expect((overlayPixelCount) <= (Int(fixedControl.width * fixedControl.height)), Comment(rawValue: "a viewport-fixed control may remain only at the unresolved tail, never once per slice"))
   }
 
+  @Test
   func testFixedControlThatDisappearsIsRepairedFromCleanDocumentPixels() throws {
     let width = 232
     let height = 519
@@ -581,8 +544,7 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
     let stitcher = ScrollingCaptureStitcher()
 
     for (index, offset) in offsets.enumerated() {
-      let frame = try XCTUnwrap(
-        makeScrollingViewport(
+      let frame = try #require(makeScrollingViewport(
           width: width,
           height: height,
           logicalYOffset: offset,
@@ -590,8 +552,7 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
       if index == 0 {
         _ = stitcher.start(with: frame)
       } else {
-        let update = try XCTUnwrap(
-          stitcher.append(
+        let update = try #require(stitcher.append(
             frame,
             maxOutputHeight: ScrollCapturePolicy.maximumOutputHeight(pixelWidth: frame.width),
             expectedSignedDeltaPixels: 120,
@@ -600,16 +561,16 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
       }
     }
 
-    let merged = try XCTUnwrap(stitcher.mergedImage())
-    let cleanReference = try XCTUnwrap(
-      makeScrollingViewport(
+    let merged = try #require(stitcher.mergedImage())
+    let cleanReference = try #require(makeScrollingViewport(
         width: width,
         height: height + offsets.last!,
         logicalYOffset: 0))
     try assertImagesPixelEqual(merged, cleanReference)
-    XCTAssertEqual(try countFixedOverlayPixels(in: merged), 0)
+    #expect((try countFixedOverlayPixels(in: merged)) == (0))
   }
 
+  @Test
   func testSmallVariableScrollRepairsAControlCrossingEveryAppendBoundary() throws {
     let width = 232
     let height = 519
@@ -618,8 +579,7 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
     let stitcher = ScrollingCaptureStitcher()
 
     for (index, offset) in offsets.enumerated() {
-      let frame = try XCTUnwrap(
-        makeScrollingViewport(
+      let frame = try #require(makeScrollingViewport(
           width: width,
           height: height,
           logicalYOffset: offset,
@@ -627,30 +587,29 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
       if index == 0 {
         _ = stitcher.start(with: frame)
       } else {
-        let update = try XCTUnwrap(
-          stitcher.append(
+        let update = try #require(stitcher.append(
             frame,
             maxOutputHeight: ScrollCapturePolicy.maximumOutputHeight(pixelWidth: frame.width),
             expectedSignedDeltaPixels: offsets[index] - offsets[index - 1],
             renderMergedImage: false))
         guard case .appended(let deltaY) = update.outcome else {
-          XCTFail("frame \(index) at offset \(offset) did not append: \(update.outcome)")
+          Issue.record(Comment(rawValue: "frame \(index) at offset \(offset) did not append: \(update.outcome)"))
           continue
         }
-        XCTAssertEqual(deltaY, offsets[index] - offsets[index - 1])
+        #expect((deltaY) == (offsets[index] - offsets[index - 1]))
       }
     }
 
-    let merged = try XCTUnwrap(stitcher.mergedImage())
-    let cleanReference = try XCTUnwrap(
-      makeScrollingViewport(
+    let merged = try #require(stitcher.mergedImage())
+    let cleanReference = try #require(makeScrollingViewport(
         width: width,
         height: height + offsets.last!,
         logicalYOffset: 0))
-    XCTAssertEqual(merged.height, height + offsets.last!)
+    #expect((merged.height) == (height + offsets.last!))
     try assertImagesPixelEqual(merged, cleanReference)
   }
 
+  @Test
   func testRoundedFixedControlAndTranslucentShadowAreFullyRepaired() throws {
     let width = 232
     let height = 519
@@ -660,8 +619,7 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
     let stitcher = ScrollingCaptureStitcher()
 
     for (index, offset) in offsets.enumerated() {
-      let frame = try XCTUnwrap(
-        makeScrollingViewport(
+      let frame = try #require(makeScrollingViewport(
           width: width,
           height: height,
           logicalYOffset: offset,
@@ -670,23 +628,21 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
       if index == 0 {
         _ = stitcher.start(with: frame)
       } else {
-        let update = try XCTUnwrap(
-          stitcher.append(
+        let update = try #require(stitcher.append(
             frame,
             maxOutputHeight: ScrollCapturePolicy.maximumOutputHeight(pixelWidth: frame.width),
             expectedSignedDeltaPixels: offsets[index] - offsets[index - 1],
             renderMergedImage: false))
         guard case .appended(let deltaY) = update.outcome else {
-          XCTFail("frame \(index) at offset \(offset) did not append: \(update.outcome)")
+          Issue.record(Comment(rawValue: "frame \(index) at offset \(offset) did not append: \(update.outcome)"))
           continue
         }
-        XCTAssertEqual(deltaY, offsets[index] - offsets[index - 1])
+        #expect((deltaY) == (offsets[index] - offsets[index - 1]))
       }
     }
 
-    let merged = try XCTUnwrap(stitcher.mergedImage())
-    let cleanReference = try XCTUnwrap(
-      makeScrollingViewport(
+    let merged = try #require(stitcher.mergedImage())
+    let cleanReference = try #require(makeScrollingViewport(
         width: width,
         height: height + offsets.last!,
         logicalYOffset: 0,
@@ -697,6 +653,7 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
       message: "the viewport control, antialiased edge, and translucent shadow must disappear without changing the inline control")
   }
 
+  @Test
   func testInlineLookalikeControlsMoveWithTheDocumentAndRemainUntouched() throws {
     let width = 232
     let height = 519
@@ -709,8 +666,7 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
     let stitcher = ScrollingCaptureStitcher()
 
     for (index, offset) in offsets.enumerated() {
-      let frame = try XCTUnwrap(
-        makeScrollingViewport(
+      let frame = try #require(makeScrollingViewport(
           width: width,
           height: height,
           logicalYOffset: offset,
@@ -718,8 +674,7 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
       if index == 0 {
         _ = stitcher.start(with: frame)
       } else {
-        let update = try XCTUnwrap(
-          stitcher.append(
+        let update = try #require(stitcher.append(
             frame,
             maxOutputHeight: ScrollCapturePolicy.maximumOutputHeight(pixelWidth: frame.width),
             expectedSignedDeltaPixels: 120,
@@ -728,68 +683,62 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
       }
     }
 
-    let merged = try XCTUnwrap(stitcher.mergedImage())
-    let cleanReference = try XCTUnwrap(
-      makeScrollingViewport(
+    let merged = try #require(stitcher.mergedImage())
+    let cleanReference = try #require(makeScrollingViewport(
         width: width,
         height: height + offsets.last!,
         logicalYOffset: 0,
         documentOverlayRects: documentControls))
-    XCTAssertEqual(try rgbaBytes(merged), try rgbaBytes(cleanReference))
-    XCTAssertEqual(
-      try countFixedOverlayPixels(in: merged),
-      documentControls.reduce(0) { $0 + Int($1.width * $1.height) })
+    #expect((try rgbaBytes(merged)) == (try rgbaBytes(cleanReference)))
+    #expect((try countFixedOverlayPixels(in: merged)) == (documentControls.reduce(0) { $0 + Int($1.width * $1.height) }))
   }
 
+  @Test
   func testSparseRepeatingSidebarAlignsWithoutWheelHint() throws {
     let offsets = [0, 64, 128, 192]
     let stitcher = ScrollingCaptureStitcher()
-    _ = stitcher.start(with: try XCTUnwrap(
-      makeSparseUIViewport(width: 232, height: 519, logicalYOffset: offsets[0])))
+    _ = stitcher.start(with: try #require(makeSparseUIViewport(width: 232, height: 519, logicalYOffset: offsets[0])))
 
     for offset in offsets.dropFirst() {
-      let update = try XCTUnwrap(
-        stitcher.append(
-          try XCTUnwrap(
-            makeSparseUIViewport(width: 232, height: 519, logicalYOffset: offset)),
+      let updateFrame = try #require(makeSparseUIViewport(width: 232, height: 519, logicalYOffset: offset))
+      let update = try #require(stitcher.append(
+          updateFrame,
           maxOutputHeight: ScrollCapturePolicy.maximumOutputHeight(pixelWidth: 232),
           expectedSignedDeltaPixels: nil,
           renderMergedImage: false))
       assertAppended(update.outcome, expectedDelta: 64)
     }
-    XCTAssertEqual(stitcher.acceptedFrameCount, offsets.count)
+    #expect((stitcher.acceptedFrameCount) == (offsets.count))
   }
 
+  @Test
   func testMergedImageHasPixelExactSeamsAcrossMultipleFrames() throws {
     let width = 232
     let height = 519
     let stitcher = ScrollingCaptureStitcher()
-    _ = stitcher.start(with: try XCTUnwrap(
-      makeScrollingViewport(width: width, height: height, logicalYOffset: 0)))
+    _ = stitcher.start(with: try #require(makeScrollingViewport(width: width, height: height, logicalYOffset: 0)))
     for offset in [68, 136] {
-      let update = try XCTUnwrap(
-        stitcher.append(
-          try XCTUnwrap(
-            makeScrollingViewport(width: width, height: height, logicalYOffset: offset)),
+      let updateFrame = try #require(makeScrollingViewport(width: width, height: height, logicalYOffset: offset))
+      let update = try #require(stitcher.append(
+          updateFrame,
           maxOutputHeight: ScrollCapturePolicy.maximumOutputHeight(pixelWidth: width),
           expectedSignedDeltaPixels: 68,
           renderMergedImage: false))
       assertAppended(update.outcome, expectedDelta: 68)
     }
 
-    let merged = try XCTUnwrap(stitcher.mergedImage())
-    let expected = try XCTUnwrap(
-      makeScrollingViewport(width: width, height: height + 136, logicalYOffset: 0))
-    XCTAssertEqual(try rgbaBytes(merged), try rgbaBytes(expected))
+    let merged = try #require(stitcher.mergedImage())
+    let expected = try #require(makeScrollingViewport(width: width, height: height + 136, logicalYOffset: 0))
+    #expect((try rgbaBytes(merged)) == (try rgbaBytes(expected)))
   }
 
+  @Test
   func testAnimatedPatchInsideNarrowPanelDoesNotStopTheScrollTimeline() throws {
     let width = 260
     let height = 520
     let offsets = [0, 72, 144, 216]
     let stitcher = ScrollingCaptureStitcher()
-    let first = try XCTUnwrap(
-      makeScrollingViewport(
+    let first = try #require(makeScrollingViewport(
         width: width,
         height: height,
         logicalYOffset: offsets[0],
@@ -798,15 +747,13 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
     _ = stitcher.start(with: first)
 
     for (index, offset) in offsets.dropFirst().enumerated() {
-      let frame = try XCTUnwrap(
-        makeScrollingViewport(
+      let frame = try #require(makeScrollingViewport(
           width: width,
           height: height,
           logicalYOffset: offset,
           fixedHeaderHeight: 28,
           animatedPatchSeed: index + 2))
-      let update = try XCTUnwrap(
-        stitcher.append(
+      let update = try #require(stitcher.append(
           frame,
           maxOutputHeight: ScrollCapturePolicy.maximumOutputHeight(pixelWidth: frame.width),
           expectedSignedDeltaPixels: 72,
@@ -814,119 +761,103 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
       assertAppended(update.outcome, expectedDelta: 72)
     }
 
-    XCTAssertEqual(stitcher.acceptedFrameCount, offsets.count)
+    #expect((stitcher.acceptedFrameCount) == (offsets.count))
   }
 
+  @Test
   func testPreviewUsesTheSameAcceptedTimelineAndStaysWithinBounds() throws {
     let stitcher = ScrollingCaptureStitcher()
-    let first = try XCTUnwrap(
-      makeScrollingViewport(width: 320, height: 600, logicalYOffset: 0))
-    let second = try XCTUnwrap(
-      makeScrollingViewport(width: 320, height: 600, logicalYOffset: 110))
+    let first = try #require(makeScrollingViewport(width: 320, height: 600, logicalYOffset: 0))
+    let second = try #require(makeScrollingViewport(width: 320, height: 600, logicalYOffset: 110))
     _ = stitcher.start(with: first)
-    let update = try XCTUnwrap(
-      stitcher.append(
+    let update = try #require(stitcher.append(
         second,
         maxOutputHeight: ScrollCapturePolicy.maximumOutputHeight(pixelWidth: second.width),
         expectedSignedDeltaPixels: 110))
     assertAppended(update.outcome, expectedDelta: 110)
 
-    let preview = try XCTUnwrap(
-      stitcher.previewImage(maxPixelWidth: 180, maxPixelHeight: 420))
-    XCTAssertLessThanOrEqual(preview.width, 180)
-    XCTAssertLessThanOrEqual(preview.height, 420)
-    XCTAssertEqual(stitcher.mergedImage()?.height, stitcher.outputHeight)
+    let preview = try #require(stitcher.previewImage(maxPixelWidth: 180, maxPixelHeight: 420))
+    #expect((preview.width) <= (180))
+    #expect((preview.height) <= (420))
+    #expect((stitcher.mergedImage()?.height) == (stitcher.outputHeight))
   }
 
+  @Test
   func testFinishDrainKeepsTheEntireFrozenPendingAndRingUnion() {
-    XCTAssertEqual(
-      ScrollCaptureFinishDrainPolicy.snapshotSequences(
+    #expect((ScrollCaptureFinishDrainPolicy.snapshotSequences(
         pendingSequences: Array(1...8),
         ringSequences: Array(9...17),
         activeSequence: nil,
         lastAcceptedSequence: 0,
         cutoffSequence: 16,
-        failedSequences: []),
-      Array(1...16))
-    XCTAssertEqual(
-      ScrollCaptureFinishDrainPolicy.snapshotSequences(
+        failedSequences: [])) == (Array(1...16)))
+    #expect((ScrollCaptureFinishDrainPolicy.snapshotSequences(
         pendingSequences: Array(1...8),
         ringSequences: Array(8...17),
         activeSequence: 8,
         lastAcceptedSequence: 0,
         cutoffSequence: 16,
-        failedSequences: [9]),
-      Array(1...7) + Array(10...16))
-    XCTAssertFalse(
-      ScrollCaptureFinishDrainPolicy.isComplete(
+        failedSequences: [9])) == (Array(1...7) + Array(10...16)))
+    #expect(!(ScrollCaptureFinishDrainPolicy.isComplete(
         lastAcceptedSequence: 15,
-        cutoffSequence: 16))
-    XCTAssertTrue(
-      ScrollCaptureFinishDrainPolicy.isComplete(
+        cutoffSequence: 16)))
+    #expect(ScrollCaptureFinishDrainPolicy.isComplete(
         lastAcceptedSequence: 16,
         cutoffSequence: 16))
   }
 
+  @Test
   func testMaximumOutputHeightScalesWithPixelWidthAndFailsClosed() {
-    XCTAssertEqual(
-      ScrollCapturePolicy.maximumOutputHeight(pixelWidth: 1),
-      ScrollCapturePolicy.absoluteMaximumOutputHeight)
-    XCTAssertEqual(ScrollCapturePolicy.maximumOutputHeight(pixelWidth: 2_048), 16_384)
-    XCTAssertEqual(ScrollCapturePolicy.maximumOutputHeight(pixelWidth: 4_096), 8_192)
-    XCTAssertEqual(ScrollCapturePolicy.maximumOutputHeight(pixelWidth: 0), 0)
-    XCTAssertEqual(ScrollCapturePolicy.maximumOutputHeight(pixelWidth: Int.max), 0)
+    #expect((ScrollCapturePolicy.maximumOutputHeight(pixelWidth: 1)) == (ScrollCapturePolicy.absoluteMaximumOutputHeight))
+    #expect((ScrollCapturePolicy.maximumOutputHeight(pixelWidth: 2_048)) == (16_384))
+    #expect((ScrollCapturePolicy.maximumOutputHeight(pixelWidth: 4_096)) == (8_192))
+    #expect((ScrollCapturePolicy.maximumOutputHeight(pixelWidth: 0)) == (0))
+    #expect((ScrollCapturePolicy.maximumOutputHeight(pixelWidth: Int.max)) == (0))
   }
 
+  @Test
   func testHeightLimitDuringFinishRemainsExplicitlyPartialEvenAtCutoff() {
-    XCTAssertEqual(
-      ScrollCaptureFinishDrainPolicy.resolvedPartialReason(
+    #expect((ScrollCaptureFinishDrainPolicy.resolvedPartialReason(
         explicitReason: ScrollCaptureFinishDrainPolicy.heightLimitPartialReason,
         lastAcceptedSequence: 16,
-        cutoffSequence: 16),
-      ScrollCaptureFinishDrainPolicy.heightLimitPartialReason)
-    XCTAssertNil(
-      ScrollCaptureFinishDrainPolicy.resolvedPartialReason(
+        cutoffSequence: 16)) == (ScrollCaptureFinishDrainPolicy.heightLimitPartialReason))
+    #expect((ScrollCaptureFinishDrainPolicy.resolvedPartialReason(
         explicitReason: nil,
         lastAcceptedSequence: 16,
-        cutoffSequence: 16))
-    XCTAssertEqual(
-      ScrollCaptureFinishDrainPolicy.resolvedPartialReason(
+        cutoffSequence: 16)) == nil)
+    #expect((ScrollCaptureFinishDrainPolicy.resolvedPartialReason(
         explicitReason: nil,
         lastAcceptedSequence: 15,
-        cutoffSequence: 16),
-      ScrollCaptureFinishDrainPolicy.incompleteTailPartialReason)
+        cutoffSequence: 16)) == (ScrollCaptureFinishDrainPolicy.incompleteTailPartialReason))
   }
 
+  @Test
   func testHeightLimitAppendsTheFirstUnseenRowsWithoutSkippingDocumentContent() throws {
     let viewportWidth = 232
     let viewportHeight = 519
     let scrollDelta = 120
     let remainingHeight = 50
     let stitcher = ScrollingCaptureStitcher()
-    let first = try XCTUnwrap(
-      makeScrollingViewport(
+    let first = try #require(makeScrollingViewport(
         width: viewportWidth,
         height: viewportHeight,
         logicalYOffset: 0))
-    let second = try XCTUnwrap(
-      makeScrollingViewport(
+    let second = try #require(makeScrollingViewport(
         width: viewportWidth,
         height: viewportHeight,
         logicalYOffset: scrollDelta))
 
     _ = stitcher.start(with: first)
-    let update = try XCTUnwrap(
-      stitcher.append(
+    let update = try #require(stitcher.append(
         second,
         maxOutputHeight: viewportHeight + remainingHeight,
         expectedSignedDeltaPixels: scrollDelta))
 
     guard case .reachedHeightLimit = update.outcome else {
-      return XCTFail("expected height limit, got \(update.outcome)")
+      Issue.record(Comment(rawValue: "expected height limit, got \(update.outcome)")); return
     }
-    let merged = try XCTUnwrap(stitcher.mergedImage())
-    let cleanReference = try XCTUnwrap(
-      makeScrollingViewport(
+    let merged = try #require(stitcher.mergedImage())
+    let cleanReference = try #require(makeScrollingViewport(
         width: viewportWidth,
         height: viewportHeight + remainingHeight,
         logicalYOffset: 0))
@@ -936,34 +867,30 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
       message: "height-limited tail must remain document-contiguous")
   }
 
+  @Test
   func testRecoveryPolicyWalksIntermediateRingFramesInsteadOfRetryingTheFailedTail() {
-    XCTAssertEqual(
-      ScrollCaptureRecoveryPolicy.nextSequence(
+    #expect((ScrollCaptureRecoveryPolicy.nextSequence(
         lastAcceptedSequence: 1,
         recoveryCeilingSequence: 9,
         failedSequences: [9],
-        availableSequences: Array(2...9)),
-      2)
-    XCTAssertEqual(
-      ScrollCaptureRecoveryPolicy.nextSequence(
+        availableSequences: Array(2...9))) == (2))
+    #expect((ScrollCaptureRecoveryPolicy.nextSequence(
         lastAcceptedSequence: 1,
         recoveryCeilingSequence: 9,
         failedSequences: [2, 9],
-        availableSequences: Array(2...9)),
-      3)
-    XCTAssertNil(
-      ScrollCaptureRecoveryPolicy.nextSequence(
+        availableSequences: Array(2...9))) == (3))
+    #expect((ScrollCaptureRecoveryPolicy.nextSequence(
         lastAcceptedSequence: 8,
         recoveryCeilingSequence: 9,
         failedSequences: [9],
-      availableSequences: Array(2...9)))
+      availableSequences: Array(2...9))) == nil)
   }
 
+  @Test
   func testBoundedRingRecoveryBridgesAFastBurstWhoseLatestFrameCannotAlign() throws {
     let offsets = Array(stride(from: 0, through: 640, by: 80))
     let images = try offsets.map {
-      try XCTUnwrap(
-        makeScrollingViewport(width: 232, height: 519, logicalYOffset: $0))
+      try #require(makeScrollingViewport(width: 232, height: 519, logicalYOffset: $0))
     }
     let stitcher = ScrollingCaptureStitcher()
     _ = stitcher.start(with: images[0])
@@ -975,8 +902,7 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
     var targetAppended = false
 
     for _ in 0..<8 {
-      let targetUpdate = try XCTUnwrap(
-        stitcher.append(
+      let targetUpdate = try #require(stitcher.append(
           images[targetSequence - 1],
           maxOutputHeight: ScrollCapturePolicy.maximumOutputHeight(
             pixelWidth: images[targetSequence - 1].width),
@@ -989,14 +915,12 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
       assertAlignmentFailed(targetUpdate.outcome)
       failedSequences.insert(targetSequence)
 
-      let recoverySequence = try XCTUnwrap(
-        ScrollCaptureRecoveryPolicy.nextSequence(
+      let recoverySequence = try #require(ScrollCaptureRecoveryPolicy.nextSequence(
           lastAcceptedSequence: lastAcceptedSequence,
           recoveryCeilingSequence: targetSequence,
           failedSequences: failedSequences,
           availableSequences: Array(2...targetSequence)))
-      let recoveryUpdate = try XCTUnwrap(
-        stitcher.append(
+      let recoveryUpdate = try #require(stitcher.append(
           images[recoverySequence - 1],
           maxOutputHeight: ScrollCapturePolicy.maximumOutputHeight(
             pixelWidth: images[recoverySequence - 1].width),
@@ -1008,76 +932,64 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
       recoveryCount += 1
     }
 
-    XCTAssertTrue(targetAppended)
-    XCTAssertGreaterThan(recoveryCount, 0)
-    XCTAssertEqual(stitcher.outputHeight, 519 + 640)
+    #expect(targetAppended)
+    #expect((recoveryCount) > (0))
+    #expect((stitcher.outputHeight) == (519 + 640))
   }
 
+  @Test(.enabled(if: !(ProcessInfo.processInfo.environment["YOUMU_REAL_FIXTURE_DIR"] ?? "").isEmpty,
+                 "set YOUMU_REAL_FIXTURE_DIR to run the real Chrome-frame gate"))
   func testRealBrowserFixtureFramesWhenProvided() throws {
-    guard let framesPath = ProcessInfo.processInfo.environment["YOUMU_REAL_FIXTURE_DIR"],
-          !framesPath.isEmpty else {
-      throw XCTSkip("set YOUMU_REAL_FIXTURE_DIR to run the real Chrome-frame gate")
-    }
+    let framesPath = try #require(ProcessInfo.processInfo.environment["YOUMU_REAL_FIXTURE_DIR"])
     let directoryURL = URL(fileURLWithPath: framesPath, isDirectory: true)
     let frameURLs = try FileManager.default.contentsOfDirectory(
       at: directoryURL,
       includingPropertiesForKeys: nil
     ).filter { $0.pathExtension.lowercased() == "png" }
       .sorted { $0.lastPathComponent < $1.lastPathComponent }
-    XCTAssertGreaterThan(frameURLs.count, 2)
+    #expect((frameURLs.count) > (2))
 
     let frames: [(offset: Int, image: CGImage)] = try frameURLs.map { url in
       let stem = url.deletingPathExtension().lastPathComponent
       let offsetText = stem.split(separator: "-").last.map(String.init) ?? ""
-      let offset = try XCTUnwrap(Int(offsetText), "bad fixture frame name: \(stem)")
-      let image = try XCTUnwrap(
-        NSImage(contentsOf: url)?.cgImage(forProposedRect: nil, context: nil, hints: nil),
-        "cannot decode fixture frame: \(url.lastPathComponent)"
-      )
+      let offset = try #require(Int(offsetText), Comment(rawValue: "bad fixture frame name: \(stem)"))
+      let image = try #require(NSImage(contentsOf: url)?.cgImage(forProposedRect: nil, context: nil, hints: nil), Comment(rawValue: "cannot decode fixture frame: \(url.lastPathComponent)"))
       return (offset, image)
     }
 
     let stitcher = ScrollingCaptureStitcher()
-    _ = try XCTUnwrap(stitcher.start(with: frames[0].image))
+    _ = try #require(stitcher.start(with: frames[0].image))
     var priorOffset = frames[0].offset
     for frame in frames.dropFirst() {
       let expectedDelta = frame.offset - priorOffset
-      XCTAssertGreaterThan(expectedDelta, 0)
-      let update = try XCTUnwrap(
-        stitcher.append(
+      #expect((expectedDelta) > (0))
+      let update = try #require(stitcher.append(
           frame.image,
           maxOutputHeight: ScrollCapturePolicy.maximumOutputHeight(pixelWidth: frame.image.width),
           expectedSignedDeltaPixels: expectedDelta,
           renderMergedImage: false
-        )
-      )
+        ))
       assertAppended(update.outcome, expectedDelta: expectedDelta)
       priorOffset = frame.offset
     }
 
-    let merged = try XCTUnwrap(stitcher.mergedImage())
-    XCTAssertEqual(merged.width, frames[0].image.width)
-    XCTAssertEqual(merged.height, frames.last!.offset + frames.last!.image.height)
-    XCTAssertEqual(stitcher.outputHeight, merged.height)
+    let merged = try #require(stitcher.mergedImage())
+    #expect((merged.width) == (frames[0].image.width))
+    #expect((merged.height) == (frames.last!.offset + frames.last!.image.height))
+    #expect((stitcher.outputHeight) == (merged.height))
 
     if let outputPath = ProcessInfo.processInfo.environment["YOUMU_REAL_FIXTURE_OUTPUT"],
        !outputPath.isEmpty {
       let representation = NSBitmapImageRep(cgImage: merged)
-      let png = try XCTUnwrap(representation.representation(using: .png, properties: [:]))
+      let png = try #require(representation.representation(using: .png, properties: [:]))
       try png.write(to: URL(fileURLWithPath: outputPath), options: .atomic)
     }
   }
 
+  @Test(.enabled(if: !(ProcessInfo.processInfo.environment["YOUMU_REAL_FIXED_OVERLAY_FIXTURE_DIR"] ?? "").isEmpty,
+                 "set YOUMU_REAL_FIXED_OVERLAY_FIXTURE_DIR to run the fixed-overlay Chrome gate"))
   func testRealBrowserFixedOverlayIsRemovedWhenProvided() throws {
-    guard
-      let framesPath = ProcessInfo.processInfo.environment[
-        "YOUMU_REAL_FIXED_OVERLAY_FIXTURE_DIR"
-      ],
-      !framesPath.isEmpty
-    else {
-      throw XCTSkip(
-        "set YOUMU_REAL_FIXED_OVERLAY_FIXTURE_DIR to run the fixed-overlay Chrome gate")
-    }
+    let framesPath = try #require(ProcessInfo.processInfo.environment["YOUMU_REAL_FIXED_OVERLAY_FIXTURE_DIR"])
     let directoryURL = URL(fileURLWithPath: framesPath, isDirectory: true)
     let frameURLs = try FileManager.default.contentsOfDirectory(
       at: directoryURL,
@@ -1087,44 +999,35 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
     let frames: [(offset: Int, image: CGImage)] = try frameURLs.map { url in
       let stem = url.deletingPathExtension().lastPathComponent
       let offsetText = stem.split(separator: "-").last.map(String.init) ?? ""
-      let offset = try XCTUnwrap(Int(offsetText), "bad fixture frame name: \(stem)")
-      let image = try XCTUnwrap(
-        NSImage(contentsOf: url)?.cgImage(forProposedRect: nil, context: nil, hints: nil),
-        "cannot decode fixture frame: \(url.lastPathComponent)")
+      let offset = try #require(Int(offsetText), Comment(rawValue: "bad fixture frame name: \(stem)"))
+      let image = try #require(NSImage(contentsOf: url)?.cgImage(forProposedRect: nil, context: nil, hints: nil), Comment(rawValue: "cannot decode fixture frame: \(url.lastPathComponent)"))
       return (offset, image)
     }
 
-    XCTAssertEqual(frames.count, 42)
-    XCTAssertEqual(frames.first?.offset, 0)
-    XCTAssertEqual(frames.last?.offset, 12_120)
+    #expect((frames.count) == (42))
+    #expect((frames.first?.offset) == (0))
+    #expect((frames.last?.offset) == (12_120))
     for (index, frame) in frames.dropLast().enumerated() {
-      XCTAssertGreaterThan(
-        try countPixels(
+      #expect((try countPixels(
           in: frame.image,
           red: 245,
           green: 32,
           blue: 198,
-          tolerance: 2),
-        24,
-        "fixture frame \(index) no longer contains the fixed-arrow sentinel")
+          tolerance: 2)) > (24), Comment(rawValue: "fixture frame \(index) no longer contains the fixed-arrow sentinel"))
     }
-    XCTAssertEqual(
-      try countPixels(
-        in: try XCTUnwrap(frames.last?.image),
+    #expect((try countPixels(
+        in: try #require(frames.last?.image),
         red: 245,
         green: 32,
         blue: 198,
-        tolerance: 2),
-      0,
-      "the fixture must hide the arrow only on its clean final frame")
+        tolerance: 2)) == (0), Comment(rawValue: "the fixture must hide the arrow only on its clean final frame"))
 
     let stitcher = ScrollingCaptureStitcher()
-    _ = try XCTUnwrap(stitcher.start(with: frames[0].image))
+    _ = try #require(stitcher.start(with: frames[0].image))
     var priorOffset = frames[0].offset
     for frame in frames.dropFirst() {
       let expectedDelta = frame.offset - priorOffset
-      let update = try XCTUnwrap(
-        stitcher.append(
+      let update = try #require(stitcher.append(
           frame.image,
           maxOutputHeight: ScrollCapturePolicy.maximumOutputHeight(pixelWidth: frame.image.width),
           expectedSignedDeltaPixels: expectedDelta,
@@ -1133,48 +1036,48 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
       priorOffset = frame.offset
     }
 
-    let merged = try XCTUnwrap(stitcher.mergedImage())
+    let merged = try #require(stitcher.mergedImage())
     let fixedOverlayPixels = try countPixels(
       in: merged,
       red: 245,
       green: 32,
       blue: 198,
       tolerance: 2)
-    XCTAssertEqual(merged.width, 1_000)
-    XCTAssertEqual(merged.height, 12_920)
-    XCTAssertEqual(fixedOverlayPixels, 0)
+    #expect((merged.width) == (1_000))
+    #expect((merged.height) == (12_920))
+    #expect((fixedOverlayPixels) == (0))
     print("fixedOverlayPixels=\(fixedOverlayPixels) stitched=\(merged.width)x\(merged.height)")
   }
 
   private func assertAppended(
     _ outcome: ScrollingCaptureStitchOutcome,
     expectedDelta: Int,
-    file: StaticString = #filePath,
-    line: UInt = #line
+    sourceLocation: SourceLocation = #_sourceLocation
   ) {
     guard case .appended(let deltaY) = outcome else {
-      return XCTFail("expected appended, got \(outcome)", file: file, line: line)
+      Issue.record(Comment(rawValue: "expected appended, got \(outcome)"), sourceLocation: sourceLocation)
+      return
     }
-    XCTAssertEqual(deltaY, expectedDelta, file: file, line: line)
+    #expect((deltaY) == (expectedDelta), sourceLocation: sourceLocation)
   }
 
   private func assertNoMovement(
     _ outcome: ScrollingCaptureStitchOutcome,
-    file: StaticString = #filePath,
-    line: UInt = #line
+    sourceLocation: SourceLocation = #_sourceLocation
   ) {
     guard case .ignoredNoMovement = outcome else {
-      return XCTFail("expected ignoredNoMovement, got \(outcome)", file: file, line: line)
+      Issue.record(Comment(rawValue: "expected ignoredNoMovement, got \(outcome)"), sourceLocation: sourceLocation)
+      return
     }
   }
 
   private func assertAlignmentFailed(
     _ outcome: ScrollingCaptureStitchOutcome,
-    file: StaticString = #filePath,
-    line: UInt = #line
+    sourceLocation: SourceLocation = #_sourceLocation
   ) {
     guard case .ignoredAlignmentFailed = outcome else {
-      return XCTFail("expected ignoredAlignmentFailed, got \(outcome)", file: file, line: line)
+      Issue.record(Comment(rawValue: "expected ignoredAlignmentFailed, got \(outcome)"), sourceLocation: sourceLocation)
+      return
     }
   }
 
@@ -1279,11 +1182,10 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
     _ actual: CGImage,
     _ expected: CGImage,
     message: String = "images differ",
-    file: StaticString = #filePath,
-    line: UInt = #line
+    sourceLocation: SourceLocation = #_sourceLocation
   ) throws {
-    XCTAssertEqual(actual.width, expected.width, file: file, line: line)
-    XCTAssertEqual(actual.height, expected.height, file: file, line: line)
+    #expect((actual.width) == (expected.width), sourceLocation: sourceLocation)
+    #expect((actual.height) == (expected.height), sourceLocation: sourceLocation)
     guard actual.width == expected.width, actual.height == expected.height else { return }
     let actualBytes = try rgbaBytes(actual)
     let expectedBytes = try rgbaBytes(expected)
@@ -1304,12 +1206,7 @@ final class ScrollCaptureReliabilityTests: XCTestCase {
       maxX = max(maxX, x)
       maxY = max(maxY, y)
     }
-    XCTAssertEqual(
-      differentPixels,
-      0,
-      "\(message); differentPixels=\(differentPixels) bounds=(\(minX),\(minY))...(\(maxX),\(maxY))",
-      file: file,
-      line: line)
+    #expect((differentPixels) == (0), Comment(rawValue: "\(message); differentPixels=\(differentPixels) bounds=(\(minX),\(minY))...(\(maxX),\(maxY))"), sourceLocation: sourceLocation)
   }
 
   /// Synthetic viewport with pixel-perfect overlapping document rows, fixed chrome and a

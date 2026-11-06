@@ -68,6 +68,7 @@ final class AIPlayerStore {
       DELETE FROM history WHERE path IN (
         SELECT path FROM history ORDER BY last_played_at DESC LIMIT -1 OFFSET 500
       ) AND is_favorite = 0
+        AND NOT EXISTS (SELECT 1 FROM library_items WHERE library_items.path = history.path)
       """)
   }
 
@@ -239,6 +240,7 @@ final class AIPlayerStore {
         PRIMARY KEY(library_id,path)
       )
       """)
+    try execute("CREATE INDEX IF NOT EXISTS library_items_path ON library_items(path)")
   }
 
   private func queryMedia(

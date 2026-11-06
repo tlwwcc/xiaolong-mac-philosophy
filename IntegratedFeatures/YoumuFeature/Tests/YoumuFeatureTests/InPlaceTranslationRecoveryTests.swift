@@ -1,9 +1,10 @@
 import AppKit
-import XCTest
+import Testing
 @testable import YoumuFeature
 
 @MainActor
-final class InPlaceTranslationRecoveryTests: XCTestCase {
+@Suite(.serialized)
+final class InPlaceTranslationRecoveryTests {
     private func image() -> CGImage {
         CGContext(data: nil, width: 80, height: 40, bitsPerComponent: 8, bytesPerRow: 0,
                   space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!.makeImage()!
@@ -13,7 +14,7 @@ final class InPlaceTranslationRecoveryTests: XCTestCase {
         let old = YoumuFeatureEnvironmentStore.shared.environment
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         YoumuFeatureEnvironmentStore.shared.configure(YoumuFeatureEnvironment(
-            hostBundleIdentifier: YoumuFeatureEnvironment.stableHostBundleIdentifier,
+            hostBundleIdentifier: old.hostBundleIdentifier,
             channelRoot: "translation-recovery-fixture", applicationSupportRoot: root, temporaryRoot: root))
         return {
             YoumuFeatureEnvironmentStore.shared.configure(old)
@@ -21,6 +22,23 @@ final class InPlaceTranslationRecoveryTests: XCTestCase {
         }
     }
 
+    @Test
+    func testSettingsIsolationRetainsHostDefaultsNamespace() {
+        let store = YoumuFeatureEnvironmentStore.shared
+        let original = store.environment
+        defer { store.configure(original) }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let host = YoumuFeatureEnvironment(
+            hostBundleIdentifier: original.hostBundleIdentifier + ".namespace-fixture",
+            channelRoot: "namespace-fixture", applicationSupportRoot: root, temporaryRoot: root)
+        store.configure(host)
+        let restore = isolatedSettings(); defer { restore() }
+        #expect(store.environment.userDefaultsKey("online-data-consent.translation")
+            == host.userDefaultsKey("online-data-consent.translation"))
+        #expect(store.environment.settingsURL != host.settingsURL)
+    }
+
+    @Test
     func testCancelBarRemainsVisibleAtEveryScreenEdgeIncludingNegativeCoordinates() {
         for visible in [CGRect(x: 0, y: 0, width: 1920, height: 1080),
                         CGRect(x: -1440, y: -900, width: 1440, height: 900)] {
@@ -28,11 +46,12 @@ final class InPlaceTranslationRecoveryTests: XCTestCase {
                           CGPoint(x: visible.maxX, y: visible.maxY)] {
                 let region = CGRect(x: point.x, y: 1080 - point.y, width: 1, height: 1)
                 let frame = InPlaceTranslationController.hintFrame(for: region, visibleFrame: visible, primaryHeight: 1080)
-                XCTAssertTrue(visible.contains(frame))
+                #expect(visible.contains(frame))
             }
         }
     }
 
+    @Test
     func testResponderEscapeStillCancelsAfterSelectionHasBeenSubmitted() {
         let view = SelectionView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
         var obsoleteCalls = 0
@@ -41,10 +60,11 @@ final class InPlaceTranslationRecoveryTests: XCTestCase {
         view.freezeSelection()
         view.enterReviewMode { cancelled += 1 }
         view.handleKeyDown(keyCode: 53, modifiers: [])
-        XCTAssertEqual(cancelled, 1)
-        XCTAssertEqual(obsoleteCalls, 0)
+        #expect((cancelled) == (1))
+        #expect((obsoleteCalls) == (0))
     }
 
+    @Test
     func testCancelImmediatelyHidesProgressAndLateOCRCannotPresent() async throws {
         let restore = isolatedSettings(); defer { restore() }
         var continuation: CheckedContinuation<[OCRTextBlock], Error>?
@@ -59,37 +79,39 @@ final class InPlaceTranslationRecoveryTests: XCTestCase {
             }, translateBlocks: { _, _, _ in translationCount += 1; return [] })
         controller.start()
         for _ in 0..<100 where continuation == nil { await Task.yield() }
-        let pending = try XCTUnwrap(continuation)
-        let progress = try XCTUnwrap(NSApp.windows.first {
+        let pending = try #require(continuation)
+        let progress = try #require(NSApp.windows.first {
             $0.identifier?.rawValue == "youmu-translation-progress" && $0.isVisible
         })
-        let cancel = try XCTUnwrap(progress.contentView?.subviews.compactMap { $0 as? NSButton }.first)
-        XCTAssertTrue(cancel.isEnabled)
+        let cancel = try #require(progress.contentView?.subviews.compactMap { $0 as? NSButton }.first)
+        #expect(cancel.isEnabled)
         cancel.performClick(nil)
-        XCTAssertFalse(controller.isActive)
-        XCTAssertFalse(progress.isVisible)
+        #expect(!(controller.isActive))
+        #expect(!(progress.isVisible))
         pending.resume(returning: [OCRTextBlock(text: "Save", boundingBox: .zero, confidence: 1)])
         for _ in 0..<20 { await Task.yield() }
-        XCTAssertEqual(presentationCount, 0)
-        XCTAssertEqual(translationCount, 0)
+        #expect((presentationCount) == (0))
+        #expect((translationCount) == (0))
     }
 
+    @Test
     func testHungOCRDeadlineReleasesUIWithoutWaitingForWorker() async throws {
         let restore = isolatedSettings(); defer { restore() }
         var continuation: CheckedContinuation<[OCRTextBlock], Error>?
         let controller = InPlaceTranslationController(
             region: CGRect(x: 120, y: 120, width: 320, height: 80), prefetchedImage: image(),
             overlayController: RegionSelectionController(onSelection: { _ in }, onCancel: {}),
-            onPresentationReady: { XCTFail("Timed out request must not present"); return false },
+            onPresentationReady: { Issue.record(Comment(rawValue: "Timed out request must not present")); return false },
             onTeardownComplete: {}, processingTimeout: 0.04,
             recognizeText: { _ in try await withCheckedThrowingContinuation { continuation = $0 } })
         controller.start()
         try await Task.sleep(nanoseconds: 160_000_000)
-        XCTAssertFalse(controller.isActive)
-        XCTAssertFalse(NSApp.windows.contains { $0.identifier?.rawValue == "youmu-translation-progress" && $0.isVisible })
-        try XCTUnwrap(continuation).resume(returning: [])
+        #expect(!(controller.isActive))
+        #expect(!(NSApp.windows.contains { $0.identifier?.rawValue == "youmu-translation-progress" && $0.isVisible }))
+        try #require(continuation).resume(returning: [])
     }
 
+    @Test
     func testSystemConfirmationSuspendsDeadlineAndCancellationRejectsLateTranslation() async throws {
         let restore = isolatedSettings(); defer { restore() }
         var continuation: CheckedContinuation<[NumberedBlockTranslation.BlockTranslation], Error>?
@@ -107,12 +129,12 @@ final class InPlaceTranslationRecoveryTests: XCTestCase {
             })
         controller.start()
         try await Task.sleep(nanoseconds: 160_000_000)
-        XCTAssertTrue(controller.isActive, "User confirmation must not time out under the overlay deadline")
+        #expect(controller.isActive, Comment(rawValue: "User confirmation must not time out under the overlay deadline"))
         controller.cancelActiveSession()
-        XCTAssertFalse(controller.isActive)
-        try XCTUnwrap(continuation).resume(returning: [.init(index: 0, text: "保存", failed: false)])
+        #expect(!(controller.isActive))
+        try #require(continuation).resume(returning: [.init(index: 0, text: "保存", failed: false)])
         for _ in 0..<20 { await Task.yield() }
-        XCTAssertEqual(presentationCount, 0)
-        XCTAssertFalse(NSApp.windows.contains { $0.identifier?.rawValue == "youmu-translation-progress" && $0.isVisible })
+        #expect((presentationCount) == (0))
+        #expect(!(NSApp.windows.contains { $0.identifier?.rawValue == "youmu-translation-progress" && $0.isVisible }))
     }
 }

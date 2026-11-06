@@ -168,7 +168,7 @@ enum ShortcutAction: String, Codable, CaseIterable, Identifiable {
     case .showCodexNetworkProbe: return "打开测试网速"
     case .showSleepPanel: return "保持唤醒"
     case .windowPreset: return "窗口管理"
-    case .nativeFullScreen: return "进入 / 退出全屏"
+    case .nativeFullScreen: return "进入全屏"
     case .sendShortcut: return "发送按键"
     case .closeWindowSmart: return "关闭当前标签页或窗口"
     case .insertText: return "输入文字"
@@ -187,7 +187,7 @@ enum ShortcutAction: String, Codable, CaseIterable, Identifiable {
     case .showCodexNetworkProbe: return "测试网速"
     case .showSleepPanel: return "保持唤醒"
     case .windowPreset: return "窗口"
-    case .nativeFullScreen: return "进入 / 退出全屏"
+    case .nativeFullScreen: return "进入全屏"
     case .sendShortcut: return "发送按键"
     case .closeWindowSmart: return "智能关闭"
     case .insertText: return "输入文本"
@@ -198,6 +198,8 @@ enum ShortcutAction: String, Codable, CaseIterable, Identifiable {
 enum WindowPreset: String, CaseIterable, Identifiable {
   case leftHalf
   case rightHalf
+  case leftProportional
+  case rightProportional
   case topHalf
   case bottomHalf
   case topLeft
@@ -214,6 +216,8 @@ enum WindowPreset: String, CaseIterable, Identifiable {
     switch self {
     case .leftHalf: return "1/2 左分屏"
     case .rightHalf: return "1/2 右分屏"
+    case .leftProportional: return "按比例左分屏"
+    case .rightProportional: return "按比例右分屏"
     case .topHalf: return "1/2 上分屏"
     case .bottomHalf: return "1/2 下分屏"
     case .topLeft: return "1/4 左上分屏"
@@ -554,7 +558,8 @@ enum ShortcutSemanticMigration {
   static func applyAutomaticMigrationIfNeeded(
     at sourceURL: URL,
     build: String,
-    backupDirectoryURL: URL? = nil
+    backupDirectoryURL: URL? = nil,
+    writeConfiguration: ((Data, Data) throws -> Void)? = nil
   ) throws -> ShortcutSemanticMigrationResult {
     let sourceData = try LocalConfigurationFileCodec.readData(from: sourceURL)
     guard let items = try? ShortcutConfigurationCodec.decode(sourceData) else {
@@ -575,7 +580,8 @@ enum ShortcutSemanticMigration {
       itemIDs: Set(officialItems.map(\.id)),
       reason: "automatic-official-legacy",
       build: build,
-      backupDirectoryURL: backupDirectoryURL)
+      backupDirectoryURL: backupDirectoryURL,
+      writeConfiguration: writeConfiguration)
   }
 
   static func disableItems(
@@ -583,7 +589,8 @@ enum ShortcutSemanticMigration {
     itemIDs: Set<String>,
     reason: String,
     build: String,
-    backupDirectoryURL: URL? = nil
+    backupDirectoryURL: URL? = nil,
+    writeConfiguration: ((Data, Data) throws -> Void)? = nil
   ) throws -> ShortcutSemanticMigrationResult {
     let originalData = try LocalConfigurationFileCodec.readData(from: sourceURL)
     guard var items = try? ShortcutConfigurationCodec.decode(originalData) else {
@@ -639,16 +646,40 @@ enum ShortcutSemanticMigration {
       affectedFingerprints: affectedItems.map(itemFingerprint).sorted())
     let recordURL = sourceURL.deletingLastPathComponent().appendingPathComponent(recordFileName)
 
-    do {
-      try migratedData.write(to: sourceURL, options: [.atomic])
-      guard (try? LocalConfigurationFileCodec.readData(from: sourceURL)) == migratedData else {
-        throw ShortcutSemanticMigrationError.migratedWriteVerificationFailed
-      }
+    if let writeConfiguration {
+      // Persist undo metadata before replacing the configuration. A failed commit leaves a
+      // non-matching hash, so restore remains fail-closed; never roll back over another writer.
       let recordData = try encoder.encode(record)
+      let priorRecordData = try? LocalConfigurationFileCodec.readData(from: recordURL)
       try recordData.write(to: recordURL, options: [.atomic])
-    } catch {
-      try? originalData.write(to: sourceURL, options: [.atomic])
-      throw error
+      do {
+        try writeConfiguration(originalData, migratedData)
+      } catch {
+        // Keep the previous successful undo available when the new transaction provably
+        // never committed. Unknown outcomes retain this transaction's evidence.
+        if (try? LocalConfigurationFileCodec.readData(from: sourceURL)) == originalData,
+          (try? LocalConfigurationFileCodec.readData(from: recordURL)) == recordData
+        {
+          if let priorRecordData {
+            try? priorRecordData.write(to: recordURL, options: [.atomic])
+          } else {
+            try? FileManager.default.removeItem(at: recordURL)
+          }
+        }
+        throw error
+      }
+    } else {
+      do {
+        try migratedData.write(to: sourceURL, options: [.atomic])
+        guard (try? LocalConfigurationFileCodec.readData(from: sourceURL)) == migratedData else {
+          throw ShortcutSemanticMigrationError.migratedWriteVerificationFailed
+        }
+        let recordData = try encoder.encode(record)
+        try recordData.write(to: recordURL, options: [.atomic])
+      } catch {
+        try? originalData.write(to: sourceURL, options: [.atomic])
+        throw error
+      }
     }
 
     return ShortcutSemanticMigrationResult(
@@ -687,7 +718,10 @@ enum ShortcutSemanticMigration {
     sourceURL.deletingLastPathComponent().appendingPathComponent(record.backupFileName)
   }
 
-  static func restoreLatestMigration(at sourceURL: URL) throws -> URL {
+  static func restoreLatestMigration(
+    at sourceURL: URL,
+    writeConfiguration: ((Data, Data) throws -> Void)? = nil
+  ) throws -> URL {
     guard let record = latestRecord(for: sourceURL) else {
       throw ShortcutSemanticMigrationError.missingBackup
     }
@@ -701,7 +735,11 @@ enum ShortcutSemanticMigration {
     else {
       throw ShortcutSemanticMigrationError.missingBackup
     }
-    try backupData.write(to: sourceURL, options: [.atomic])
+    if let writeConfiguration {
+      try writeConfiguration(currentData, backupData)
+    } else {
+      try backupData.write(to: sourceURL, options: [.atomic])
+    }
     guard (try? LocalConfigurationFileCodec.readData(from: sourceURL)) == backupData else {
       throw ShortcutSemanticMigrationError.migratedWriteVerificationFailed
     }
@@ -742,13 +780,66 @@ enum ShortcutSemanticMigration {
 
 enum ShortcutDefaultBaseline {
   static let versionDefaultsKey = "shortcutDefaultBaselineVersionV1"
-  static let currentVersion = 10
+  static let currentVersion = 12
+  static let clipboardKey = "C"
+  static let proportionalModifiers = ["control", "option", "command"]
+  static let clipboardNote = "打开超级剪贴板并开始搜索，再按一次收起。"
+
+  static func migrateClipboardHistoryChord(in items: inout [ShortcutItem]) -> Bool {
+    guard let index = items.firstIndex(where: {
+      $0.isBuiltIn != false && $0.action == .showClipboardHistory && $0.target == "clipboard-history"
+        && $0.key == "V" && sameModifiers($0.modifiers, ["control", "option"])
+        && ($0.trigger == nil || $0.trigger == .rightOptionDoubleTap)
+    }) else { return false }
+    guard !items.indices.contains(where: {
+      $0 != index && items[$0].enabled && items[$0].usesChordTrigger
+        && items[$0].key.caseInsensitiveCompare(clipboardKey) == .orderedSame
+        && sameModifiers(items[$0].modifiers, proportionalModifiers)
+    }) else { return false }
+    items[index].key = clipboardKey
+    items[index].modifiers = proportionalModifiers
+    items[index].trigger = nil
+    if [
+      "Caps + V：打开剪贴板历史并开始搜索。",
+      "连按物理右 Option 两次：打开剪贴板历史并开始搜索；再连按两次收起。",
+      "打开剪贴板历史并开始搜索；再次按同一快捷键收起。具体按键以当前设置为准。",
+    ].contains(items[index].note) {
+      items[index].note = clipboardNote
+    }
+    return true
+  }
+
+  static func migrateWindowActionNotes(in items: inout [ShortcutItem]) -> Bool {
+    var changed = false
+    // Update only our known legacy wording. Personal chords, targets and custom notes survive.
+    for index in items.indices where items[index].isBuiltIn != false {
+      let item = items[index]
+      let note: String?
+      switch (item.action, item.target, item.note) {
+      case (
+        .windowPreset, WindowPreset.maximize.rawValue,
+        "Caps + F：窗口化全屏，保留 Dock 和顶部菜单栏/状态栏，左右上下 100% 铺满可用区域，再按一次恢复。"
+      ):
+        note = "Caps + F：窗口化全屏，保留 Dock 和顶部菜单栏/状态栏，始终铺满可用区域；重复按保持铺满。"
+      case (.windowPreset, WindowPreset.center.rawValue, "保持原大小居中。"):
+        note = "Caps + ⌘ + ↑：固定为可用屏幕宽高的 72% 并居中；重复按保持。"
+      case (.nativeFullScreen, "entireScreen", "Caps + ⌘ + F：按一下进入全屏，再按一下退出。"):
+        note = "Caps + ⌘ + F：始终进入系统全屏；Caps + ⌘ + ↑ 回到居中小窗口。"
+      default: note = nil
+      }
+      if let note {
+        items[index].note = note
+        changed = true
+      }
+    }
+    return changed
+  }
 
   static func migrateLegacyDefaults(
     in items: inout [ShortcutItem],
     allowClipboardHistoryTriggerMigration: Bool = true
   ) -> Bool {
-    var changed = false
+    var changed = migrateWindowActionNotes(in: &items)
     let beforeCount = items.count
     items.removeAll {
       $0.isBuiltIn != false && $0.usesChordTrigger && isLegacyAixlgArmoryDefault($0)
@@ -1285,6 +1376,28 @@ func commonShortcutTemplates() -> [ShortcutItem] {
     ),
     ShortcutItem(
       id: UUID().uuidString,
+      name: "按比例左分屏",
+      scope: "窗口",
+      key: "Left",
+      modifiers: ShortcutDefaultBaseline.proportionalModifiers,
+      action: .windowPreset,
+      target: WindowPreset.leftProportional.rawValue,
+      enabled: true,
+      note: "按设置中的窗口分屏比例，把当前窗口贴到屏幕左边。"
+    ),
+    ShortcutItem(
+      id: UUID().uuidString,
+      name: "按比例右分屏",
+      scope: "窗口",
+      key: "Right",
+      modifiers: ShortcutDefaultBaseline.proportionalModifiers,
+      action: .windowPreset,
+      target: WindowPreset.rightProportional.rawValue,
+      enabled: true,
+      note: "按设置中的窗口分屏比例，把当前窗口贴到屏幕右边。"
+    ),
+    ShortcutItem(
+      id: UUID().uuidString,
       name: "窗口化全屏",
       scope: "窗口",
       key: "F",
@@ -1292,7 +1405,7 @@ func commonShortcutTemplates() -> [ShortcutItem] {
       action: .windowPreset,
       target: WindowPreset.maximize.rawValue,
       enabled: true,
-      note: "Caps + F：窗口化全屏，保留 Dock 和顶部菜单栏/状态栏，左右上下 100% 铺满可用区域，再按一次恢复。"
+      note: "Caps + F：窗口化全屏，保留 Dock 和顶部菜单栏/状态栏，始终铺满可用区域；重复按保持铺满。"
     ),
     ShortcutItem(
       id: UUID().uuidString,
@@ -1303,7 +1416,7 @@ func commonShortcutTemplates() -> [ShortcutItem] {
       action: .windowPreset,
       target: WindowPreset.center.rawValue,
       enabled: true,
-      note: "保持原大小居中。"
+      note: "Caps + ⌘ + ↑：固定为可用屏幕宽高的 72% 并居中；重复按保持。"
     ),
     ShortcutItem(
       id: UUID().uuidString,
@@ -1314,7 +1427,7 @@ func commonShortcutTemplates() -> [ShortcutItem] {
       action: .nativeFullScreen,
       target: "entireScreen",
       enabled: true,
-      note: "Caps + ⌘ + F：按一下进入全屏，再按一下退出。"
+      note: "Caps + ⌘ + F：始终进入系统全屏；Caps + ⌘ + ↑ 回到居中小窗口。"
     ),
     ShortcutItem(
       id: UUID().uuidString,
@@ -1408,13 +1521,12 @@ func commonShortcutTemplates() -> [ShortcutItem] {
       id: UUID().uuidString,
       name: "打开剪贴板历史",
       scope: "常用脚本",
-      key: "V",
-      modifiers: ["control", "option"],
-      trigger: .rightOptionDoubleTap,
+      key: ShortcutDefaultBaseline.clipboardKey,
+      modifiers: ShortcutDefaultBaseline.proportionalModifiers,
       action: .showClipboardHistory,
       target: "clipboard-history",
       enabled: true,
-      note: "连按物理右 Option 两次：打开剪贴板历史并开始搜索；再连按两次收起。"
+      note: ShortcutDefaultBaseline.clipboardNote
     ),
     ShortcutItem(
       id: UUID().uuidString,

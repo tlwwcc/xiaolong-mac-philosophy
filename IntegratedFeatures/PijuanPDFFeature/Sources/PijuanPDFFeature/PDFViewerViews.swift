@@ -33,7 +33,7 @@ struct PDFViewerRootView: View {
     .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) {
       notification in
       guard let window = notification.object as? NSWindow,
-        window === model.pdfView.window || model.isPresentationMode
+        window === model.pdfView.window
       else { return }
       model.handleSystemFullScreenExit()
     }

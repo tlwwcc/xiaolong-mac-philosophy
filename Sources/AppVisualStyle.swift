@@ -42,7 +42,23 @@ enum AppVisualStyle {
     })
   }
 
-  // Existing repeated desktop metrics, kept stable during visual convergence.
+  enum Spacing {
+    static let compact: CGFloat = 6
+    static let small: CGFloat = 8
+    static let standard: CGFloat = 12
+    static let large: CGFloat = 16
+    static let page: CGFloat = 24
+    static let section: CGFloat = 28
+  }
+
+  enum Layout {
+    static let readableWidth: CGFloat = 720
+    static let controlHeight: CGFloat = 32
+    static let rowHeight: CGFloat = 48
+    static let cornerRadius: CGFloat = 10
+  }
+
+  // Compatibility roles for existing feature windows during the modular migration.
   static let controlFont = Font.system(size: 12, weight: .medium)
   static let labelFont = Font.system(size: 13, weight: .semibold)
   static let detailFont = Font.system(size: 11, weight: .medium)

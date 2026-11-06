@@ -2,17 +2,13 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-struct SoftwareShortcutRequest: Identifiable {
-  let id = UUID()
-  let itemID: String?
-  let draft: ShortcutItem
-}
-
 /// The editor owns a draft. Selecting an app or recording a key never mutates a saved rule.
 struct SoftwareShortcutEditorSheet: View {
   @EnvironmentObject private var model: AppModel
   @Environment(\.dismiss) private var dismiss
   @State private var draft: ShortcutItem
+  @State private var editingOwner = UUID()
+  @State private var recordingOwnerID: UUID?
   @State private var itemID: String?
   @State private var query = ""
   @State private var choosingApp: Bool
@@ -34,7 +30,10 @@ struct SoftwareShortcutEditorSheet: View {
     _choosingApp = State(initialValue: draft.target.isEmpty)
   }
 
-  private var recording: Bool { model.isDraftShortcutRecording }
+  private var recording: Bool {
+    recordingOwnerID != nil && model.isDraftShortcutRecording
+      && model.shortcutRecordingSessionID == recordingOwnerID
+  }
   private var hasKey: Bool { draft.trigger != nil || !draft.key.isEmpty }
   private var issue: ShortcutIssue? {
     guard !draft.target.isEmpty, hasKey else { return nil }
@@ -77,7 +76,7 @@ struct SoftwareShortcutEditorSheet: View {
                     Label(draft.name, systemImage: "app.fill").font(.body.bold())
                     Spacer()
                     Button(choosingApp ? "收起选择" : "更换软件…") {
-                      model.cancelDraftShortcutRecording()
+                      cancelOwnedRecording()
                       choosingApp.toggle()
                     }
                   }
@@ -126,13 +125,7 @@ struct SoftwareShortcutEditorSheet: View {
               VStack(alignment: .leading, spacing: 10) {
                 Text("2 · 按下快捷键").font(.headline)
                 Button {
-                  model.toggleDraftShortcutRecording { value in
-                    draft.trigger = value.trigger
-                    if value.trigger == nil {
-                      draft.key = value.key
-                      draft.modifiers = value.modifiers
-                    }
-                  }
+                  beginOrCancelRecording()
                 } label: {
                   Label(
                     recording ? "现在按下你想用的组合键…" : (hasKey ? draft.displayHotkey : "点这里，开始录制"),
@@ -142,7 +135,7 @@ struct SoftwareShortcutEditorSheet: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(draft.target.isEmpty)
-                .background(KeyCaptureView(active: recording) { model.applyRecorded($0) })
+                .background(KeyCaptureView(ownerID: recording ? recordingOwnerID : nil) { model.applyRecorded($0, ownerID: $1) })
                 Text(recording ? "按 Esc 或再点一次可取消录制。" : "例如按住 Caps，再按一个字母。也支持连续按两次同一侧的 ⌃、⌥、⇧ 或 ⌘。")
                   .font(.caption).foregroundStyle(.secondary)
                 if let issue {
@@ -186,14 +179,38 @@ struct SoftwareShortcutEditorSheet: View {
     .padding(24)
     .frame(width: 540, height: saved ? 220 : 640)
     .onExitCommand {
-      if recording { model.cancelDraftShortcutRecording() } else { dismiss() }
+      if recording { cancelOwnedRecording() } else { dismiss() }
     }
-    .onDisappear { model.cancelDraftShortcutRecording() }
+    .onAppear { model.beginShortcutEditing(owner: editingOwner) }
+    .onDisappear {
+      cancelOwnedRecording()
+      model.endShortcutEditing(owner: editingOwner)
+    }
     .onChange(of: draft) { _ in saveError = nil }
   }
 
+  private func beginOrCancelRecording() {
+    if recording { cancelOwnedRecording(); return }
+    // The user explicitly starts recording here; any other draft yields to this one.
+    if model.isDraftShortcutRecording { model.cancelDraftShortcutRecording() }
+    model.toggleDraftShortcutRecording { value in
+      draft.trigger = value.trigger
+      if value.trigger == nil {
+        draft.key = value.key
+        draft.modifiers = value.modifiers
+      }
+    }
+    recordingOwnerID = model.shortcutRecordingSessionID
+  }
+
+  private func cancelOwnedRecording() {
+    guard let ownerID = recordingOwnerID else { return }
+    model.cancelDraftShortcutRecording(ownerID: ownerID)
+    recordingOwnerID = nil
+  }
+
   private func select(_ choice: AppChoice) {
-    model.cancelDraftShortcutRecording()
+    cancelOwnedRecording()
     if itemID == nil, let existing = model.existingSoftwareShortcut(for: choice.target) {
       draft = existing
       itemID = existing.id
@@ -210,7 +227,7 @@ struct SoftwareShortcutEditorSheet: View {
   }
 
   private func browseApp() {
-    model.cancelDraftShortcutRecording()
+    cancelOwnedRecording()
     let panel = NSOpenPanel()
     panel.title = "选择要设置快捷键的软件"
     panel.prompt = "选择软件"
@@ -229,8 +246,8 @@ struct SoftwareShortcutEditorSheet: View {
   private func save() {
     guard canSave else { return }
     let success =
-      itemID.map { model.updateShortcut(id: $0, draft: draft) }
-      ?? model.createShortcut(from: draft)
+      itemID.map { model.updateShortcut(id: $0, draft: draft, editorOwner: editingOwner) }
+      ?? model.createShortcut(from: draft, editorOwner: editingOwner)
     if success {
       model.shortcutGuideRequestedSearchText = draft.name
       model.shortcutGuideFocusRequest &+= 1

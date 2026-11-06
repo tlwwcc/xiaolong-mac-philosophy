@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import Carbon
 import IOKit.hid
+import IOKit.hidsystem
 
 enum CapsCoreEngineStatus: Equatable {
   case stopped
@@ -37,6 +38,7 @@ final class CapsCoreEngine {
   private var capsLockControllerWriteDenied = false
   private var capsState = CapsCoreStateMachine()
   private var physicalModifierState = CapsCorePhysicalModifierState()
+  private let jumpRemoteInputTrust = JumpRemoteInputTrust()
   private var syntheticModifierEventFilter = CapsCoreSyntheticModifierEventFilter()
   private var syntheticEventSource: CGEventSource?
   private var postedControl = false
@@ -46,6 +48,13 @@ final class CapsCoreEngine {
   private var wakeObserver: NSObjectProtocol?
   private var screenSleepObserver: NSObjectProtocol?
   private var screenWakeObserver: NSObjectProtocol?
+
+  // The routing owner is fixed until Caps and every key begun with it are up.
+  // These callbacks never observe or rewrite Fn voice events.
+  var onRoutingChordChange: ((Bool) -> Void)?
+  var allowsRoutingKeyDown: (() -> Bool)?
+  private var routingKeys = CapsRoutingKeyLedger()
+  private var routingChordHeld = false
 
   private(set) var isRunning = false
 
@@ -92,6 +101,7 @@ final class CapsCoreEngine {
     let hidMonitorStarted = startHIDMonitor()
     syntheticEventSource = CGEventSource(stateID: .hidSystemState)
     isRunning = true
+    jumpRemoteInputTrust.start()
     installPowerObservers()
     startWatchdog()
     if !systemMappingProtectionActive {
@@ -119,6 +129,7 @@ final class CapsCoreEngine {
   }
 
   private func teardown(reason: String) {
+    jumpRemoteInputTrust.stop()
     releaseAll(reason: reason)
     forceSystemCapsLockOff()
     stopWatchdog()
@@ -222,6 +233,9 @@ final class CapsCoreEngine {
     let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
     let isDown = keyEventIsPressed(type: type, keyCode: keyCode, flags: event.flags)
     if event.getIntegerValueField(.eventSourceUserData) == Self.syntheticEventMarker {
+      if let isDown {
+        _ = syntheticModifierEventFilter.consume(keyCode: keyCode, isDown: isDown)
+      }
       return Unmanaged.passUnretained(event)
     }
     if let isDown, syntheticModifierEventFilter.consume(keyCode: keyCode, isDown: isDown) {
@@ -254,12 +268,26 @@ final class CapsCoreEngine {
     }
 
     let reconciliation = reconcileCapsHardwareState(reason: "event:\(keyCode)")
+    if type == .keyDown, reconciliation == .confirmedDown || routingKeys.contains(keyCode) {
+      let allowed = routingKeys.press(keyCode, cancelled: allowsRoutingKeyDown?() == false)
+      updateRoutingChord()
+      if !allowed { return nil }
+    }
+    if type == .keyUp {
+      let allowed = routingKeys.release(keyCode)
+      updateRoutingChord()
+      if !allowed { return nil }
+    }
     var flags = event.flags
     flags.remove(.maskAlphaShift)
     if reconciliation == .confirmedDown {
       flags.insert(.maskControl)
       flags.insert(.maskAlternate)
+      flags.formUnion(CGEventFlags(rawValue: UInt64(NX_DEVICELCTLKEYMASK | NX_DEVICELALTKEYMASK)))
     } else if reconciliation == .releasedAndBlocked {
+      flags.subtract(CGEventFlags(rawValue: UInt64(NX_DEVICELCTLKEYMASK | NX_DEVICELALTKEYMASK)))
+      flags.formUnion(physicalModifierFlags().intersection(
+        CGEventFlags(rawValue: UInt64(NX_DEVICELCTLKEYMASK | NX_DEVICELALTKEYMASK))))
       if !physicalModifierState.controlActive {
         flags.remove(.maskControl)
       }
@@ -279,14 +307,24 @@ final class CapsCoreEngine {
     if type == .keyDown { return true }
     if type == .keyUp { return false }
     guard type == .flagsChanged else { return nil }
+    let side: UInt64
+    let both: UInt64
+    let aggregate: CGEventFlags
     switch Int(keyCode) {
     case kVK_Control, kVK_RightControl:
-      return flags.contains(.maskControl)
+      side = UInt64(Int(keyCode) == kVK_Control ? NX_DEVICELCTLKEYMASK : NX_DEVICERCTLKEYMASK)
+      both = UInt64(NX_DEVICELCTLKEYMASK | NX_DEVICERCTLKEYMASK)
+      aggregate = .maskControl
     case kVK_Option, kVK_RightOption:
-      return flags.contains(.maskAlternate)
+      side = UInt64(Int(keyCode) == kVK_Option ? NX_DEVICELALTKEYMASK : NX_DEVICERALTKEYMASK)
+      both = UInt64(NX_DEVICELALTKEYMASK | NX_DEVICERALTKEYMASK)
+      aggregate = .maskAlternate
     default:
       return nil
     }
+    // A left release must not look like a press while its right counterpart is held.
+    if flags.rawValue & both != 0 { return flags.rawValue & side != 0 }
+    return flags.contains(aggregate)
   }
 
   private func updateFallbackPhysicalModifierState(
@@ -405,8 +443,8 @@ final class CapsCoreEngine {
 
   private func handleHIDDeviceRemoved(_ device: IOHIDDevice) {
     let deviceID = registryID(for: device)
-    applyCapsTransition(capsState.removeDevice(deviceID), source: "deviceRemoved")
     physicalModifierState.removeDevice(deviceID)
+    applyCapsTransition(capsState.removeDevice(deviceID), source: "deviceRemoved")
     hidDevices.removeValue(forKey: deviceID)
     capsInputElements.removeValue(forKey: deviceID)
     ledReadyDeviceIDs.remove(deviceID)
@@ -565,12 +603,17 @@ final class CapsCoreEngine {
       ])
   }
 
-  func shouldAllowHotkeyTrigger(modifiers: [String]) -> Bool {
+  func shouldAllowHotkeyTrigger(modifiers: [String], keyCode: UInt16? = nil) -> Bool {
+    if let keyCode, jumpRemoteInputTrust.consume(keyCode: keyCode, modifiers: modifiers) {
+      AppDiagnostics.log("caps_core_jump_remote_chord_accepted", ["keyCode": "\(keyCode)"])
+      return true
+    }
     let modifiers = Set(modifiers)
     guard modifiers.contains("control"), modifiers.contains("option") else {
       return true
     }
 
+    guard !routingChordHeld || allowsRoutingKeyDown?() != false else { return false }
     let reconciliationState: CapsCoreHotkeyReconciliationState
     switch reconcileCapsHardwareState(reason: "beforeHotkeyAction") {
     case .confirmedDown:
@@ -587,6 +630,7 @@ final class CapsCoreEngine {
   }
 
   private func resetPhysicalInputLedgers(reason: String) {
+    jumpRemoteInputTrust.reset()
     physicalModifierState.reset()
     syntheticModifierEventFilter.reset()
     AppDiagnostics.log("caps_core_physical_ledgers_reset", ["reason": reason])
@@ -597,52 +641,90 @@ final class CapsCoreEngine {
     case .none:
       return
     case .press:
+      updateRoutingChord()
       postVirtualModifiersDown()
       AppDiagnostics.log("caps_core_down", ["source": source])
     case .release:
       releaseVirtualModifiers()
+      updateRoutingChord()
       AppDiagnostics.log("caps_core_up", ["source": source])
     }
   }
 
   private func postVirtualModifiersDown() {
-    var flags = physicalModifierFlags()
     if !postedControl {
-      flags.insert(.maskControl)
-      postModifier(keyCode: UInt16(kVK_Control), isDown: true, flags: flags)
       postedControl = true
+      if !physicalModifierState.isPressed(usage: CapsCorePhysicalModifierState.leftControlUsage) {
+        postModifier(keyCode: UInt16(kVK_Control), isDown: true,
+          flags: modifierFlags(control: postedControl, option: postedOption))
+      }
     }
     if !postedOption {
-      flags.insert(.maskAlternate)
-      postModifier(keyCode: UInt16(kVK_Option), isDown: true, flags: flags)
       postedOption = true
+      if !physicalModifierState.isPressed(usage: CapsCorePhysicalModifierState.leftOptionUsage) {
+        postModifier(keyCode: UInt16(kVK_Option), isDown: true,
+          flags: modifierFlags(control: postedControl, option: postedOption))
+      }
     }
   }
 
   private func releaseVirtualModifiers() {
-    let flags = physicalModifierFlags()
     if postedOption {
-      postModifier(keyCode: UInt16(kVK_Option), isDown: false, flags: flags)
       postedOption = false
+      if !physicalModifierState.isPressed(usage: CapsCorePhysicalModifierState.leftOptionUsage) {
+        postModifier(keyCode: UInt16(kVK_Option), isDown: false,
+          flags: modifierFlags(control: postedControl, option: postedOption))
+      }
     }
     if postedControl {
-      postModifier(keyCode: UInt16(kVK_Control), isDown: false, flags: flags)
       postedControl = false
+      if !physicalModifierState.isPressed(usage: CapsCorePhysicalModifierState.leftControlUsage) {
+        postModifier(keyCode: UInt16(kVK_Control), isDown: false,
+          flags: modifierFlags(control: postedControl, option: postedOption))
+      }
     }
+  }
+
+  private func updateRoutingChord() {
+    let held = capsState.isDown || routingKeys.hasHeldKeys
+    guard held != routingChordHeld else { return }
+    routingChordHeld = held
+    onRoutingChordChange?(held)
   }
 
   private func releaseAll(reason: String) {
     let hadPressedState = capsState.reset() == .release
+    routingKeys.reset()
     if hadPressedState || postedControl || postedOption {
       releaseVirtualModifiers()
       AppDiagnostics.log("caps_core_release_all", ["reason": reason])
     }
+    updateRoutingChord()
   }
 
   private func physicalModifierFlags() -> CGEventFlags {
-    var flags: CGEventFlags = []
-    if physicalModifierState.controlActive { flags.insert(.maskControl) }
-    if physicalModifierState.optionActive { flags.insert(.maskAlternate) }
+    modifierFlags(control: false, option: false)
+  }
+
+  private func modifierFlags(control: Bool, option: Bool) -> CGEventFlags {
+    // Keep Shift/Command/Fn and their device-side bits. Remove our own synthetic
+    // state from the system snapshot, then reconstruct Control/Option from owners.
+    var flags = CGEventSource.flagsState(.hidSystemState)
+    flags.subtract([.maskControl, .maskAlternate, .maskAlphaShift])
+    flags.subtract(CGEventFlags(rawValue: UInt64(
+      NX_DEVICELCTLKEYMASK | NX_DEVICERCTLKEYMASK | NX_DEVICELALTKEYMASK | NX_DEVICERALTKEYMASK)))
+    let sides: [(UInt32, Int32, CGEventFlags, Bool)] = [
+      (CapsCorePhysicalModifierState.leftControlUsage, NX_DEVICELCTLKEYMASK, .maskControl, control),
+      (CapsCorePhysicalModifierState.rightControlUsage, NX_DEVICERCTLKEYMASK, .maskControl, false),
+      (CapsCorePhysicalModifierState.leftOptionUsage, NX_DEVICELALTKEYMASK, .maskAlternate, option),
+      (CapsCorePhysicalModifierState.rightOptionUsage, NX_DEVICERALTKEYMASK, .maskAlternate, false),
+    ]
+    for (usage, side, aggregate, virtualDown) in sides {
+      if virtualDown || physicalModifierState.isPressed(usage: usage) {
+        flags.formUnion(aggregate)
+        flags.formUnion(CGEventFlags(rawValue: UInt64(side)))
+      }
+    }
     return flags
   }
 

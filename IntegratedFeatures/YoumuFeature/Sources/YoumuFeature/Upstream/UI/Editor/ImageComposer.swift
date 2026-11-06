@@ -3,7 +3,7 @@ import CoreImage
 import UniformTypeIdentifiers
 
 /// PNG/TIFF 自身不一定保留 macOS 截图的 Retina 点尺寸。
-/// 游目复制图片时额外写入一个私有剪贴板类型，让后续定图能恢复原始视觉尺寸。
+/// 截图复制图片时额外写入一个私有剪贴板类型，让后续定图能恢复原始视觉尺寸。
 enum ImagePasteboardMetadata {
     static var pixelScaleType: NSPasteboard.PasteboardType {
         NSPasteboard.PasteboardType(
@@ -156,7 +156,7 @@ enum ImageComposer {
 
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
-        let defaultName = "游目-\(formatter.string(from: Date())).png"
+        let defaultName = "截图-\(formatter.string(from: Date())).png"
 
         NSApp.activate(ignoringOtherApps: true)
         let panel = NSSavePanel()

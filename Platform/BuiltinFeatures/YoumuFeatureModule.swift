@@ -50,7 +50,7 @@ public struct YoumuFeatureModule: FeatureModule {
   public let manifest = FeatureManifest(
     id: YoumuFeatureIDs.feature,
     manifestVersion: 4,
-    displayName: "游目",
+    displayName: "截图",
     summary: "截图、贴图、识读与图片翻译。",
     category: .captureAndUnderstand,
     isEnabledByDefault: true,

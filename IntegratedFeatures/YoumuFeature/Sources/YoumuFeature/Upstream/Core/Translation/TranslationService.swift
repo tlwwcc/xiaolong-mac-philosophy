@@ -20,20 +20,21 @@ enum TranslationBackendError: LocalizedError {
     case appleLocalUnavailable
 
     var errorDescription: String? {
-        "Apple 暂不支持这组语言，或当前系统低于 macOS 15。可在游目设置中选择在线 API。"
+        "Apple 暂不支持这组语言，或当前系统低于 macOS 15。可在截图设置中选择在线 API。"
     }
 }
 
 /// 翻译服务统一入口
 class TranslationService {
     static let shared = TranslationService()
+    private let sharedClient = SharedTranslationClient()
 
     /// 整段文本翻译（截图翻译弹窗用）
     func translate(text: String, targetLanguage: Language) async throws -> String {
         let settings = AppSettings.load()
         if settings.translationBackend == .sharedService {
             try await requireSharedConsent()
-            guard let translated = try await SharedTranslationClient().translate([text], target: targetLanguage).first else {
+            guard let translated = try await sharedClient.translate([text], target: targetLanguage).first else {
                 throw SharedTranslationError.invalidResponse
             }
             return translated
@@ -84,8 +85,10 @@ class TranslationService {
         let settings = AppSettings.load()
         if settings.translationBackend == .sharedService {
             try await requireSharedConsent(systemPresentation: systemPresentation)
-            let translated = try await SharedTranslationClient().translate(blockTexts, target: targetLanguage)
-            return translated.enumerated().map { .init(index: $0.offset, text: $0.element, failed: false) }
+            let translated = try await sharedClient.translateBlocks(blockTexts, target: targetLanguage)
+            return translated.enumerated().map {
+                .init(index: $0.offset, text: $0.element.text, failed: $0.element.failed)
+            }
         }
         let policy = TranslationBackendPolicy.resolve(settings.translationBackend)
 

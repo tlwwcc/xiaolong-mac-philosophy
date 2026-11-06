@@ -2,44 +2,36 @@ import BuiltinFeatureCatalog
 import Foundation
 import PlatformContracts
 import PlatformServices
-import XCTest
+import Testing
 
-final class FeatureRegistryTests: XCTestCase {
+@Suite(.serialized)
+final class FeatureRegistryTests {
+  @Test
   func testNetworkProbeManifestRegistersWithStableOwnership() throws {
     var builder = makeBuilder()
 
     try builder.register(NetworkProbeFeatureModule())
     let registry = builder.build()
 
-    XCTAssertEqual(registry.manifests.map(\.id), [NetworkProbeFeatureIDs.feature])
-    XCTAssertEqual(
-      registry.owner(of: NetworkProbeFeatureIDs.openCommand),
-      NetworkProbeFeatureIDs.feature
-    )
-    XCTAssertEqual(
-      registry.owner(of: NetworkProbeFeatureIDs.mainWindow),
-      NetworkProbeFeatureIDs.feature
-    )
-    XCTAssertEqual(
-      registry.owner(of: NetworkProbeFeatureIDs.runProbe),
-      NetworkProbeFeatureIDs.feature
-    )
+    #expect((registry.manifests.map(\.id)) == ([NetworkProbeFeatureIDs.feature]))
+    #expect((registry.owner(of: NetworkProbeFeatureIDs.openCommand)) == (NetworkProbeFeatureIDs.feature))
+    #expect((registry.owner(of: NetworkProbeFeatureIDs.mainWindow)) == (NetworkProbeFeatureIDs.feature))
+    #expect((registry.owner(of: NetworkProbeFeatureIDs.runProbe)) == (NetworkProbeFeatureIDs.feature))
   }
 
+  @Test
   func testDuplicateFeatureIDFailsBeforeMutatingRegistry() throws {
     var builder = makeBuilder()
     let module = NetworkProbeFeatureModule()
     try builder.register(module)
 
-    XCTAssertThrowsError(try builder.register(module)) { error in
-      XCTAssertEqual(
-        error as? FeatureRegistryError,
-        .duplicateFeatureID(NetworkProbeFeatureIDs.feature)
-      )
+    expectThrowsError(try builder.register(module)) { error in
+      #expect((error as? FeatureRegistryError) == (.duplicateFeatureID(NetworkProbeFeatureIDs.feature)))
     }
-    XCTAssertEqual(builder.build().manifests.count, 1)
+    #expect((builder.build().manifests.count) == (1))
   }
 
+  @Test
   func testDuplicateManifestOwnedIDsFailClosed() {
     var manifest = NetworkProbeFeatureModule().manifest
     manifest = FeatureManifest(
@@ -59,19 +51,17 @@ final class FeatureRegistryTests: XCTestCase {
     )
     var builder = makeBuilder()
 
-    XCTAssertThrowsError(try builder.register(manifest)) { error in
-      XCTAssertEqual(
-        error as? FeatureRegistryError,
-        .duplicateCommandID(NetworkProbeFeatureIDs.openCommand)
-      )
+    expectThrowsError(try builder.register(manifest)) { error in
+      #expect((error as? FeatureRegistryError) == (.duplicateCommandID(NetworkProbeFeatureIDs.openCommand)))
     }
     let registry = builder.build()
-    XCTAssertTrue(registry.manifests.isEmpty)
-    XCTAssertNil(registry.owner(of: NetworkProbeFeatureIDs.openCommand))
-    XCTAssertNil(registry.owner(of: NetworkProbeFeatureIDs.mainWindow))
-    XCTAssertNil(registry.owner(of: NetworkProbeFeatureIDs.runProbe))
+    #expect(registry.manifests.isEmpty)
+    #expect((registry.owner(of: NetworkProbeFeatureIDs.openCommand)) == nil)
+    #expect((registry.owner(of: NetworkProbeFeatureIDs.mainWindow)) == nil)
+    #expect((registry.owner(of: NetworkProbeFeatureIDs.runProbe)) == nil)
   }
 
+  @Test
   func testInvalidAndCrossFeatureIdentifiersFailClosed() {
     let invalidFeature = FeatureManifest(
       id: FeatureID("CN.TLWW.Bad Feature"),
@@ -90,11 +80,8 @@ final class FeatureRegistryTests: XCTestCase {
     )
     var builder = makeBuilder()
 
-    XCTAssertThrowsError(try builder.register(invalidFeature)) { error in
-      XCTAssertEqual(
-        error as? FeatureRegistryError,
-        .invalidIdentifier(kind: "FeatureID", value: "CN.TLWW.Bad Feature")
-      )
+    expectThrowsError(try builder.register(invalidFeature)) { error in
+      #expect((error as? FeatureRegistryError) == (.invalidIdentifier(kind: "FeatureID", value: "CN.TLWW.Bad Feature")))
     }
 
     let featureID = FeatureID("cn.tlww.aixlg.hotkeys.feature.example")
@@ -117,14 +104,12 @@ final class FeatureRegistryTests: XCTestCase {
       settingsSchemaVersion: 1
     )
 
-    XCTAssertThrowsError(try builder.register(crossFeatureManifest)) { error in
-      XCTAssertEqual(
-        error as? FeatureRegistryError,
-        .commandNotOwned(featureID: featureID, commandID: borrowedCommand)
-      )
+    expectThrowsError(try builder.register(crossFeatureManifest)) { error in
+      #expect((error as? FeatureRegistryError) == (.commandNotOwned(featureID: featureID, commandID: borrowedCommand)))
     }
   }
 
+  @Test
   func testFeatureAndTypedActionIdentifierShapesFailClosed() {
     let source = NetworkProbeFeatureModule().manifest
     let shortFeatureID = FeatureID("a")
@@ -133,13 +118,10 @@ final class FeatureRegistryTests: XCTestCase {
 
     for invalidFeatureID in [shortFeatureID, nestedFeatureID] {
       var builder = makeBuilder()
-      XCTAssertThrowsError(
+      expectThrowsError(
         try builder.register(replacing(source, id: invalidFeatureID))
       ) { error in
-        XCTAssertEqual(
-          error as? FeatureRegistryError,
-          .invalidIdentifier(kind: "FeatureID", value: invalidFeatureID.rawValue)
-        )
+        #expect((error as? FeatureRegistryError) == (.invalidIdentifier(kind: "FeatureID", value: invalidFeatureID.rawValue)))
       }
     }
 
@@ -150,44 +132,37 @@ final class FeatureRegistryTests: XCTestCase {
         FeatureCommandDescriptor(id: wrongKindCommand, displayName: "错误类型")
       ]
     )
-    XCTAssertThrowsError(try builder.register(wrongKindManifest)) { error in
-      XCTAssertEqual(
-        error as? FeatureRegistryError,
-        .commandNotOwned(featureID: source.id, commandID: wrongKindCommand)
-      )
+    expectThrowsError(try builder.register(wrongKindManifest)) { error in
+      #expect((error as? FeatureRegistryError) == (.commandNotOwned(featureID: source.id, commandID: wrongKindCommand)))
     }
   }
 
+  @Test
   func testUnknownPermissionAndEntitlementIDsFailClosed() {
     let source = NetworkProbeFeatureModule().manifest
     let unknownPermission = PermissionID("macos.camera")
     var permissionBuilder = makeBuilder()
 
-    XCTAssertThrowsError(
+    expectThrowsError(
       try permissionBuilder.register(
         replacing(source, requiredPermissions: [unknownPermission])
       )
     ) { error in
-      XCTAssertEqual(
-        error as? FeatureRegistryError,
-        .unsupportedPermissionID(unknownPermission)
-      )
+      #expect((error as? FeatureRegistryError) == (.unsupportedPermissionID(unknownPermission)))
     }
 
     let unknownEntitlement = EntitlementID("cn.tlww.aixlg.entitlement.typo")
     var entitlementBuilder = makeBuilder()
-    XCTAssertThrowsError(
+    expectThrowsError(
       try entitlementBuilder.register(
         replacing(source, accessPolicy: .anyOf([unknownEntitlement]))
       )
     ) { error in
-      XCTAssertEqual(
-        error as? FeatureRegistryError,
-        .unsupportedEntitlementID(unknownEntitlement)
-      )
+      #expect((error as? FeatureRegistryError) == (.unsupportedEntitlementID(unknownEntitlement)))
     }
   }
 
+  @Test
   func testCommandAndOperationOverridePoliciesFailClosed() {
     let source = makeGranularPolicyManifest()
     let inheritedCommand = source.commands[0]
@@ -199,15 +174,12 @@ final class FeatureRegistryTests: XCTestCase {
       requiredPermissions: [PermissionID("macos.camera")]
     )
     var unknownPermissionBuilder = makeBuilder()
-    XCTAssertThrowsError(
+    expectThrowsError(
       try unknownPermissionBuilder.register(
         replacing(source, commands: [commandWithUnknownPermission, source.commands[1]])
       )
     ) { error in
-      XCTAssertEqual(
-        error as? FeatureRegistryError,
-        .unsupportedPermissionID(PermissionID("macos.camera"))
-      )
+      #expect((error as? FeatureRegistryError) == (.unsupportedPermissionID(PermissionID("macos.camera"))))
     }
 
     let commandWithDuplicatePermission = FeatureCommandDescriptor(
@@ -216,15 +188,12 @@ final class FeatureRegistryTests: XCTestCase {
       requiredPermissions: [.screenRecording, .screenRecording]
     )
     var duplicatePermissionBuilder = makeBuilder()
-    XCTAssertThrowsError(
+    expectThrowsError(
       try duplicatePermissionBuilder.register(
         replacing(source, commands: [commandWithDuplicatePermission, source.commands[1]])
       )
     ) { error in
-      XCTAssertEqual(
-        error as? FeatureRegistryError,
-        .duplicatePermissionID(.screenRecording)
-      )
+      #expect((error as? FeatureRegistryError) == (.duplicatePermissionID(.screenRecording)))
     }
 
     let unknownEntitlement = EntitlementID("cn.tlww.aixlg.entitlement.typo")
@@ -234,7 +203,7 @@ final class FeatureRegistryTests: XCTestCase {
       accessPolicy: .anyOf([unknownEntitlement])
     )
     var unknownEntitlementBuilder = makeBuilder()
-    XCTAssertThrowsError(
+    expectThrowsError(
       try unknownEntitlementBuilder.register(
         replacing(
           source,
@@ -242,10 +211,7 @@ final class FeatureRegistryTests: XCTestCase {
         )
       )
     ) { error in
-      XCTAssertEqual(
-        error as? FeatureRegistryError,
-        .unsupportedEntitlementID(unknownEntitlement)
-      )
+      #expect((error as? FeatureRegistryError) == (.unsupportedEntitlementID(unknownEntitlement)))
     }
 
     let operationWithEmptyEntitlement = FeatureOperationDescriptor(
@@ -254,15 +220,12 @@ final class FeatureRegistryTests: XCTestCase {
       accessPolicy: .anyOf([])
     )
     var emptyEntitlementBuilder = makeBuilder()
-    XCTAssertThrowsError(
+    expectThrowsError(
       try emptyEntitlementBuilder.register(
         replacing(source, operations: [operationWithEmptyEntitlement, source.operations[1]])
       )
     ) { error in
-      XCTAssertEqual(
-        error as? FeatureRegistryError,
-        .emptyEntitlementAlternatives(featureID: source.id)
-      )
+      #expect((error as? FeatureRegistryError) == (.emptyEntitlementAlternatives(featureID: source.id)))
     }
 
     let operationWithDuplicateEntitlement = FeatureOperationDescriptor(
@@ -271,7 +234,7 @@ final class FeatureRegistryTests: XCTestCase {
       accessPolicy: .anyOf([.macFull, .macFull])
     )
     var duplicateEntitlementBuilder = makeBuilder()
-    XCTAssertThrowsError(
+    expectThrowsError(
       try duplicateEntitlementBuilder.register(
         replacing(
           source,
@@ -279,10 +242,11 @@ final class FeatureRegistryTests: XCTestCase {
         )
       )
     ) { error in
-      XCTAssertEqual(error as? FeatureRegistryError, .duplicateEntitlementID(.macFull))
+      #expect((error as? FeatureRegistryError) == (.duplicateEntitlementID(.macFull)))
     }
   }
 
+  @Test
   func testDecodedInvalidManifestStillPassesThroughRegistryValidation() throws {
     let source = replacing(
       NetworkProbeFeatureModule().manifest,
@@ -292,14 +256,12 @@ final class FeatureRegistryTests: XCTestCase {
     let decoded = try JSONDecoder().decode(FeatureManifest.self, from: data)
     var builder = makeBuilder()
 
-    XCTAssertThrowsError(try builder.register(decoded)) { error in
-      XCTAssertEqual(
-        error as? FeatureRegistryError,
-        .invalidIdentifier(kind: "FeatureID", value: source.id.rawValue)
-      )
+    expectThrowsError(try builder.register(decoded)) { error in
+      #expect((error as? FeatureRegistryError) == (.invalidIdentifier(kind: "FeatureID", value: source.id.rawValue)))
     }
   }
 
+  @Test
   func testFreeFeaturesAreAlwaysAllowedByEntitlementRouter() throws {
     let freeFeatureID = FeatureID("cn.tlww.aixlg.hotkeys.feature.free-example")
     let freeManifest = FeatureManifest(
@@ -323,25 +285,20 @@ final class FeatureRegistryTests: XCTestCase {
 
     let decision = try registry.accessScope(for: freeFeatureID).decision(for: .start)
 
-    XCTAssertEqual(decision, .allowed)
+    #expect((decision) == (.allowed))
   }
 
+  @Test
   func testCommandAndOperationRequirementsInheritAndOverrideFeatureDefaults() throws {
     let manifest = makeGranularPolicyManifest()
     var builder = makeBuilder(grantedEntitlements: [], grantedPermissions: [])
     try builder.register(manifest)
     let scope = try builder.build().accessScope(for: manifest.id)
 
-    XCTAssertEqual(
-      scope.decision(for: .execute(manifest.commands[0].id)),
-      .entitlementDenied([.macFull], "没有匹配权益")
-    )
-    XCTAssertEqual(
-      scope.decision(for: .perform(manifest.operations[0].id)),
-      .entitlementDenied([.macFull], "没有匹配权益")
-    )
-    XCTAssertEqual(scope.decision(for: .execute(manifest.commands[1].id)), .allowed)
-    XCTAssertEqual(scope.decision(for: .perform(manifest.operations[1].id)), .allowed)
+    #expect((scope.decision(for: .execute(manifest.commands[0].id))) == (.entitlementDenied([.macFull], "没有匹配权益")))
+    #expect((scope.decision(for: .perform(manifest.operations[0].id))) == (.entitlementDenied([.macFull], "没有匹配权益")))
+    #expect((scope.decision(for: .execute(manifest.commands[1].id))) == (.allowed))
+    #expect((scope.decision(for: .perform(manifest.operations[1].id))) == (.allowed))
 
     var entitlementOnlyBuilder = makeBuilder(
       grantedEntitlements: [],
@@ -349,10 +306,7 @@ final class FeatureRegistryTests: XCTestCase {
     )
     try entitlementOnlyBuilder.register(manifest)
     let entitlementOnlyScope = try entitlementOnlyBuilder.build().accessScope(for: manifest.id)
-    XCTAssertEqual(
-      entitlementOnlyScope.decision(for: .execute(manifest.commands[0].id)),
-      .entitlementDenied([.macFull], "没有匹配权益")
-    )
+    #expect((entitlementOnlyScope.decision(for: .execute(manifest.commands[0].id))) == (.entitlementDenied([.macFull], "没有匹配权益")))
 
     var permissionOnlyBuilder = makeBuilder(
       grantedEntitlements: [.macFull],
@@ -360,82 +314,71 @@ final class FeatureRegistryTests: XCTestCase {
     )
     try permissionOnlyBuilder.register(manifest)
     let permissionOnlyScope = try permissionOnlyBuilder.build().accessScope(for: manifest.id)
-    XCTAssertEqual(
-      permissionOnlyScope.decision(for: .execute(manifest.commands[0].id)),
-      .permissionDenied(.screenRecording, "缺少系统权限")
-    )
+    #expect((permissionOnlyScope.decision(for: .execute(manifest.commands[0].id))) == (.permissionDenied(.screenRecording, "缺少系统权限")))
   }
 
+  @Test
   func testYoumuManifestKeepsAllEightCommandsInBasePackage() {
     let manifest = YoumuFeatureModule().manifest
 
-    XCTAssertEqual(manifest.manifestVersion, 4)
-    XCTAssertEqual(manifest.accessPolicy, .free)
-    XCTAssertEqual(manifest.requiredPermissions, [.screenRecording])
-    XCTAssertEqual(manifest.commands.count, 8)
-    XCTAssertEqual(
-      Set(manifest.commands.map(\.id)),
-      YoumuFeatureIDs.freeCommands.union(YoumuFeatureIDs.proCommands)
-    )
-    XCTAssertEqual(YoumuFeatureIDs.freeCommands.count, 8)
-    XCTAssertEqual(YoumuFeatureIDs.proCommands.count, 0)
+    #expect((manifest.manifestVersion) == (4))
+    #expect((manifest.accessPolicy) == (.free))
+    #expect((manifest.requiredPermissions) == ([.screenRecording]))
+    #expect((manifest.commands.count) == (8))
+    #expect((Set(manifest.commands.map(\.id))) == (YoumuFeatureIDs.freeCommands.union(YoumuFeatureIDs.proCommands)))
+    #expect((YoumuFeatureIDs.freeCommands.count) == (8))
+    #expect((YoumuFeatureIDs.proCommands.count) == (0))
 
     for command in manifest.commands where YoumuFeatureIDs.bundledCommands.contains(command.id) {
-      XCTAssertTrue(command.accessPolicy == nil || command.accessPolicy == .free)
+      #expect(command.accessPolicy == nil || command.accessPolicy == .free)
       if command.id == YoumuFeatureIDs.longScreenshot {
-        XCTAssertEqual(command.requiredPermissions, [.screenRecording, .inputMonitoring])
+        #expect((command.requiredPermissions) == ([.screenRecording, .inputMonitoring]))
       } else if command.id == YoumuFeatureIDs.pinScreenshot {
-        XCTAssertEqual(command.requiredPermissions, [])
+        #expect((command.requiredPermissions) == ([]))
       } else {
-        XCTAssertNil(command.requiredPermissions)
+        #expect((command.requiredPermissions) == nil)
       }
     }
 
     let longScreenshot = manifest.commands.first { $0.id == YoumuFeatureIDs.longScreenshot }
-    XCTAssertEqual(longScreenshot?.requiredPermissions, [.screenRecording, .inputMonitoring])
+    #expect((longScreenshot?.requiredPermissions) == ([.screenRecording, .inputMonitoring]))
     let pinScreenshot = manifest.commands.first { $0.id == YoumuFeatureIDs.pinScreenshot }
-    XCTAssertEqual(pinScreenshot?.requiredPermissions, [])
-    XCTAssertEqual(
-      manifest.windows,
-      [
+    #expect((pinScreenshot?.requiredPermissions) == ([]))
+    #expect((manifest.windows) == ([
         FeatureWindowDescriptor(
           id: YoumuFeatureIDs.controlWindow,
           role: .primary,
           requiredPermissions: [],
           accessPolicy: .free
         )
-      ]
-    )
+      ]))
   }
 
+  @Test
   func testYoumuControlWindowOpensWithoutCapturePermissionOrProEntitlement() throws {
     var builder = makeBuilder(grantedEntitlements: [], grantedPermissions: [])
     try builder.register(YoumuFeatureModule())
     let registry = builder.build()
     let scope = try registry.accessScope(for: YoumuFeatureIDs.feature)
 
-    XCTAssertEqual(
-      registry.owner(of: YoumuFeatureIDs.controlWindow),
-      YoumuFeatureIDs.feature
-    )
-    XCTAssertEqual(scope.decision(for: .open(YoumuFeatureIDs.controlWindow)), .allowed)
-    XCTAssertEqual(
-      scope.decision(for: .execute(YoumuFeatureIDs.quickSnapshot)),
-      .permissionDenied(.screenRecording, "缺少系统权限")
-    )
+    #expect((registry.owner(of: YoumuFeatureIDs.controlWindow)) == (YoumuFeatureIDs.feature))
+    #expect((scope.decision(for: .open(YoumuFeatureIDs.controlWindow))) == (.allowed))
+    #expect((scope.decision(for: .execute(YoumuFeatureIDs.quickSnapshot))) == (.permissionDenied(.screenRecording, "缺少系统权限")))
   }
 
+  @Test
   func testYoumuBaseCommandsAreFreeWithoutAnAccount() throws {
     var builder = makeBuilder(grantedEntitlements: [])
     try builder.register(YoumuFeatureModule())
     let scope = try builder.build().accessScope(for: YoumuFeatureIDs.feature)
 
     for commandID in YoumuFeatureIDs.bundledCommands {
-      XCTAssertTrue(scope.decision(for: .execute(commandID)).isAllowed)
+      #expect(scope.decision(for: .execute(commandID)).isAllowed)
     }
-    XCTAssertEqual(YoumuFeatureIDs.proCommands.count, 0)
+    #expect((YoumuFeatureIDs.proCommands.count) == (0))
   }
 
+  @Test
   func testBaseAccessStillConsultsSystemPermissions() throws {
     let permissionCalls = SynchronousInvocationCounter()
     var builder = FeatureRegistryBuilder(
@@ -450,48 +393,37 @@ final class FeatureRegistryTests: XCTestCase {
     try builder.register(YoumuFeatureModule())
     let scope = try builder.build().accessScope(for: YoumuFeatureIDs.feature)
 
-    XCTAssertEqual(
-      scope.decision(for: .execute(YoumuFeatureIDs.longScreenshot)),
-      .permissionDenied(.screenRecording, "缺少系统权限")
-    )
-    XCTAssertEqual(permissionCalls.value(), 1)
+    #expect((scope.decision(for: .execute(YoumuFeatureIDs.longScreenshot))) == (.permissionDenied(.screenRecording, "缺少系统权限")))
+    #expect((permissionCalls.value()) == (1))
   }
 
+  @Test
   func testPinScreenshotOverridesFeatureScreenRecordingRequirement() throws {
     var builder = makeBuilder(grantedEntitlements: [.macFull], grantedPermissions: [])
     try builder.register(YoumuFeatureModule())
     let scope = try builder.build().accessScope(for: YoumuFeatureIDs.feature)
 
-    XCTAssertEqual(
-      scope.decision(for: .execute(YoumuFeatureIDs.quickSnapshot)),
-      .permissionDenied(.screenRecording, "缺少系统权限")
-    )
-    XCTAssertEqual(scope.decision(for: .execute(YoumuFeatureIDs.pinScreenshot)), .allowed)
+    #expect((scope.decision(for: .execute(YoumuFeatureIDs.quickSnapshot))) == (.permissionDenied(.screenRecording, "缺少系统权限")))
+    #expect((scope.decision(for: .execute(YoumuFeatureIDs.pinScreenshot))) == (.allowed))
   }
 
+  @Test
   func testBaseNetworkProbeStillDeniesUndeclaredActions() throws {
     var builder = makeBuilder(grantedEntitlements: [.macFull])
     try builder.register(NetworkProbeFeatureModule())
     let registry = builder.build()
     let scope = try registry.accessScope(for: NetworkProbeFeatureIDs.feature)
 
-    XCTAssertEqual(
-      scope.decision(for: .start),
-      .allowed
-    )
-    XCTAssertEqual(
-      scope.decision(for: .execute(NetworkProbeFeatureIDs.openCommand)),
-      .allowed
-    )
-    XCTAssertFalse(
-      scope.decision(
+    #expect((scope.decision(for: .start)) == (.allowed))
+    #expect((scope.decision(for: .execute(NetworkProbeFeatureIDs.openCommand))) == (.allowed))
+    #expect(!(scope.decision(
         for: .execute(
           CommandID("cn.tlww.aixlg.hotkeys.feature.network-probe.command.undeclared")
         )
-      ).isAllowed
-    )
+      ).isAllowed))
   }
 
+  @Test
   func testLegacyYoumuAccountAlsoUsesFreeHostTools() throws {
     var builder = makeBuilder(grantedEntitlements: [.legacyYoumuFull])
     let youmuManifest = YoumuFeatureModule().manifest
@@ -501,14 +433,13 @@ final class FeatureRegistryTests: XCTestCase {
 
     let youmuScope = try registry.accessScope(for: youmuManifest.id)
     for commandID in YoumuFeatureIDs.bundledCommands {
-      XCTAssertTrue(youmuScope.decision(for: .execute(commandID)).isAllowed)
+      #expect(youmuScope.decision(for: .execute(commandID)).isAllowed)
     }
-    XCTAssertTrue(
-      try registry.accessScope(for: NetworkProbeFeatureIDs.feature).decision(for: .start)
-        .isAllowed
-    )
+    #expect(try registry.accessScope(for: NetworkProbeFeatureIDs.feature).decision(for: .start)
+        .isAllowed)
   }
 
+  @Test
   func testMacFullEntitlementAllowsYoumu() throws {
     var builder = makeBuilder(grantedEntitlements: [.macFull])
     let youmuManifest = YoumuFeatureModule().manifest
@@ -517,10 +448,11 @@ final class FeatureRegistryTests: XCTestCase {
 
     let scope = try registry.accessScope(for: youmuManifest.id)
     for commandID in YoumuFeatureIDs.freeCommands.union(YoumuFeatureIDs.proCommands) {
-      XCTAssertEqual(scope.decision(for: .execute(commandID)), .allowed)
+      #expect((scope.decision(for: .execute(commandID))) == (.allowed))
     }
   }
 
+  @Test
   func testAllBundledCommandsAllowMissingBaseEntitlement() throws {
     var builder = makeBuilder(grantedEntitlements: [])
     let youmuManifest = YoumuFeatureModule().manifest
@@ -529,11 +461,12 @@ final class FeatureRegistryTests: XCTestCase {
 
     let scope = try registry.accessScope(for: youmuManifest.id)
     for command in youmuManifest.commands {
-      XCTAssertTrue(scope.decision(for: .execute(command.id)).isAllowed)
+      #expect(scope.decision(for: .execute(command.id)).isAllowed)
     }
-    XCTAssertEqual(YoumuFeatureIDs.proCommands.count, 0)
+    #expect((YoumuFeatureIDs.proCommands.count) == (0))
   }
 
+  @Test
   func testFeatureScopeRejectsAnotherRegisteredFeaturesActions() throws {
     var builder = makeBuilder()
     let youmuManifest = YoumuFeatureModule().manifest
@@ -542,17 +475,12 @@ final class FeatureRegistryTests: XCTestCase {
     let registry = builder.build()
     let youmuScope = try registry.accessScope(for: YoumuFeatureIDs.feature)
 
-    XCTAssertFalse(
-      youmuScope.decision(for: .execute(NetworkProbeFeatureIDs.openCommand)).isAllowed
-    )
-    XCTAssertFalse(
-      youmuScope.decision(for: .open(NetworkProbeFeatureIDs.mainWindow)).isAllowed
-    )
-    XCTAssertFalse(
-      youmuScope.decision(for: .perform(NetworkProbeFeatureIDs.runProbe)).isAllowed
-    )
+    #expect(!(youmuScope.decision(for: .execute(NetworkProbeFeatureIDs.openCommand)).isAllowed))
+    #expect(!(youmuScope.decision(for: .open(NetworkProbeFeatureIDs.mainWindow)).isAllowed))
+    #expect(!(youmuScope.decision(for: .perform(NetworkProbeFeatureIDs.runProbe)).isAllowed))
   }
 
+  @Test
   func testPaidPolicyMustDeclareAtLeastOneEntitlement() {
     let source = NetworkProbeFeatureModule().manifest
     let invalidManifest = FeatureManifest(
@@ -572,26 +500,22 @@ final class FeatureRegistryTests: XCTestCase {
     )
     var builder = makeBuilder()
 
-    XCTAssertThrowsError(try builder.register(invalidManifest)) { error in
-      XCTAssertEqual(
-        error as? FeatureRegistryError,
-        .emptyEntitlementAlternatives(featureID: source.id)
-      )
+    expectThrowsError(try builder.register(invalidManifest)) { error in
+      #expect((error as? FeatureRegistryError) == (.emptyEntitlementAlternatives(featureID: source.id)))
     }
   }
 
+  @Test
   func testUnknownFeatureCannotReceiveAccessScope() {
     let registry = makeBuilder().build()
     let unknown = FeatureID("cn.tlww.aixlg.hotkeys.feature.unknown")
 
-    XCTAssertThrowsError(try registry.accessScope(for: unknown)) { error in
-      XCTAssertEqual(
-        error as? FeatureRegistryError,
-        .unknownFeatureID(unknown)
-      )
+    expectThrowsError(try registry.accessScope(for: unknown)) { error in
+      #expect((error as? FeatureRegistryError) == (.unknownFeatureID(unknown)))
     }
   }
 
+  @Test
   func testDispatcherNeverRunsDeniedHandlerAndRunsAllowedHandlerExactlyOnce() async throws {
     let counter = InvocationCounter()
     let registration = FeatureActionHandlerRegistration(
@@ -612,12 +536,9 @@ final class FeatureRegistryTests: XCTestCase {
       action: .execute(YoumuFeatureIDs.longScreenshot)
     )
 
-    XCTAssertEqual(
-      deniedResult,
-      .permissionDenied(.screenRecording, "缺少系统权限")
-    )
+    #expect((deniedResult) == (.permissionDenied(.screenRecording, "缺少系统权限")))
     let deniedCount = await counter.value()
-    XCTAssertEqual(deniedCount, 0)
+    #expect((deniedCount) == (0))
 
     var permissionDeniedBuilder = makeBuilder(
       grantedEntitlements: [.macFull],
@@ -633,12 +554,9 @@ final class FeatureRegistryTests: XCTestCase {
       action: .execute(YoumuFeatureIDs.longScreenshot)
     )
 
-    XCTAssertEqual(
-      permissionDeniedResult,
-      .permissionDenied(.inputMonitoring, "缺少系统权限")
-    )
+    #expect((permissionDeniedResult) == (.permissionDenied(.inputMonitoring, "缺少系统权限")))
     let permissionDeniedCount = await counter.value()
-    XCTAssertEqual(permissionDeniedCount, 0)
+    #expect((permissionDeniedCount) == (0))
 
     var allowedBuilder = makeBuilder(grantedEntitlements: [.macFull])
     try allowedBuilder.register(YoumuFeatureModule())
@@ -651,11 +569,12 @@ final class FeatureRegistryTests: XCTestCase {
       action: .execute(YoumuFeatureIDs.longScreenshot)
     )
 
-    XCTAssertEqual(allowedResult, .executed)
+    #expect((allowedResult) == (.executed))
     let allowedCount = await counter.value()
-    XCTAssertEqual(allowedCount, 1)
+    #expect((allowedCount) == (1))
   }
 
+  @Test
   func testDispatcherRejectsUnknownAndCrossFeatureActionsBeforeHandler() async throws {
     let counter = InvocationCounter()
     var builder = makeBuilder()
@@ -682,12 +601,13 @@ final class FeatureRegistryTests: XCTestCase {
       action: .execute(NetworkProbeFeatureIDs.openCommand)
     )
 
-    XCTAssertEqual(unknownResult, .denied("功能尚未注册，动作未执行。"))
-    XCTAssertEqual(crossFeatureResult, .denied("插件试图执行未在自身清单声明的动作。"))
+    #expect((unknownResult) == (.denied("功能尚未注册，动作未执行。")))
+    #expect((crossFeatureResult) == (.denied("插件试图执行未在自身清单声明的动作。")))
     let invocationCount = await counter.value()
-    XCTAssertEqual(invocationCount, 0)
+    #expect((invocationCount) == (0))
   }
 
+  @Test
   func testBuiltRegistryIsAnImmutableSnapshot() throws {
     var builder = makeBuilder()
     try builder.register(NetworkProbeFeatureModule())
@@ -696,9 +616,9 @@ final class FeatureRegistryTests: XCTestCase {
     try builder.register(YoumuFeatureModule())
     let secondSnapshot = builder.build()
 
-    XCTAssertEqual(firstSnapshot.manifests.count, 1)
-    XCTAssertEqual(secondSnapshot.manifests.count, 2)
-    XCTAssertNil(firstSnapshot.manifest(for: YoumuFeatureIDs.feature))
+    #expect((firstSnapshot.manifests.count) == (1))
+    #expect((secondSnapshot.manifests.count) == (2))
+    #expect((firstSnapshot.manifest(for: YoumuFeatureIDs.feature)) == nil)
   }
 
   private func makeBuilder(

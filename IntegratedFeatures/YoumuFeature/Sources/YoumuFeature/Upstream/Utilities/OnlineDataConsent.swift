@@ -7,9 +7,12 @@ enum OnlineDataPurpose: String, CaseIterable, Codable, Sendable {
     case edgeSpeech
 
     var isTranslation: Bool { self != .edgeSpeech }
+    // Changing the shared service's downstream recipient requires a fresh informed choice.
+    // Existing custom-API and speech consent is unaffected.
+    var consentVersion: Int { self == .sharedTranslation ? 2 : 1 }
 
     var sharedTranslationNotice: String {
-        "所选文字将通过小龙哥 Mac 哲学服务发送到智谱进行翻译，截图留在本机。无需登录或提供密钥，模型费用由我们承担。匿名编号仅用于限制使用量，我们的服务不保存原文或译文。拒绝后不会发送，可以选择 Apple 本机翻译。"
+        "所选文字将通过小龙哥 Mac 哲学服务发送到阿里云百炼（千问）进行翻译，截图留在本机。无需登录或提供密钥，模型费用由我们承担。匿名编号仅用于限制使用量，我们的服务不保存原文或译文。拒绝后不会发送，可以选择 Apple 本机翻译。"
     }
 
     var defaultsKey: String {
@@ -81,7 +84,7 @@ struct OnlineConsentPolicy {
         guard let storedValue,
               let data = storedValue.data(using: .utf8),
               let record = try? JSONDecoder().decode(StoredOnlineConsent.self, from: data),
-              record.version == StoredOnlineConsent.currentVersion,
+              record.version == purpose.consentVersion,
               record.purpose == purpose,
               record.origin == origin else {
             // 旧版只保存 "allowed" / "denied"，没有 origin，不得自动继承。
@@ -100,7 +103,7 @@ struct OnlineConsentPolicy {
         origin: OnlineDataOrigin
     ) -> String? {
         let record = StoredOnlineConsent(
-            version: StoredOnlineConsent.currentVersion,
+            version: purpose.consentVersion,
             purpose: purpose,
             origin: origin,
             decision: decision

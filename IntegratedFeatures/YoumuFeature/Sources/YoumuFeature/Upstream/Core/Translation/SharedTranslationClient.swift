@@ -10,7 +10,7 @@ enum SharedTranslationError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .selectionTooLarge: return "这次文字较多，请缩小选区后再翻译。"
-        case .busy: return "翻译请求较多，请稍后重试；也可以在游目设置中选择 Apple 本机翻译。"
+        case .busy: return "翻译请求较多，请稍后重试；也可以在截图设置中选择 Apple 本机翻译。"
         case .unavailable: return "共享翻译暂时不可用，请稍后重试，或选择 Apple 本机翻译。"
         case .invalidResponse: return "译文不完整，已停止本次翻译，请重试。"
         case .unsupportedLanguage: return "请先选择要翻译成的语言。"
@@ -20,27 +20,35 @@ enum SharedTranslationError: LocalizedError {
 
 /// The vendor credential never exists in the client. Every batch remains cancellable.
 final class SharedTranslationClient {
-    static let endpoint = URL(string: "https://aixlg.com/api/translation/v1/translate")!
+    static let endpoint = URL(string: "https://aixlg.com/api/translation/v2/translate")!
     typealias Transport = @MainActor (URLRequest, URLSessionConfiguration) async throws -> (Data, URLResponse)
     private let transport: Transport
     private let defaults: UserDefaults?
+    private let cache: TranslationResponseCache
+    private static let connection = SharedTranslationConnection()
 
-    init(defaults: UserDefaults? = nil, transport: @escaping Transport = SharedTranslationClient.load) {
+    init(defaults: UserDefaults? = nil, cache: TranslationResponseCache? = nil, transport: @escaping Transport = SharedTranslationClient.load) {
         self.defaults = defaults
+        self.cache = cache ?? TranslationResponseCache()
         self.transport = transport
     }
 
     static func load(_ request: URLRequest, _ configuration: URLSessionConfiguration) async throws -> (Data, URLResponse) {
-        let origin = OnlineDataOrigin.normalizedHTTPS(from: Self.endpoint)!
-        return try await TranslationStreamingResponseLoader(originalOrigin: origin)
-            .load(request: request, configuration: configuration)
+        try await connection.load(request)
     }
     private struct Request: Encodable {
         let texts: [String]
         let target: String
         let deviceId: String
     }
-    private struct Response: Decodable { let translations: [String] }
+    private struct Response: Decodable {
+        let translations: [String]
+        let failedIndices: [Int]?
+    }
+    struct Block: Equatable {
+        let text: String
+        let failed: Bool
+    }
 
     static func languageCode(_ language: Language) throws -> String {
         switch language {
@@ -89,22 +97,47 @@ final class SharedTranslationClient {
     }
 
     static func decode(_ data: Data, expectedCount: Int) throws -> [String] {
+        let blocks = try decodeBlocks(data, expectedCount: expectedCount)
+        guard !blocks.contains(where: \.failed) else { throw SharedTranslationError.invalidResponse }
+        return blocks.map(\.text)
+    }
+
+    static func decodeBlocks(_ data: Data, expectedCount: Int) throws -> [Block] {
         guard data.count <= 65_536,
               let decoded = try? JSONDecoder().decode(Response.self, from: data),
               decoded.translations.count == expectedCount,
               decoded.translations.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
             throw SharedTranslationError.invalidResponse
         }
-        return decoded.translations
+        let failed = decoded.failedIndices ?? []
+        guard Set(failed).count == failed.count,
+              failed.allSatisfy({ (0..<expectedCount).contains($0) }) else {
+            throw SharedTranslationError.invalidResponse
+        }
+        let indices = Set(failed)
+        return decoded.translations.enumerated().map { Block(text: $0.element, failed: indices.contains($0.offset)) }
     }
 
     func translate(_ texts: [String], target: Language) async throws -> [String] {
+        let blocks = try await translateBlocks(texts, target: target)
+        guard !blocks.contains(where: \.failed) else { throw SharedTranslationError.invalidResponse }
+        return blocks.map(\.text)
+    }
+
+    func translateBlocks(_ texts: [String], target: Language) async throws -> [Block] {
+        try Task.checkCancellation()
         let language = try Self.languageCode(target)
         let batches = try Self.batches(texts)
         let id = Self.deviceID(defaults: defaults ?? YoumuFeatureEnvironmentStore.shared.userDefaults())
-        var result: [String] = []
+        var result: [Block] = []
         for batch in batches {
             try Task.checkCancellation()
+            let key = TranslationResponseCache.Key(texts: batch, target: language)
+            if let cached = cache.value(for: key) {
+                try Task.checkCancellation()
+                result += cached.map { Block(text: $0, failed: false) }
+                continue
+            }
             var request = URLRequest(url: Self.endpoint)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -119,7 +152,16 @@ final class SharedTranslationClient {
             try Task.checkCancellation()
             guard let response = response as? HTTPURLResponse else { throw SharedTranslationError.unavailable }
             switch response.statusCode {
-            case 200: result += try Self.decode(data, expectedCount: batch.count)
+            case 200:
+                let translated = try Self.decodeBlocks(data, expectedCount: batch.count)
+                try Task.checkCancellation()
+                if !translated.contains(where: \.failed) {
+                    cache.insert(translated.map(\.text), for: key)
+                }
+                // A flagged block always uses our exact source, never an unchecked server value.
+                result += translated.enumerated().map {
+                    $0.element.failed ? Block(text: batch[$0.offset], failed: true) : $0.element
+                }
             case 413: throw SharedTranslationError.selectionTooLarge
             case 429, 503: throw SharedTranslationError.busy
             case 502: throw SharedTranslationError.invalidResponse

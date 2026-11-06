@@ -167,7 +167,7 @@ final class ScreenCaptureService {
         // macOS 26：无屏幕录制权限时调截图 API 会 SIGSEGV，必须先检查
         guard Permissions.screenRecordingStatus == .granted else {
             Permissions.openScreenRecordingSettingsIfNeeded()
-            ToastWindow.show(message: "请在系统设置中开启游目的录屏与声音权限")
+            ToastWindow.show(message: "请在系统设置中为“小龙哥Mac哲学”开启屏幕录制权限。")
             return
         }
         guard let owner = sessions.begin(mode: mode) else { return }
@@ -592,13 +592,14 @@ final class ScreenCaptureService {
                 }
                 let pasteboard = NSPasteboard.general
                 pasteboard.clearContents()
-                if pasteboard.setString(text, forType: .string) { self.successfulUse?() }
-                ToastWindow.show(message: "已复制 \(text.count) 个字符")
+                let copySucceeded = pasteboard.setString(text, forType: .string)
+                if copySucceeded { self.successfulUse?() }
                 guard self.sessions.transition(owner, to: .presenting) else { return }
                 // 弹出可编辑迷你框（编辑后可重新复制、可朗读）
                 OCRCopyPanelController.show(
                     text: text,
                     near: region,
+                    copySucceeded: copySucceeded,
                     owner: owner,
                     onDismiss: self.presentationDidDismiss
                 )
@@ -689,7 +690,10 @@ final class ScreenCaptureService {
                 }
 
                 let settings = AppSettings.load()
-                let sourceText = ocrResults.map(\.text).joined(separator: "\n")
+                guard !ocrResults.contains(where: { OCRService.hasUncertainLiteral($0.text) }) else {
+                    throw OCRTranslationPreparationError.uncertainCharacters
+                }
+                let sourceText = OCRService.shared.assembleText(from: ocrResults)
                 let translatedText = try await TranslationService.shared.translate(
                     text: sourceText,
                     targetLanguage: settings.targetLanguage

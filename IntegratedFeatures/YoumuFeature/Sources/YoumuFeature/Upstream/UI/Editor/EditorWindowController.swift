@@ -120,7 +120,7 @@ class EditorWindowController: NSObject {
         let win = EditorWindow(
             contentRect: NSRect(origin: .zero, size: contentSize)
         )
-        win.title = "游目 · 标注"
+        win.title = "截图标注"
         win.contentView = container
         win.minSize = NSSize(width: 720, height: 460)
         win.delegate = self

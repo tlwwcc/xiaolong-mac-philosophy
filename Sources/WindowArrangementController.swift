@@ -2,8 +2,20 @@ import AppKit
 import ApplicationServices
 import Foundation
 
+enum WindowSplitPreference {
+  static let key = "windowSplitLeftPercent"
+  static let defaultLeftPercent = 60
+  static let range = 10...90
+
+  static var leftPercent: Int {
+    let value = UserDefaults.standard.object(forKey: key) as? Int ?? defaultLeftPercent
+    return range.contains(value) ? value : defaultLeftPercent
+  }
+}
+
 enum WindowArrangementAction: String, Sendable {
   case leftHalf, rightHalf, topHalf, bottomHalf
+  case leftProportional, rightProportional
   case topLeft, topRight, bottomLeft, bottomRight
   case maximize, center, minimize, nativeFullScreen
 }
@@ -42,23 +54,34 @@ enum WindowArrangementSelection: Sendable {
   case temporarilyUnavailable(String)
 }
 
-/// All backend methods run on the controller's private serial queue. The AX implementation keeps
+/// Backend entry points run on the private serial queue; local AppKit work hops to main. AX keeps
 /// the exact element alive; it never translates that element into a changing window-array index.
 protocol WindowArrangementBackend: AnyObject, Sendable {
   func isCurrent(_ app: WindowArrangementApplication) -> Bool
   func selectWindow(_ app: WindowArrangementApplication) -> WindowArrangementSelection
   func readWindow(_ id: String) -> WindowArrangementWindow?
+  func readFrame(_ id: String) -> CGRect?
   func stillOwnsWindow(_ id: String) -> Bool
   func readFullScreen(_ id: String) -> Bool?
   func setSize(_ size: CGSize, window: String) -> Bool
   func setPosition(_ point: CGPoint, window: String) -> Bool
   func setMinimized(_ value: Bool, window: String) -> Bool
   func setFullScreen(_ value: Bool, window: String) -> Bool
+  /// nil means this backend needs the checked AX size/position sequence.
+  func setFrameDirectly(
+    _ frame: CGRect, window: String,
+    isValid: @escaping @Sendable () -> Bool
+  ) -> Bool?
 }
 
 extension WindowArrangementBackend {
+  func readFrame(_ id: String) -> CGRect? { readWindow(id)?.frame }
   func stillOwnsWindow(_ id: String) -> Bool { true }
   func readFullScreen(_ id: String) -> Bool? { readWindow(id)?.fullScreen }
+  func setFrameDirectly(
+    _ frame: CGRect, window: String,
+    isValid: @escaping @Sendable () -> Bool
+  ) -> Bool? { nil }
 }
 
 enum WindowArrangementGeometry {
@@ -92,6 +115,12 @@ enum WindowArrangementGeometry {
       return CGRect(
         x: workArea.minX + left, y: workArea.minY,
         width: workArea.width - left, height: workArea.height)
+    case .leftProportional, .rightProportional:
+      let leftWidth = floor(workArea.width * CGFloat(WindowSplitPreference.leftPercent) / 100)
+      let isLeft = action == .leftProportional
+      return CGRect(
+        x: isLeft ? workArea.minX : workArea.minX + leftWidth, y: workArea.minY,
+        width: isLeft ? leftWidth : workArea.width - leftWidth, height: workArea.height)
     case .topHalf:
       return CGRect(x: workArea.minX, y: workArea.minY, width: workArea.width, height: top)
     case .bottomHalf:
@@ -114,8 +143,8 @@ enum WindowArrangementGeometry {
         width: workArea.width - left, height: workArea.height - top)
     case .center:
       return CGRect(
-        x: workArea.midX - current.width / 2, y: workArea.midY - current.height / 2,
-        width: current.width, height: current.height)
+        x: workArea.minX + workArea.width * 0.14, y: workArea.minY + workArea.height * 0.14,
+        width: workArea.width * 0.72, height: workArea.height * 0.72)
     case .maximize, .minimize, .nativeFullScreen:
       return workArea
     }
@@ -127,7 +156,7 @@ enum WindowArrangementGeometry {
     let x: CGFloat
     let y: CGFloat
     switch action {
-    case .rightHalf, .topRight, .bottomRight: x = max(workArea.minX, workArea.maxX - size.width)
+    case .rightHalf, .rightProportional, .topRight, .bottomRight: x = max(workArea.minX, workArea.maxX - size.width)
     case .center: x = workArea.midX - size.width / 2
     default: x = desired.minX
     }
@@ -137,19 +166,6 @@ enum WindowArrangementGeometry {
     default: y = desired.minY
     }
     return CGRect(x: x, y: y, width: size.width, height: size.height)
-  }
-
-  static func restored(_ saved: CGRect?, in area: CGRect) -> CGRect {
-    let source =
-      saved
-      ?? CGRect(
-        x: area.midX - area.width * 0.36, y: area.midY - area.height * 0.36,
-        width: area.width * 0.72, height: area.height * 0.72)
-    let width = min(max(1, source.width), area.width)
-    let height = min(max(1, source.height), area.height)
-    return CGRect(
-      x: min(max(source.minX, area.minX), area.maxX - width),
-      y: min(max(source.minY, area.minY), area.maxY - height), width: width, height: height)
   }
 
   private static func intersectionArea(_ a: CGRect, _ b: CGRect) -> CGFloat {
@@ -168,18 +184,8 @@ final class WindowArrangementController: @unchecked Sendable {
   typealias Completion = @MainActor @Sendable (WindowArrangementResult) -> Void
   typealias ScreenProvider = @MainActor @Sendable () -> [WindowArrangementScreen]
 
-  private struct Submission {
-    let generation: UInt64
-    let chain: UInt64
-    let count: Int
-    let action: WindowArrangementAction
-    let application: WindowArrangementApplication
-  }
-
   private struct Request: Sendable {
     let generation: UInt64
-    let chain: UInt64
-    let count: Int
     let action: WindowArrangementAction
     let application: WindowArrangementApplication
     let screens: [WindowArrangementScreen]
@@ -187,35 +193,30 @@ final class WindowArrangementController: @unchecked Sendable {
     let completion: Completion
   }
 
-  private struct ToggleBaseline {
-    let chain: UInt64
-    let windowID: String
-    let maximized: Bool
-    let fullScreen: Bool
-    let originalFrame: CGRect
-    let initialCount: Int
-  }
-
   private struct Placement: Sendable {
     let request: Request
     let windowID: String
     let desired: CGRect
     let workArea: CGRect
-    let clearRestore: Bool
     let deadline: TimeInterval
     let positionOnly: Bool
+    let originalSize: CGSize
+    let alignment: WindowArrangementAction
+    let supersedesResize: Bool
+    let settleUntil: TimeInterval
   }
 
   private let queue = DispatchQueue(label: "cn.tlww.aixlg.window-arrangement", qos: .userInitiated)
   private let lock = NSLock()
   private var generation: UInt64 = 0
-  private var submission: Submission?
+  private var submission: UInt64?
+  private var reportedGeneration: UInt64?
   private let backend: any WindowArrangementBackend
-  // The following state belongs exclusively to queue. Restore frames never outlive their exact
-  // process launch and AX element, and are not persisted under recyclable window numbers.
-  private var restoreFrames: [String: CGRect] = [:]
-  private var toggleBaseline: ToggleBaseline?
-  private var maximizedFrames: [String: CGRect] = [:]
+  // Only in-flight work is tracked; layout actions never depend on press parity or history.
+  private var lastConstrainedPlacement: (key: String, desired: CGRect, observed: CGRect)?
+  private var pendingPlacementKey: String?
+  private var lastResize: (key: String, size: CGSize, time: TimeInterval, accepted: Bool)?
+  private var lastMove: (key: String, point: CGPoint, time: TimeInterval, accepted: Bool)?
   private var fullScreenWrites: [String: (target: Bool, generation: UInt64)] = [:]
 
   init(backend: any WindowArrangementBackend = AXWindowArrangementBackend()) {
@@ -231,19 +232,11 @@ final class WindowArrangementController: @unchecked Sendable {
   ) {
     lock.lock()
     generation &+= 1
-    let sameToggle =
-      submission.map {
-        $0.action == action && $0.application == application
-          && (action == .maximize || action == .nativeFullScreen)
-      } ?? false
-    let next = Submission(
-      generation: generation, chain: sameToggle ? submission!.chain : generation,
-      count: sameToggle ? submission!.count + 1 : 1, action: action, application: application)
+    let next = generation
     submission = next
     lock.unlock()
     let request = Request(
-      generation: next.generation, chain: next.chain, count: next.count,
-      action: action, application: application, screens: screens,
+      generation: next, action: action, application: application, screens: screens,
       screenProvider: screenProvider, completion: completion)
     queue.async { [weak self] in self?.begin(request) }
   }
@@ -253,6 +246,11 @@ final class WindowArrangementController: @unchecked Sendable {
     generation &+= 1
     submission = nil
     lock.unlock()
+    queue.async { [weak self] in
+      self?.pendingPlacementKey = nil
+      self?.lastResize = nil
+      self?.lastMove = nil
+    }
   }
 
   private func owns(_ request: Request) -> Bool {
@@ -262,7 +260,10 @@ final class WindowArrangementController: @unchecked Sendable {
   }
 
   private func valid(_ request: Request) -> Bool {
-    guard owns(request) else { return false }
+    lock.lock()
+    let pending = generation == request.generation && submission == request.generation
+    lock.unlock()
+    guard pending else { return false }
     guard backend.isCurrent(request.application) else {
       finish(request, .failed, "当前 App 已变化，已停止调整原窗口。")
       return false
@@ -294,23 +295,6 @@ final class WindowArrangementController: @unchecked Sendable {
       return
     }
     guard valid(request) else { return }
-    let workArea = WindowArrangementGeometry.workArea(for: window.frame, screens: request.screens)
-    if request.action == .maximize || request.action == .nativeFullScreen {
-      if toggleBaseline?.chain != request.chain || toggleBaseline?.windowID != window.id {
-        let changedWindow =
-          toggleBaseline?.chain == request.chain
-          && toggleBaseline?.windowID != window.id
-        let completedMaximize =
-          maximizedFrames[key(request.application, window.id)]
-          .map { WindowArrangementGeometry.matches(window.frame, $0) } ?? false
-        toggleBaseline = ToggleBaseline(
-          chain: request.chain, windowID: window.id,
-          maximized: completedMaximize
-            || (workArea.map { WindowArrangementGeometry.matches(window.frame, $0) } ?? false),
-          fullScreen: window.fullScreen ?? false, originalFrame: window.frame,
-          initialCount: changedWindow ? request.count : 1)
-      }
-    }
     if request.action == .minimize {
       if window.fullScreen == true || fullScreenWrites[window.id] != nil {
         changeFullScreen(
@@ -318,22 +302,16 @@ final class WindowArrangementController: @unchecked Sendable {
           deadline: uptime + 3, remainingWrites: 3, continuePlacement: true)
         return
       }
-      guard backend.setMinimized(true, window: window.id) else {
-        finish(request, .unsupported, "这个窗口不支持最小化。")
-        return
-      }
-      observeMinimized(request, windowID: window.id, remaining: 8)
+      minimize(request, windowID: window.id)
       return
     }
     if request.action == .nativeFullScreen {
-      guard window.fullScreen != nil, let baseline = toggleBaseline else {
+      guard window.fullScreen != nil else {
         finish(request, .unsupported, "这个窗口不支持系统全屏。")
         return
       }
-      let count = request.count - baseline.initialCount + 1
-      let desired = count.isMultiple(of: 2) ? baseline.fullScreen : !baseline.fullScreen
       changeFullScreen(
-        request, windowID: window.id, desired: desired,
+        request, windowID: window.id, desired: true,
         deadline: uptime + 3, remainingWrites: 3, continuePlacement: false)
       return
     }
@@ -347,6 +325,21 @@ final class WindowArrangementController: @unchecked Sendable {
   }
 
   private var uptime: TimeInterval { ProcessInfo.processInfo.systemUptime }
+
+  private func minimize(_ request: Request, windowID: String) {
+    guard valid(request) else { return }
+    guard backend.stillOwnsWindow(windowID) else {
+      finish(request, .failed, "当前窗口已变化，已停止调整。")
+      return
+    }
+    // Checking exact focus can itself block in AX; a newer request may arrive while it runs.
+    guard valid(request) else { return }
+    guard backend.setMinimized(true, window: windowID) else {
+      finish(request, .unsupported, "这个窗口不支持最小化。")
+      return
+    }
+    observeMinimized(request, windowID: windowID, remaining: 8)
+  }
 
   private func observeMinimized(_ request: Request, windowID: String, remaining: Int) {
     guard valid(request) else { return }
@@ -428,21 +421,17 @@ final class WindowArrangementController: @unchecked Sendable {
           }
           return
         }
-        self.place(request, window: window, screens: screens)
+        self.place(request, window: window, screens: screens, afterFullScreen: true)
       }
     }
   }
 
   private func place(
-    _ request: Request, window: WindowArrangementWindow, screens: [WindowArrangementScreen]
+    _ request: Request, window: WindowArrangementWindow, screens: [WindowArrangementScreen],
+    afterFullScreen: Bool = false
   ) {
     if request.action == .minimize {
-      guard valid(request), backend.stillOwnsWindow(window.id), owns(request) else { return }
-      if backend.setMinimized(true, window: window.id) {
-        observeMinimized(request, windowID: window.id, remaining: 8)
-      } else {
-        finish(request, .unsupported, "这个窗口不支持最小化。")
-      }
+      minimize(request, windowID: window.id)
       return
     }
     guard valid(request),
@@ -456,143 +445,325 @@ final class WindowArrangementController: @unchecked Sendable {
       return
     }
     let restoreKey = key(request.application, window.id)
-    let desired: CGRect
-    var clearRestore = request.action != .maximize
-    if request.action == .maximize, let baseline = toggleBaseline {
-      let count = request.count - baseline.initialCount + 1
-      let wantsMaximize = count.isMultiple(of: 2) ? baseline.maximized : !baseline.maximized
-      if wantsMaximize {
-        if !baseline.maximized { restoreFrames[restoreKey] = baseline.originalFrame }
-        desired = area
-      } else {
-        let saved = baseline.maximized ? restoreFrames[restoreKey] : baseline.originalFrame
-        desired = WindowArrangementGeometry.restored(saved, in: area)
-        clearRestore = true
-      }
-    } else if request.action == .center,
-      WindowArrangementGeometry.matches(window.frame, area)
-    {
-      let restored = WindowArrangementGeometry.restored(restoreFrames[restoreKey], in: area)
-      desired = WindowArrangementGeometry.target(.center, current: restored, workArea: area)
-    } else {
-      desired = WindowArrangementGeometry.target(
-        request.action, current: window.frame, workArea: area)
-    }
+    let desired = WindowArrangementGeometry.target(
+      request.action, current: window.frame, workArea: area)
+    let alignment = request.action
     let placement = Placement(
       request: request, windowID: window.id, desired: desired, workArea: area,
-      clearRestore: clearRestore, deadline: uptime + 1.5, positionOnly: !window.resizable)
-    if WindowArrangementGeometry.matches(window.frame, desired) {
+      deadline: uptime + 3.4, positionOnly: !window.resizable,
+      originalSize: window.frame.size, alignment: alignment,
+      supersedesResize: pendingPlacementKey == restoreKey,
+      settleUntil: uptime + (pendingPlacementKey == restoreKey ? 1.5 : (afterFullScreen ? 1 : 0)))
+    pendingPlacementKey = restoreKey
+    if WindowArrangementGeometry.matches(window.frame, desired)
+      && !placement.supersedesResize && !afterFullScreen
+    {
       completePlacement(placement, observed: window.frame, constrained: false)
       return
     }
+    // Repeating a proven application size limit must not turn into a failure merely because
+    // the window is already at that limit. This caches only the last observed constraint,
+    // never a restore target or a toggle state.
+    if !placement.supersedesResize && !afterFullScreen,
+      let limited = lastConstrainedPlacement, limited.key == restoreKey,
+      WindowArrangementGeometry.matches(limited.desired, desired),
+      WindowArrangementGeometry.matches(limited.observed, window.frame)
+    {
+      completePlacement(placement, observed: window.frame, constrained: true)
+      return
+    }
+    lastConstrainedPlacement = nil
     let actualTarget =
       window.resizable
       ? desired
       : WindowArrangementGeometry.aligned(
-        size: window.frame.size, action: request.action, desired: desired, workArea: area)
-    let acceptedSize = write(placement, frame: actualTarget, positionOnly: !window.resizable)
-    observe(
-      placement, attempt: 0, previousSize: nil,
-      constrainedTarget: window.resizable ? nil : actualTarget, acceptedSize: acceptedSize)
+        size: window.frame.size, action: alignment, desired: desired, workArea: area)
+    startPlacement(placement, current: window.frame, target: actualTarget)
+  }
+
+  private func hasRoom(_ frame: CGRect, for target: CGRect, in area: CGRect) -> Bool {
+    frame.minX + target.width <= area.maxX + WindowArrangementGeometry.tolerance
+      && frame.minY + target.height <= area.maxY + WindowArrangementGeometry.tolerance
+      && frame.minX >= area.minX - WindowArrangementGeometry.tolerance
+      && frame.minY >= area.minY - WindowArrangementGeometry.tolerance
+  }
+
+  private func prepareRoom(
+    _ placement: Placement, current: CGRect, target: CGRect,
+    completion: @escaping @Sendable (CGRect) -> Void
+  ) {
+    guard valid(placement.request) else { return }
+    let area = placement.workArea
+    // Initial placement AND late geometry correction need room before enlarging.
+    // AppKit caps the requested size relative to the window's current origin.
+    guard !placement.positionOnly && !hasRoom(current, for: target, in: area) else {
+      completion(current)
+      return
+    }
+    guard uptime < placement.deadline else {
+      finish(
+        placement.request, .failed, "窗口没有移到可调整的位置，请重试。",
+        requested: placement.desired, observed: current)
+      return
+    }
+    let origin = CGPoint(
+      x: max(area.minX, min(target.minX, area.maxX - max(current.width, target.width))),
+      y: max(area.minY, min(target.minY, area.maxY - max(current.height, target.height))))
+    write(placement, frame: CGRect(origin: origin, size: current.size), positionOnly: true)
+    guard owns(placement.request) else { return }
+    guard backend.stillOwnsWindow(placement.windowID),
+      owns(placement.request), let frame = backend.readFrame(placement.windowID),
+      owns(placement.request)
+    else {
+      finish(placement.request, .failed, "当前窗口已变化，已停止调整。")
+      return
+    }
+    // Synchronous apps can proceed immediately; only an unfinished move needs a timer.
+    if hasRoom(frame, for: target, in: area) {
+      completion(frame)
+      return
+    }
+    queue.asyncAfter(deadline: .now() + 0.016) { [weak self] in
+      guard let self, self.valid(placement.request) else { return }
+      guard self.backend.stillOwnsWindow(placement.windowID), self.owns(placement.request),
+        let observed = self.backend.readFrame(placement.windowID), self.owns(placement.request)
+      else {
+        self.finish(placement.request, .failed, "当前窗口已变化，已停止调整。")
+        return
+      }
+      self.prepareRoom(placement, current: observed, target: target, completion: completion)
+    }
+  }
+
+  private func startPlacement(_ placement: Placement, current: CGRect, target: CGRect) {
+    // Our own NSWindow can change both components in one non-animated main-thread transaction.
+    // External apps still need the size-first path and observed geometry before moving right.
+    if let accepted = backend.setFrameDirectly(
+      target, window: placement.windowID,
+      isValid: { [weak self] in self?.owns(placement.request) == true })
+    {
+      guard valid(placement.request) else { return }
+      guard accepted else {
+        finish(placement.request, .failed, "当前窗口已变化，已停止调整。")
+        return
+      }
+      if let observed = backend.readFrame(placement.windowID), valid(placement.request) {
+        if WindowArrangementGeometry.matches(observed, target) {
+          completePlacement(placement, observed: observed, constrained: placement.positionOnly)
+          return
+        }
+        // The direct local setter has already applied native minimum/maximum sizes.
+        // Align that proven size now rather than waiting for AX constraint retries.
+        let aligned = WindowArrangementGeometry.aligned(
+          size: observed.size,
+          action: placement.alignment, desired: target, workArea: placement.workArea)
+        if backend.setFrameDirectly(
+          aligned, window: placement.windowID,
+          isValid: { [weak self] in self?.owns(placement.request) == true }) == true,
+          let actual = backend.readFrame(placement.windowID), valid(placement.request),
+          WindowArrangementGeometry.matches(actual, aligned)
+        {
+          completePlacement(placement, observed: actual, constrained: true)
+          return
+        }
+      }
+      observe(
+        placement, previousFrame: nil, lastSizeWrite: uptime,
+        sizeWrites: 1, acceptedSize: true)
+      return
+    }
+    prepareRoom(placement, current: current, target: target) { [weak self] ready in
+      guard let self, self.valid(placement.request) else { return }
+      let needsSize = !placement.positionOnly && ready.size != target.size
+      let acceptedSize = self.write(
+        placement, frame: target, positionOnly: !needsSize,
+        reusePendingSize: placement.supersedesResize)
+      let sizeTime =
+        self.lastResize.flatMap {
+          $0.key == self.key(placement.request.application, placement.windowID)
+            && $0.size == target.size
+            ? $0.time : nil
+        } ?? self.uptime
+      self.observe(
+        placement, previousFrame: nil, lastSizeWrite: sizeTime,
+        sizeWrites: needsSize ? 1 : 0, acceptedSize: acceptedSize)
+    }
   }
 
   @discardableResult
-  private func write(_ placement: Placement, frame: CGRect, positionOnly: Bool = false) -> Bool {
+  private func write(
+    _ placement: Placement, frame: CGRect, positionOnly: Bool = false,
+    reusePendingSize: Bool = false
+  ) -> Bool {
     let request = placement.request
-    // Each OS call has a bounded AX messaging timeout. A submission can invalidate this request
-    // from the main thread during a slow call; all subsequent writes then stop.
-    var acceptedSize = positionOnly
-    for _ in 0..<2 {
-      guard valid(request), backend.stillOwnsWindow(placement.windowID), owns(request) else {
-        return false
-      }
-      if !positionOnly {
-        acceptedSize = backend.setSize(frame.size, window: placement.windowID) || acceptedSize
-      }
-      guard valid(request), backend.stillOwnsWindow(placement.windowID), owns(request) else {
-        return false
-      }
-      _ = backend.setPosition(frame.origin, window: placement.windowID)
+    // AX success is acceptance, not geometry. Do not move a still-wide window to the right-half
+    // origin: some apps clamp that move or restore their maximized size during the transition.
+    guard valid(request), backend.stillOwnsWindow(placement.windowID), owns(request) else {
+      return false
     }
-    return acceptedSize
+    let resizeKey = key(request.application, placement.windowID)
+    let accepted: Bool
+    if positionOnly {
+      accepted = true
+    } else if reusePendingSize, let previous = lastResize,
+      previous.key == resizeKey, previous.size == frame.size,
+      previous.accepted && uptime - previous.time < 0.9
+    {
+      // Repeating the same intent must not restart the target application's resize animation.
+      accepted = previous.accepted
+    } else {
+      accepted = backend.setSize(frame.size, window: placement.windowID)
+      lastResize = (resizeKey, frame.size, uptime, accepted)
+    }
+    guard owns(request) else { return accepted }
+    if !positionOnly {
+      guard let observed = backend.readFrame(placement.windowID), owns(request),
+        sameSize(observed.size, frame.size)
+      else { return accepted }
+    }
+    // AX reads and exact-focus checks can block; recheck the generation after each boundary.
+    guard valid(request), backend.stillOwnsWindow(placement.windowID), owns(request) else {
+      return false
+    }
+    if let previous = lastMove, previous.key == resizeKey, previous.point == frame.origin,
+      previous.accepted && uptime - previous.time < 0.9
+    {
+      return accepted
+    }
+    let moved = backend.setPosition(frame.origin, window: placement.windowID)
+    lastMove = (resizeKey, frame.origin, uptime, moved)
+    return accepted
+  }
+
+  private func sameSize(_ a: CGSize, _ b: CGSize) -> Bool {
+    abs(a.width - b.width) <= WindowArrangementGeometry.tolerance
+      && abs(a.height - b.height) <= WindowArrangementGeometry.tolerance
   }
 
   private func observe(
-    _ placement: Placement, attempt: Int, previousSize: CGSize?, constrainedTarget: CGRect?,
-    acceptedSize: Bool
+    _ placement: Placement, previousFrame: CGRect?, lastSizeWrite: TimeInterval,
+    sizeWrites: Int, acceptedSize: Bool, reachedDesired: Bool = false,
+    settledSizes: [CGSize] = [], reported: Bool = false, eagerRetryUsed: Bool = false,
+    eagerMoveRetryUsed: Bool = false
   ) {
-    queue.asyncAfter(deadline: .now() + (attempt == 0 ? 0.05 : 0.1)) { [weak self] in
+    // Follow unfinished geometry on the next display-frame scale, then back off once applied.
+    queue.asyncAfter(deadline: .now() + (reported ? 0.06 : 0.016)) { [weak self] in
       guard let self, self.valid(placement.request) else { return }
       guard self.backend.stillOwnsWindow(placement.windowID) else {
         self.finish(placement.request, .failed, "当前窗口已变化，已停止调整。")
         return
       }
-      guard let window = self.backend.readWindow(placement.windowID) else {
+      guard self.owns(placement.request) else { return }
+      guard let frame = self.backend.readFrame(placement.windowID) else {
         self.finish(placement.request, .failed, "原窗口已关闭，已停止调整。")
         return
       }
-      if WindowArrangementGeometry.matches(window.frame, placement.desired) {
-        self.completePlacement(placement, observed: window.frame, constrained: false)
+      guard self.owns(placement.request) else { return }
+      let now = self.uptime
+      let matchesDesired = WindowArrangementGeometry.matches(frame, placement.desired)
+      let stable =
+        previousFrame.map { WindowArrangementGeometry.matches($0, frame) } ?? false
+      let sizeStable = previousFrame.map { self.sameSize($0.size, frame.size) } ?? false
+      let sizeDiffers = !self.sameSize(frame.size, placement.desired.size)
+      let sizeChanged = !self.sameSize(frame.size, placement.originalSize)
+      var nextReported = reported
+      if matchesDesired && stable {
+        let finished = now >= placement.settleUntil
+        self.completePlacement(
+          placement, observed: frame, constrained: false, finalize: finished, notify: !reported)
+        if finished { return }
+        // Return success promptly, but retain a cancellable tail watch for late old AX writes.
+        nextReported = true
+      }
+      // A limit is only inferred after repeated, spaced size attempts converge. An intermediate
+      // animation frame or a single accepted-but-ignored request is not a minimum size.
+      let constrained =
+        placement.positionOnly
+        || (settledSizes.count >= 2
+          && settledSizes.allSatisfy {
+            self.sameSize($0, frame.size)
+          } && now - lastSizeWrite >= 0.9 && sizeStable && sizeChanged && acceptedSize)
+      let aligned = WindowArrangementGeometry.aligned(
+        size: frame.size, action: placement.alignment,
+        desired: placement.desired, workArea: placement.workArea)
+      if sizeDiffers && constrained
+        && WindowArrangementGeometry.matches(frame, aligned) && stable
+        && now >= placement.settleUntil
+      {
+        self.completePlacement(placement, observed: frame, constrained: true, notify: !reported)
         return
       }
-      if let constrainedTarget, WindowArrangementGeometry.matches(window.frame, constrainedTarget) {
-        self.completePlacement(placement, observed: window.frame, constrained: true)
-        return
-      }
-      guard attempt < 4, self.uptime < placement.deadline else {
+      guard now < placement.deadline else {
+        // A rejected resize must not leave an oversized window clipped beyond the target edge.
+        if !WindowArrangementGeometry.matches(frame, aligned) {
+          self.write(placement, frame: aligned, positionOnly: true)
+        }
         self.finish(
           placement.request, .failed, "窗口未完成调整，可能正忙或受到应用限制。",
-          requested: placement.desired, observed: window.frame)
+          requested: placement.desired, observed: frame
+        )
         return
       }
-      let sizeIsStable =
-        previousSize.map {
-          abs($0.width - window.frame.width) <= 2 && abs($0.height - window.frame.height) <= 2
-        } ?? false
-      let sizeDiffers =
-        abs(window.frame.width - placement.desired.width) > 2
-        || abs(window.frame.height - placement.desired.height) > 2
-      if sizeIsStable && sizeDiffers && attempt >= 1 && acceptedSize {
-        let aligned = WindowArrangementGeometry.aligned(
-          size: window.frame.size, action: placement.request.action,
-          desired: placement.desired, workArea: placement.workArea)
-        self.write(placement, frame: aligned, positionOnly: true)
-        self.observe(
-          placement, attempt: attempt + 1, previousSize: window.frame.size,
-          constrainedTarget: aligned, acceptedSize: acceptedSize)
-      } else {
-        let retryTarget =
-          placement.positionOnly
-          ? WindowArrangementGeometry.aligned(
-            size: window.frame.size, action: placement.request.action,
-            desired: placement.desired, workArea: placement.workArea)
-          : placement.desired
-        let nextAcceptedSize = self.write(
-          placement, frame: retryTarget, positionOnly: placement.positionOnly)
-        self.observe(
-          placement, attempt: attempt + 1, previousSize: window.frame.size,
-          constrainedTarget: placement.positionOnly ? retryTarget : nil,
-          acceptedSize: nextAcceptedSize)
+      var nextEagerMoveRetryUsed = eagerMoveRetryUsed
+      let eagerRetry =
+        placement.supersedesResize && !eagerRetryUsed && sizeStable
+        && now - lastSizeWrite >= 0.24
+      if sizeDiffers && !placement.positionOnly
+        && ((reachedDesired && !matchesDesired)
+          || eagerRetry
+          || (sizeWrites < 3 && sizeStable && now - lastSizeWrite >= 0.9))
+      {
+        // A late old position can accompany the old size. Apply the same room check as
+        // initial placement, without resetting the deadline, callback or retry budget.
+        let nextSettled =
+          sizeStable && now - lastSizeWrite >= 0.9
+            && self.hasRoom(frame, for: placement.desired, in: placement.workArea)
+          ? settledSizes + [frame.size] : settledSizes
+        let retryReported = nextReported
+        self.prepareRoom(placement, current: frame, target: placement.desired) {
+          [weak self] ready in
+          guard let self, self.valid(placement.request) else { return }
+          let accepted = self.write(placement, frame: placement.desired)
+          self.observe(
+            placement, previousFrame: ready, lastSizeWrite: self.uptime,
+            sizeWrites: eagerRetry ? sizeWrites : sizeWrites + 1, acceptedSize: accepted,
+            reachedDesired: false, settledSizes: nextSettled, reported: retryReported,
+            eagerRetryUsed: eagerRetryUsed || eagerRetry, eagerMoveRetryUsed: eagerMoveRetryUsed)
+        }
+        return
+      } else if !matchesDesired && (!sizeDiffers || constrained) {
+        if placement.supersedesResize && !eagerMoveRetryUsed, let pending = self.lastMove,
+          now - pending.time >= 0.24 && stable
+        {
+          self.lastMove = nil
+          nextEagerMoveRetryUsed = true
+        }
+        self.write(placement, frame: sizeDiffers ? aligned : placement.desired, positionOnly: true)
       }
+      self.observe(
+        placement, previousFrame: frame, lastSizeWrite: lastSizeWrite,
+        sizeWrites: sizeWrites, acceptedSize: acceptedSize,
+        reachedDesired: reachedDesired || matchesDesired,
+        settledSizes: settledSizes, reported: nextReported, eagerRetryUsed: eagerRetryUsed,
+        eagerMoveRetryUsed: nextEagerMoveRetryUsed)
     }
   }
 
-  private func completePlacement(_ placement: Placement, observed: CGRect, constrained: Bool) {
-    if placement.clearRestore {
-      let restoreKey = key(placement.request.application, placement.windowID)
-      restoreFrames.removeValue(forKey: restoreKey)
-      maximizedFrames.removeValue(forKey: restoreKey)
-    } else if placement.request.action == .maximize {
-      maximizedFrames[key(placement.request.application, placement.windowID)] = observed
-    }
-    if restoreFrames.count > 128 {
-      restoreFrames.removeAll()
-      maximizedFrames.removeAll()
-    }
+  private func completePlacement(
+    _ placement: Placement, observed: CGRect, constrained: Bool,
+    finalize: Bool = true, notify: Bool = true
+  ) {
+    // AX reads may return after a newer press; stale success must not clear its restore state.
+    guard owns(placement.request) else { return }
+    lastResize = nil
+    lastMove = nil
+    lastConstrainedPlacement =
+      constrained
+      ? (key(placement.request.application, placement.windowID), placement.desired, observed) : nil
     finish(
       placement.request, constrained ? .constrained : .applied,
       constrained ? "已按方向对齐；这个 App 限制了窗口大小。" : "窗口已调整。",
-      requested: placement.desired, observed: observed)
+      requested: placement.desired, observed: observed, finalize: finalize, notify: notify)
   }
 
   private func key(_ app: WindowArrangementApplication, _ window: String) -> String {
@@ -602,12 +773,20 @@ final class WindowArrangementController: @unchecked Sendable {
 
   private func finish(
     _ request: Request, _ status: WindowArrangementResult.Status, _ message: String,
-    requested: CGRect? = nil, observed: CGRect? = nil
+    requested: CGRect? = nil, observed: CGRect? = nil,
+    finalize: Bool = true, notify: Bool = true
   ) {
     guard owns(request) else { return }
-    lock.lock()
-    if submission?.generation == request.generation { submission = nil }
-    lock.unlock()
+    if finalize {
+      pendingPlacementKey = nil
+      lastResize = nil
+      lastMove = nil
+      lock.lock()
+      if submission == request.generation { submission = nil }
+      lock.unlock()
+    }
+    guard notify, reportedGeneration != request.generation else { return }
+    reportedGeneration = request.generation
     let result = WindowArrangementResult(
       status: status, message: message, requestedFrame: requested, observedFrame: observed)
     DispatchQueue.main.async { [weak self] in
@@ -617,7 +796,199 @@ final class WindowArrangementController: @unchecked Sendable {
   }
 }
 
+/// AX calls targeting this process can synchronously enter AppKit on the calling thread.
+/// Never send our own windows through the external-process AX path, including reads.
+final class LocalWindowArrangementBackend: WindowArrangementBackend, @unchecked Sendable {
+  private final class Observations: @unchecked Sendable {
+    let tokens: [NSObjectProtocol]
+    init(_ tokens: [NSObjectProtocol]) { self.tokens = tokens }
+    deinit { for token in tokens { NotificationCenter.default.removeObserver(token) } }
+  }
+  @MainActor private final class Reference {
+    weak var window: NSWindow?
+    var transitioning = false
+    private var observations: Observations?
+    init(_ window: NSWindow) {
+      self.window = window
+      let changes: [(Notification.Name, Bool)] = [
+        (NSWindow.willEnterFullScreenNotification, true),
+        (NSWindow.willExitFullScreenNotification, true),
+        (NSWindow.didEnterFullScreenNotification, false),
+        (NSWindow.didExitFullScreenNotification, false),
+      ]
+      observations = Observations(
+        changes.map { name, transitioning in
+          NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) {
+            [weak self] _ in MainActor.assumeIsolated { self?.transitioning = transitioning }
+          }
+        })
+    }
+  }
+  @MainActor private var windows: [String: Reference] = [:]
+
+  func handles(_ id: String) -> Bool { id.hasPrefix("local:") }
+
+  private func onMain<T: Sendable>(_ body: @MainActor @Sendable () -> T) -> T {
+    if Thread.isMainThread { return MainActor.assumeIsolated { body() } }
+    return DispatchQueue.main.sync { body() }
+  }
+
+  func isCurrent(_ app: WindowArrangementApplication) -> Bool {
+    onMain {
+      app.pid == ProcessInfo.processInfo.processIdentifier && NSApp.isActive && !NSApp.isHidden
+        && (app.launchTime == nil
+          || app.launchTime == NSRunningApplication.current.launchDate?.timeIntervalSince1970)
+    }
+  }
+
+  @MainActor private func focusedWindow() -> NSWindow? { NSApp.keyWindow ?? NSApp.mainWindow }
+
+  @MainActor private func usable(_ window: NSWindow) -> Bool {
+    NSApp.isActive && !NSApp.isHidden && window.isVisible && !window.isMiniaturized
+      && !(window is NSPanel) && window.sheetParent == nil && window.attachedSheet == nil
+      && NSApp.modalWindow == nil
+  }
+
+  @MainActor private func selected(_ id: String) -> NSWindow? {
+    guard let reference = windows[id], !reference.transitioning,
+      let window = reference.window, focusedWindow() === window, usable(window)
+    else {
+      return nil
+    }
+    return window
+  }
+
+  // AX has a top-left origin; AppKit has a bottom-left origin on the primary display.
+  @MainActor private func converted(_ frame: CGRect) -> CGRect {
+    CGRect(
+      x: frame.minX, y: (NSScreen.screens.first?.frame.maxY ?? 0) - frame.maxY,
+      width: frame.width, height: frame.height)
+  }
+
+  func selectWindow(_ app: WindowArrangementApplication) -> WindowArrangementSelection {
+    guard isCurrent(app) else { return .unavailable("当前 App 没有可见窗口。") }
+    return onMain {
+      guard let window = self.focusedWindow(), self.usable(window) else {
+        return .unavailable("请先关闭当前对话框，再调整窗口。")
+      }
+      self.windows = self.windows.filter { $0.value.window != nil }
+      let id =
+        self.windows.first { $0.value.window === window }?.key
+        ?? "local:\(UUID().uuidString)"
+      if self.windows[id] == nil { self.windows[id] = Reference(window) }
+      guard self.windows[id]?.transitioning != true else {
+        return .temporarilyUnavailable("系统全屏切换中，请稍候。")
+      }
+      return .window(self.snapshot(window, id: id))
+    }
+  }
+
+  @MainActor private func snapshot(_ window: NSWindow, id: String) -> WindowArrangementWindow {
+    .init(
+      id: id, frame: converted(window.frame), minimized: window.isMiniaturized,
+      fullScreen: window.styleMask.contains(.fullScreen), movable: window.isMovable,
+      resizable: window.styleMask.contains(.resizable))
+  }
+
+  func readWindow(_ id: String) -> WindowArrangementWindow? {
+    onMain {
+      guard let reference = self.windows[id], !reference.transitioning,
+        let window = reference.window
+      else { return nil }
+      return self.snapshot(window, id: id)
+    }
+  }
+
+  func readFrame(_ id: String) -> CGRect? {
+    onMain { self.windows[id]?.window.map { self.converted($0.frame) } }
+  }
+
+  func stillOwnsWindow(_ id: String) -> Bool { onMain { self.selected(id) != nil } }
+
+  func readFullScreen(_ id: String) -> Bool? {
+    onMain {
+      guard let reference = self.windows[id], !reference.transitioning else { return nil }
+      return reference.window?.styleMask.contains(.fullScreen)
+    }
+  }
+
+  @MainActor private func apply(_ frame: CGRect, to window: NSWindow) {
+    let minimum = window.frameRect(
+      forContentRect: CGRect(origin: .zero, size: window.contentMinSize)
+    ).size
+    let maximum = window.frameRect(
+      forContentRect: CGRect(origin: .zero, size: window.contentMaxSize)
+    ).size
+    var limited = frame
+    if window.styleMask.contains(.resizable) {
+      limited.size.width = max(
+        max(window.minSize.width, minimum.width),
+        min(frame.width, min(window.maxSize.width, maximum.width)))
+      limited.size.height = max(
+        max(window.minSize.height, minimum.height),
+        min(frame.height, min(window.maxSize.height, maximum.height)))
+    } else {
+      limited.size = window.frame.size
+    }
+    window.setFrame(converted(limited), display: true, animate: false)
+  }
+
+  func setFrameDirectly(
+    _ frame: CGRect, window id: String,
+    isValid: @escaping @Sendable () -> Bool
+  ) -> Bool? {
+    onMain {
+      // Recheck after the main-queue hop: a newer key or focus change may already be queued.
+      guard isValid(), let window = self.selected(id), window.isMovable else { return false }
+      self.apply(frame, to: window)
+      return true
+    }
+  }
+
+  func setSize(_ size: CGSize, window id: String) -> Bool {
+    onMain {
+      guard let window = self.selected(id), window.styleMask.contains(.resizable) else {
+        return false
+      }
+      var frame = self.converted(window.frame)
+      frame.size = size
+      self.apply(frame, to: window)
+      return true
+    }
+  }
+
+  func setPosition(_ point: CGPoint, window id: String) -> Bool {
+    onMain {
+      guard let window = self.selected(id), window.isMovable else { return false }
+      self.apply(CGRect(origin: point, size: window.frame.size), to: window)
+      return true
+    }
+  }
+
+  func setMinimized(_ value: Bool, window id: String) -> Bool {
+    onMain {
+      guard let window = self.selected(id), window.styleMask.contains(.miniaturizable) else {
+        return false
+      }
+      if value { window.miniaturize(nil) } else { window.deminiaturize(nil) }
+      return true
+    }
+  }
+
+  func setFullScreen(_ value: Bool, window id: String) -> Bool {
+    onMain {
+      guard let window = self.selected(id), window.styleMask.contains(.resizable),
+        !window.collectionBehavior.contains(.fullScreenAuxiliary),
+        !window.collectionBehavior.contains(.fullScreenNone)
+      else { return false }
+      if window.styleMask.contains(.fullScreen) != value { window.toggleFullScreen(nil) }
+      return true
+    }
+  }
+}
+
 final class AXWindowArrangementBackend: WindowArrangementBackend, @unchecked Sendable {
+  private let local = LocalWindowArrangementBackend()
   private struct Entry {
     let app: WindowArrangementApplication
     let element: AXUIElement
@@ -643,6 +1014,7 @@ final class AXWindowArrangementBackend: WindowArrangementBackend, @unchecked Sen
   }
 
   func selectWindow(_ app: WindowArrangementApplication) -> WindowArrangementSelection {
+    if app.pid == ProcessInfo.processInfo.processIdentifier { return local.selectWindow(app) }
     guard isCurrent(app), NSRunningApplication(processIdentifier: app.pid)?.isHidden != true else {
       return .unavailable("当前 App 没有可见窗口。")
     }
@@ -653,20 +1025,24 @@ final class AXWindowArrangementBackend: WindowArrangementBackend, @unchecked Sen
     // A focused dialog/sheet is intentional: do not silently resize its parent or another window.
     guard let chosen = selection.window else { return .unavailable("没有找到当前窗口。") }
     AXUIElementSetMessagingTimeout(chosen, timeout)
-    guard let role = string(chosen, kAXRoleAttribute) else {
+    guard
+      let details = attributes(
+        chosen, [kAXRoleAttribute, kAXSubroleAttribute, "AXSheets", kAXMinimizedAttribute]),
+      let role = details[kAXRoleAttribute] as? String
+    else {
       return .temporarilyUnavailable("当前窗口暂时没有响应，请稍后重试。")
     }
     guard role == kAXWindowRole else {
       return .unavailable("请先关闭当前对话框，再调整窗口。")
     }
-    let subrole = string(chosen, kAXSubroleAttribute)
+    let subrole = details[kAXSubroleAttribute] as? String
     guard subrole == nil || subrole == kAXStandardWindowSubrole else {
       return .unavailable("当前对话框或工具窗口不适合分屏。")
     }
-    if let sheets = attribute(chosen, "AXSheets") as? [AXUIElement], !sheets.isEmpty {
+    if let sheets = details["AXSheets"] as? [AXUIElement], !sheets.isEmpty {
       return .unavailable("请先关闭当前对话框，再调整窗口。")
     }
-    guard boolean(chosen, kAXMinimizedAttribute) != true else {
+    guard bool(details[kAXMinimizedAttribute]) != true else {
       return .unavailable("请先恢复当前窗口，再调整位置。")
     }
     let existing = entries.first { $0.value.app == app && CFEqual($0.value.element, chosen) }?.key
@@ -686,9 +1062,32 @@ final class AXWindowArrangementBackend: WindowArrangementBackend, @unchecked Sen
   }
 
   func readWindow(_ id: String) -> WindowArrangementWindow? {
+    if local.handles(id) { return local.readWindow(id) }
     guard let entry = entries[id], isCurrent(entry.app),
-      let positionValue = attribute(entry.element, kAXPositionAttribute),
-      let sizeValue = attribute(entry.element, kAXSizeAttribute),
+      let values = attributes(
+        entry.element,
+        [kAXPositionAttribute, kAXSizeAttribute, kAXMinimizedAttribute, "AXFullScreen"]),
+      let frame = frame(values),
+      let movable = settable(entry.element, kAXPositionAttribute),
+      let resizable = settable(entry.element, kAXSizeAttribute)
+    else { return nil }
+    return WindowArrangementWindow(
+      id: id, frame: frame,
+      minimized: bool(values[kAXMinimizedAttribute]) == true,
+      fullScreen: bool(values["AXFullScreen"]), movable: movable, resizable: resizable)
+  }
+
+  func readFrame(_ id: String) -> CGRect? {
+    if local.handles(id) { return local.readFrame(id) }
+    guard let entry = entries[id], isCurrent(entry.app),
+      let values = attributes(entry.element, [kAXPositionAttribute, kAXSizeAttribute])
+    else { return nil }
+    return frame(values)
+  }
+
+  private func frame(_ values: [String: CFTypeRef]) -> CGRect? {
+    guard let positionValue = values[kAXPositionAttribute],
+      let sizeValue = values[kAXSizeAttribute],
       CFGetTypeID(positionValue) == AXValueGetTypeID(),
       CFGetTypeID(sizeValue) == AXValueGetTypeID()
     else { return nil }
@@ -699,17 +1098,11 @@ final class AXWindowArrangementBackend: WindowArrangementBackend, @unchecked Sen
       origin.x.isFinite, origin.y.isFinite, size.width.isFinite, size.height.isFinite,
       size.width > 0, size.height > 0
     else { return nil }
-    guard let movable = settable(entry.element, kAXPositionAttribute),
-      let resizable = settable(entry.element, kAXSizeAttribute)
-    else { return nil }
-    return WindowArrangementWindow(
-      id: id, frame: CGRect(origin: origin, size: size),
-      minimized: boolean(entry.element, kAXMinimizedAttribute) == true,
-      fullScreen: boolean(entry.element, "AXFullScreen"),
-      movable: movable, resizable: resizable)
+    return CGRect(origin: origin, size: size)
   }
 
   func stillOwnsWindow(_ id: String) -> Bool {
+    if local.handles(id) { return local.stillOwnsWindow(id) }
     guard let entry = entries[id], isCurrent(entry.app) else { return false }
     let appElement = AXUIElementCreateApplication(entry.app.pid)
     AXUIElementSetMessagingTimeout(appElement, timeout)
@@ -718,37 +1111,53 @@ final class AXWindowArrangementBackend: WindowArrangementBackend, @unchecked Sen
       return false
     }
     AXUIElementSetMessagingTimeout(target, timeout)
-    guard boolean(target, kAXMinimizedAttribute) != true else { return false }
-    if let sheets = attribute(target, "AXSheets") as? [AXUIElement], !sheets.isEmpty {
+    guard let values = attributes(target, [kAXMinimizedAttribute, "AXSheets"]),
+      bool(values[kAXMinimizedAttribute]) != true
+    else { return false }
+    if let sheets = values["AXSheets"] as? [AXUIElement], !sheets.isEmpty {
       return false
     }
     return true
   }
 
   func readFullScreen(_ id: String) -> Bool? {
+    if local.handles(id) { return local.readFullScreen(id) }
     guard let entry = entries[id], isCurrent(entry.app) else { return nil }
     return boolean(entry.element, "AXFullScreen")
   }
 
   func setSize(_ size: CGSize, window: String) -> Bool {
+    if local.handles(window) { return local.setSize(size, window: window) }
     var size = size
     guard let value = AXValueCreate(.cgSize, &size) else { return false }
     return set(value, attribute: kAXSizeAttribute, window: window)
   }
 
   func setPosition(_ point: CGPoint, window: String) -> Bool {
+    if local.handles(window) { return local.setPosition(point, window: window) }
     var point = point
     guard let value = AXValueCreate(.cgPoint, &point) else { return false }
     return set(value, attribute: kAXPositionAttribute, window: window)
   }
 
   func setMinimized(_ value: Bool, window: String) -> Bool {
-    set(
+    if local.handles(window) { return local.setMinimized(value, window: window) }
+    return set(
       value ? kCFBooleanTrue! : kCFBooleanFalse!, attribute: kAXMinimizedAttribute, window: window)
   }
 
   func setFullScreen(_ value: Bool, window: String) -> Bool {
-    set(value ? kCFBooleanTrue! : kCFBooleanFalse!, attribute: "AXFullScreen", window: window)
+    if local.handles(window) { return local.setFullScreen(value, window: window) }
+    return set(
+      value ? kCFBooleanTrue! : kCFBooleanFalse!, attribute: "AXFullScreen", window: window)
+  }
+
+  func setFrameDirectly(
+    _ frame: CGRect, window: String,
+    isValid: @escaping @Sendable () -> Bool
+  ) -> Bool? {
+    guard local.handles(window) else { return nil }
+    return local.setFrameDirectly(frame, window: window, isValid: isValid)
   }
 
   private func set(_ value: CFTypeRef, attribute name: String, window: String) -> Bool {
@@ -762,6 +1171,31 @@ final class AXWindowArrangementBackend: WindowArrangementBackend, @unchecked Sen
       return nil
     }
     return value
+  }
+
+  // One IPC round trip, with per-attribute absence kept separate from transport failure.
+  // AX does not promise an atomic geometry snapshot; the controller still observes convergence.
+  private func attributes(_ element: AXUIElement, _ names: [String]) -> [String: CFTypeRef]? {
+    var values: CFArray?
+    guard
+      AXUIElementCopyMultipleAttributeValues(
+        element, names as CFArray, AXCopyMultipleAttributeOptions(rawValue: 0), &values)
+        == .success,
+      let items = values as? [CFTypeRef], items.count == names.count
+    else { return nil }
+    var result: [String: CFTypeRef] = [:]
+    for (name, value) in zip(names, items) {
+      if CFGetTypeID(value) == CFNullGetTypeID() { continue }
+      if CFGetTypeID(value) == AXValueGetTypeID(), AXValueGetType(value as! AXValue) == .axError {
+        var error = AXError.success
+        guard AXValueGetValue(value as! AXValue, .axError, &error),
+          error == .noValue || error == .attributeUnsupported
+        else { return nil }
+        continue
+      }
+      result[name] = value
+    }
+    return result
   }
 
   private func intendedWindow(_ app: AXUIElement) -> (window: AXUIElement?, temporary: Bool) {
@@ -778,12 +1212,12 @@ final class AXWindowArrangementBackend: WindowArrangementBackend, @unchecked Sen
     return (nil, false)
   }
 
-  private func string(_ element: AXUIElement, _ name: String) -> String? {
-    attribute(element, name) as? String
+  private func boolean(_ element: AXUIElement, _ name: String) -> Bool? {
+    bool(attribute(element, name))
   }
 
-  private func boolean(_ element: AXUIElement, _ name: String) -> Bool? {
-    guard let value = attribute(element, name), CFGetTypeID(value) == CFBooleanGetTypeID() else {
+  private func bool(_ value: CFTypeRef?) -> Bool? {
+    guard let value, CFGetTypeID(value) == CFBooleanGetTypeID() else {
       return nil
     }
     return CFBooleanGetValue((value as! CFBoolean))

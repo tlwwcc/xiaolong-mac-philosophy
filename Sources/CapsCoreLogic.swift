@@ -191,6 +191,11 @@ struct CapsCorePhysicalModifierState: Equatable {
   var controlActive: Bool { !pressedControlKeys.isEmpty }
   var optionActive: Bool { !pressedOptionKeys.isEmpty }
 
+  func isPressed(usage: UInt32) -> Bool {
+    pressedControlKeys.contains { $0.usage == usage }
+      || pressedOptionKeys.contains { $0.usage == usage }
+  }
+
   static func tracks(usage: UInt32) -> Bool {
     [leftControlUsage, rightControlUsage, leftOptionUsage, rightOptionUsage]
       .contains(usage)

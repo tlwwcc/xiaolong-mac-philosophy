@@ -66,7 +66,7 @@ struct PDFViewerShortcutHelpCard: View {
     .frame(width: 720, height: 480)
     .foregroundStyle(pdfHelpInk)
     .accessibilityElement(children: .contain)
-    .accessibilityLabel("披卷帮助与当前快捷键")
+    .accessibilityLabel("PDF 浏览器帮助与当前快捷键")
   }
 
   private var header: some View {
@@ -75,7 +75,7 @@ struct PDFViewerShortcutHelpCard: View {
       .frame(width: 50, height: 50)
 
       VStack(alignment: .leading, spacing: 2) {
-        Text("披卷")
+        Text("PDF 浏览器")
           .font(.system(size: 14, weight: .semibold))
           .foregroundStyle(pdfBrandPurple)
         Text("大图纸，顺手看。")
@@ -164,7 +164,7 @@ struct PDFViewerShortcutHelpCard: View {
       Text("·")
       Text("⇧⌘W 关闭")
       Spacer()
-      Text("披卷 · PDF 阅读")
+      Text("PDF 浏览器")
         .fontWeight(.semibold)
         .foregroundStyle(pdfBrandPurple)
     }

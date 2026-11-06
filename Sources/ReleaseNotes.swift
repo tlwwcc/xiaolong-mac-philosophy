@@ -19,9 +19,201 @@ struct ReleaseNoteEntry: Equatable, Identifiable {
 
 enum ReleaseNotes {
   static let fallbackChangelogURL = URL(
-    string: "https://aixlg.com/mac/changelog/?v=1.0.28-246")!
+    string: "https://aixlg.com/mac/changelog/?v=1.0.40-262")!
 
   static let bundled: [ReleaseNoteEntry] = [
+    ReleaseNoteEntry(
+      version: "1.0.41",
+      build: 266,
+      dateText: "2026-11-07",
+      title: "窗口按比例贴边，剪贴板一键打开",
+      summary: "窗口可以一宽一窄，复制过的内容一按就能找回，短句和截图翻译也更快。",
+      highlights: [
+        "按 Caps + ⌘ + ← 贴左，按 Caps + ⌘ + → 贴右。默认左 60%、右 40%，可以在设置的通用页调整。",
+        "按 Caps + ← 或 → 各占半屏，按 Caps + F 铺满。快速切换时，窗口更快跟上最后一次操作。",
+        "按 Caps + ⌘ + C 打开超级剪贴板，再按一次收起。复制成功后可以看到短暂的紫色提示。",
+        "打开短句或截图翻译更快。截图中难以识别的符号保留原图，翻译随时可以取消。",
+        "从顶部切换功能快捷键、应用中心和设置，回来时保留你选的工具和筛选。",
+      ],
+      previousHighlights: [
+        "升级时保留自定义快捷键和已占用的组合键。按住 Caps 搭配字母、Control 或 Option，连续按放时更稳定。",
+      ],
+      changelogURL: URL(string: "https://aixlg.com/mac/changelog/?v=1.0.41-266")!
+    ),
+    ReleaseNoteEntry(
+      version: "1.0.40",
+      build: 262,
+      dateText: "2026-10-30",
+      title: "翻译更快，Caps 组合更一致",
+      summary: "翻译短句或截图时少等待，按住 Caps 组合操作后松开，按键状态更一致。",
+      highlights: [
+        "按住 Caps 组合操作，保留完整的字母键和 Control、Option 状态，已有快捷键不变。",
+        "打开 App 会提前准备识字，连续翻译时可以减少重复等待。",
+        "选择截图翻译时，图片保留在本机，只将识别文字发给千问；首次使用需同意。",
+        "选择的区域含有无法可靠识别的变量或符号时，保留该处原图，其他区域继续翻译。",
+        "点击取消可随时结束翻译；刚启动就翻图或选区很大时，仍可能需要等待。",
+      ],
+      previousHighlights: ["保留你的快捷键和个人设置；本次为本机试用更新。"],
+      changelogURL: fallbackChangelogURL
+    ),
+    ReleaseNoteEntry(
+      version: "1.0.39",
+      build: 261,
+      dateText: "2026-10-28",
+      title: "窗口更快归位，自身窗口也能安心调整",
+      summary: "减少窗口调整时的等待，修复调整 Mac 哲学自身窗口可能退出的问题。",
+      highlights: [
+        "Mac 哲学自身窗口一次设置大小与位置，不播放缩放动画。",
+        "其他软件的窗口调整更快跟进，保留连续混按时的防错位保护。",
+        "F 始终铺满，方向键固定布局，Caps + ⌘ + ↑ 回到居中小窗口。",
+      ],
+      previousHighlights: ["保留你的按键、软件绑定与个人设置；本次为本机试用更新。"],
+      changelogURL: URL(string: "https://aixlg.com/mac/changelog/?v=1.0.39-261")!
+    ),
+    ReleaseNoteEntry(
+      version: "1.0.38",
+      build: 260,
+      dateText: "2026-10-27",
+      title: "连续切换窗口，更快跟上最后一下",
+      summary: "铺满、左右分屏和居中快速混按时，减少等待与旧缩放干扰。",
+      highlights: [
+        "连续按同一布局，不再反复重启窗口缩放。",
+        "切换布局时及时停止旧操作，纠正迟到的尺寸和位置变化。",
+        "从右半屏回到居中、靠边窗口铺满时，恢复正确大小和位置。",
+        "F 始终铺满，方向键固定布局，Caps + ⌘ + ↑ 回到居中小窗口。",
+      ],
+      previousHighlights: ["保留你的按键、软件绑定与个人设置；本次为本机试用更新。"],
+      changelogURL: URL(string: "https://aixlg.com/mac/changelog/?v=1.0.38-260")!
+    ),
+    ReleaseNoteEntry(
+      version: "1.0.37",
+      build: 259,
+      dateText: "2026-10-27",
+      title: "窗口按哪里，就到哪里",
+      summary: "每个窗口快捷键只做一个动作，连续按也不会切回；普通窗口调整响应更快。",
+      highlights: [
+        "Caps + F 始终铺满，左右上下始终对应布局；重复按保持结果。",
+        "Caps + ⌘ + ↑ 回到居中小窗口，大小统一为屏幕可用区域的 72%。",
+        "Caps + ⌘ + F 始终进入系统全屏，居中或分屏键可直接回到窗口布局。",
+      ],
+      previousHighlights: ["保留你的按键、软件绑定与个人设置，仅更新旧窗口说明；本次为本机试用更新。"],
+      changelogURL: URL(string: "https://aixlg.com/mac/changelog/?v=1.0.37-259")!
+    ),
+    ReleaseNoteEntry(
+      version: "1.0.36",
+      build: 257,
+      dateText: "2026-10-27",
+      title: "左右分屏，按一次就到位",
+      summary: "窗口铺满后直接按 Caps + 左或右，缩到对应半屏，无需先按反方向。",
+      highlights: [
+        "先确认窗口缩小，再移到左右半屏，避免只移动位置却没缩小。",
+        "连续切换左右分屏、放大和恢复时，保持最后一次选择的布局。",
+        "Caps + F 放大后再按一次，恢复正常尺寸并居中。",
+      ],
+      previousHighlights: ["保留原有快捷键、个人设置和熟悉的顶部入口；本次为本机试用更新。"],
+      changelogURL: URL(string: "https://aixlg.com/mac/changelog/?v=1.0.36-257")!
+    ),
+    ReleaseNoteEntry(
+      version: "1.0.35",
+      build: 256,
+      dateText: "2026-10-26",
+      title: "窗口回到中央，熟悉的入口回到顶部",
+      summary: "分屏和放大更稳定；再次按 Caps + F，窗口恢复正常尺寸并居中。",
+      highlights: [
+        "Caps + 左、右固定分屏，连续切换时避免旧缩放打乱新布局。",
+        "Caps + F 放大后再按一次，恢复普通窗口大小并居中。",
+        "功能快捷键、应用中心、设置回到顶部，应用中心保持左侧目录、右侧详情。",
+        "使用正式绿色 Caps 标志，切换页面时保留搜索与选择。",
+      ],
+      previousHighlights: ["保留已有快捷键、短语和个人设置；本次为本机更新。"],
+      changelogURL: URL(string: "https://aixlg.com/mac/changelog/?v=1.0.35-256")!
+    ),
+    ReleaseNoteEntry(
+      version: "1.0.34",
+      build: 255,
+      dateText: "2026-10-25",
+      title: "复制成功，用一抹紫色告诉你",
+      summary: "屏幕文字复制成功后，提示文字与小勾一起亮起品牌紫色，便于确认复制完成。",
+      highlights: [
+        "“已复制进剪贴板”改为紫色，浅色与深色下都清楚。",
+        "提示仍留在卡片底部，约两秒自动淡出，接着编辑或粘贴即可。",
+      ],
+      previousHighlights: ["保留已有快捷键、短语和个人设置；本次为本机更新。"],
+      changelogURL: URL(string: "https://aixlg.com/mac/changelog/?v=1.0.34-255")!
+    ),
+    ReleaseNoteEntry(
+      version: "1.0.33",
+      build: 254,
+      dateText: "2026-10-25",
+      title: "屏幕文字结果更清爽，复制有轻提示",
+      summary: "框选后的文字放进更紧凑的可编辑卡片；复制成功会用一行小字提示，不打断接下来的操作。",
+      highlights: [
+        "只保留一层干净圆角，文字优先；短文本不再留下大片空白，长文本仍可滚动编辑。",
+        "成功复制后短暂显示“已复制进剪贴板”，随后自动淡出；编辑后重新复制也会提示。",
+        "翻译和朗读留在同一卡片，按钮更克制，浅色与深色都清晰。",
+      ],
+      previousHighlights: ["保留已有快捷键、短语及个人设置；本次为本机更新。"],
+      changelogURL: URL(string: "https://aixlg.com/mac/changelog/?v=1.0.33-254")!
+    ),
+    ReleaseNoteEntry(
+      version: "1.0.32",
+      build: 253,
+      dateText: "2026-10-25",
+      title: "快捷键列表不乱跳，复制屏幕文字更可靠",
+      summary: "浏览快捷键时保留位置；屏幕文字识别增加兼容恢复，短语入口统一到应用中心。",
+      highlights: [
+        "滚动、点击和页面往返时保留快捷键列表的位置与筛选，不再随单元格加载跳动。",
+        "Caps + ⌘ + A 框选文字后自动复制；中英文混排一并识别，遇到图片读取错误会自动尝试兼容路径。",
+        "在应用中心打开快捷短语，编辑后可直接返回总览；菜单里的原入口继续可用。",
+        "设置中的命令行入口统一叫 CLI，复制说明给常用 AI 即可继续配置快捷键。",
+      ],
+      previousHighlights: ["本次为本机更新；保留已有快捷键、短语和个人设置。"],
+      changelogURL: URL(string: "https://aixlg.com/mac/changelog/?v=1.0.32-253")!
+    ),
+    ReleaseNoteEntry(
+      version: "1.0.31",
+      build: 252,
+      dateText: "2026-10-24",
+      title: "快捷键页面正常打开，原有配置继续用",
+      summary: "修复点击快捷键页面时 App 意外退出的问题，可以继续查看和管理原来的快捷键。",
+      highlights: [
+        "打开快捷键列表、查看功能操作菜单时，页面保持正常运行。",
+        "保留本机与远程 Caps 的切换规则，Fn 语音仍按原来的方式使用。",
+        "已有快捷键、短语和个人设置沿升级保留，无需重新配置。",
+      ],
+      previousHighlights: ["本次为两台 Mac 的本机修正版，未公开发布。"],
+      changelogURL: URL(string: "https://aixlg.com/mac/changelog/?v=1.0.31-252")!
+    ),
+    ReleaseNoteEntry(
+      version: "1.0.30",
+      build: 251,
+      dateText: "2026-10-24",
+      title: "Caps 分清本机与远程，切换更顺手",
+      summary: "点进远程画面使用远程 Caps，移出或点击本机后恢复本机快捷键；功能入口也更清楚，修改快捷键可直接交给你常用的 AI。",
+      highlights: [
+        "点击 Jump Desktop 远程画面即可使用远端快捷键；鼠标移出画面，下一次 Caps 直接回到本机。",
+        "打开本机状态栏后继续使用本机 Caps；仅把鼠标移回远程画面不会抢走快捷键，再点一下才交给远端。",
+        "按住组合键时保持本次归属，实际切换操作目标时及时取消；保留豆包 Fn 语音原来的使用方式。",
+        "打开设置中的“AI 与命令行”，复制说明给 Codex 等 AI，再直接说出你想怎么改；修改前可预览，冲突会明确提示。",
+        "在表格中选择快捷键即可修改；截图、PDF 浏览器和常用工具仍在应用中心，详情页可以直接返回。",
+      ],
+      previousHighlights: ["这次为本机体验候选，两端需安装同一包；已有快捷键、短语和启动器个人设置保留。"],
+      changelogURL: URL(string: "https://aixlg.com/mac/changelog/?v=1.0.30-251")!
+    ),
+    ReleaseNoteEntry(
+      version: "1.0.29",
+      build: 250,
+      dateText: "2026-10-18",
+      title: "远控切换更顺手，Caps 自动跟随",
+      summary: "点进 Jump Desktop 远程桌面，Caps 控制远端；切回本机自动恢复，不用手动切换。",
+      highlights: [
+        "点进远程桌面即可使用远端快捷键，启动器和常用应用可以照常一开一收。",
+        "按豆包 Fn 照常启动语音输入，保留原来的使用方式。",
+        "安装本次正式版后，远控适配随更新保留，无需重复配置。",
+      ],
+      previousHighlights: ["保留已有个人设置。使用远程 Caps 时，两端都需安装本版本。"],
+      changelogURL: URL(string: "https://aixlg.com/mac/changelog/?v=1.0.29-250")!
+    ),
     ReleaseNoteEntry(
       version: "1.0.28",
       build: 246,
@@ -35,7 +227,7 @@ enum ReleaseNotes {
         "新安装的快捷短语从空白开始，不用清理示例；菜单默认显示剪贴板，进程查看器和保持唤醒按需添加。",
       ],
       previousHighlights: ["已有短语和个人设置保留；不报名优先体验，也能正常使用和更新。"],
-      changelogURL: fallbackChangelogURL
+      changelogURL: URL(string: "https://aixlg.com/mac/changelog/?v=1.0.28-246")!
     ),
     ReleaseNoteEntry(
       version: "1.0.26",

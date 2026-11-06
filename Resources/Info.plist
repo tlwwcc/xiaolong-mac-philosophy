@@ -9,7 +9,7 @@
 	<key>AIXLGLicenseUIEnabled</key>
 	<false/>
 	<key>AIXLGReleasePublishedAt</key>
-	<string>2026-10-16T00:00:00+08:00</string>
+	<string>2026-11-07T00:00:00+08:00</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>zh_CN</string>
 	<key>CFBundleDisplayName</key>
@@ -46,7 +46,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.28</string>
+	<string>1.0.41</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -61,7 +61,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>246</string>
+	<string>266</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 	<key>NSAppleEventsUsageDescription</key>
@@ -69,7 +69,7 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSInputMonitoringUsageDescription</key>
-	<string>仅在你录制快捷键、启用实体修饰键双击、Caps 核心键、快捷短语、游目长截图或鼠标插件时监听对应输入事件；不会保存或上传输入内容。</string>
+	<string>仅在你录制快捷键、启用实体修饰键双击、Caps 核心键、快捷短语、长截图或鼠标插件时监听对应输入事件；不会保存或上传输入内容。</string>
 	<key>SUAllowsAutomaticUpdates</key>
 	<false/>
 	<key>SUAutomaticallyUpdate</key>

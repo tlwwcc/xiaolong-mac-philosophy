@@ -39,7 +39,7 @@ enum YoumuFeatureShortcutCatalog {
 
   static let quickSnapshot = command(
     "quick-snapshot",
-    name: "游目 · 截图到剪贴板",
+    name: "截图到剪贴板",
     key: "1",
     modifiers: ["control", "option"],
     note: "Caps + 1：框选截图并复制到剪贴板。",
@@ -47,7 +47,7 @@ enum YoumuFeatureShortcutCatalog {
 
   static let annotatedScreenshot = command(
     "annotated-screenshot",
-    name: "游目 · 截图加标注",
+    name: "截图加标注",
     key: "1",
     modifiers: ["control", "option", "command"],
     note: "Caps + ⌘ + 1：框选截图并进入标注。",
@@ -55,7 +55,7 @@ enum YoumuFeatureShortcutCatalog {
 
   static let longScreenshot = command(
     "long-screenshot",
-    name: "游目 · 长截图",
+    name: "长截图",
     key: "2",
     modifiers: ["control", "option"],
     note: "Caps + 2：开始滚动长截图。",
@@ -63,7 +63,7 @@ enum YoumuFeatureShortcutCatalog {
 
   static let pinScreenshot = command(
     "pin-screenshot",
-    name: "游目 · 钉截图",
+    name: "钉截图",
     key: "T",
     modifiers: ["control", "option", "command"],
     note: "Caps + ⌘ + T：把最近一次截图钉在桌面上。",
@@ -71,7 +71,7 @@ enum YoumuFeatureShortcutCatalog {
 
   static let selectionReader = command(
     "selection-reader",
-    name: "游目 · 选哪读哪",
+    name: "选哪读哪",
     key: "R",
     modifiers: ["control", "option"],
     note: "Caps + R：框选文字区域并朗读。",
@@ -79,7 +79,7 @@ enum YoumuFeatureShortcutCatalog {
 
   static let imageTranslate = command(
     "image-translate",
-    name: "游目 · 原图翻译",
+    name: "原图翻译",
     key: "S",
     modifiers: ["control", "option", "command"],
     note: "Caps + ⌘ + S：框选图片，在原图位置显示译文。",
@@ -87,7 +87,7 @@ enum YoumuFeatureShortcutCatalog {
 
   static let ocrTranslate = command(
     "ocr-translate",
-    name: "游目 · OCR 翻译",
+    name: "OCR 翻译",
     key: "Y",
     modifiers: ["control", "option", "command"],
     note: "Caps + ⌘ + Y：框选识别文字并翻译。",
@@ -95,7 +95,7 @@ enum YoumuFeatureShortcutCatalog {
 
   static let ocrCopy = command(
     "ocr-copy",
-    name: "游目 · OCR 复制",
+    name: "OCR 复制",
     key: "A",
     modifiers: ["control", "option", "command"],
     note: "Caps + ⌘ + A：框选识别文字并复制。",
@@ -116,6 +116,23 @@ enum YoumuFeatureShortcutCatalog {
 
   static func descriptor(for commandID: String) -> FeatureShortcutCommandDescriptor? {
     all.first(where: { $0.id == commandID })
+  }
+
+  /// Rename only the old built-in labels. Keep user names, bindings and stable identities.
+  static func updatingLegacyDisplayNames(in items: [ShortcutItem]) -> [ShortcutItem] {
+    items.map { item in
+      let descriptor = item.commandID.flatMap { Self.descriptor(for: $0) }
+        ?? (item.isBuiltIn != false ? all.first(where: { $0.target == item.target }) : nil)
+      guard let descriptor else { return item }
+      var updated = item
+      if updated.name == "游目 · \(descriptor.displayName)" {
+        updated.name = descriptor.displayName
+      }
+      if updated.scope == "游目" {
+        updated.scope = descriptor.scope
+      }
+      return updated
+    }
   }
 
   static func missingDefaultDescriptors(
@@ -144,7 +161,7 @@ enum YoumuFeatureShortcutCatalog {
     FeatureShortcutCommandDescriptor(
       id: "\(featureID).command.\(localID)",
       displayName: name,
-      scope: "游目",
+      scope: "截图",
       key: key,
       modifiers: modifiers,
       note: note,

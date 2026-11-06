@@ -218,8 +218,13 @@ final class CapsCoreSystemMappingController {
         do {
           try backend.writeMappings(applied)
         } catch {
-          try? backend.writeMappings(existing)
-          try? removeJournal()
+          // Restore only our exact Caps mapping. Keep the journal if restoration fails so
+          // shutdown or the next launch can retry without losing unrelated mappings.
+          do {
+            try recoverPendingJournal()
+          } catch {
+            log("caps_core_system_mapping_restore_failed", ["error": error.localizedDescription])
+          }
           throw error
         }
         ownsMapping = true

@@ -1,26 +1,35 @@
 import AppKit
 
-/// 「OCR 复制」三合一工作台：
-/// 识别完成先把原文自动写进剪贴板（默认行为不变），再弹出本面板：
-/// 上区 原文（可编辑，🔊朗读/复制），下区 译文（点「翻译」后展开，🔊朗读/复制）。
-/// 翻译取编辑框实时文本；Esc 关闭并停止朗读。
-final class OCRCopyPanelController {
+nonisolated enum OCRCopyPanelDismissalPolicy {
+    static func shouldDismiss(
+        keyCode: UInt16,
+        flags: NSEvent.ModifierFlags,
+        eventBelongsToPanel: Bool,
+        hasMarkedText: Bool
+    ) -> Bool {
+        keyCode == 53 && eventBelongsToPanel && !hasMarkedText
+            && flags.intersection([.command, .control, .option, .shift]).isEmpty
+    }
+}
 
+
+/// OCR completes in the clipboard; this compact, editable card remains available for follow-up.
+final class OCRCopyPanelController {
     private static var current: OCRCopyPanelController?
 
     static func show(
         text: String,
         near region: CGRect,
+        copySucceeded: Bool = false,
         owner: CaptureCommandOwner? = nil,
         onDismiss: ((CaptureCommandOwner) -> Void)? = nil
     ) {
         current?.teardown()
         let controller = OCRCopyPanelController(owner: owner, onDismiss: onDismiss)
         current = controller
-        controller.present(text: text, near: region)
+        controller.present(text: text, near: region, copySucceeded: copySucceeded)
     }
 
-    /// Closes only the OCR workspace created by this exact capture invocation.
     @discardableResult
     static func dismiss(owner: CaptureCommandOwner) -> Bool {
         guard let current, current.owner == owner, !current.tornDown else { return false }
@@ -28,148 +37,38 @@ final class OCRCopyPanelController {
         return true
     }
 
-    // MARK: - 内部
-
     private var panel: NSPanel?
-    private var originalHeader: NSView?
-    private var originalScrollView: NSScrollView?
-    private var originalTextView: NSTextView?
-    private var translatedTextView: NSTextView?
-    private var translatedHeader: NSView?
-    private var translatedScrollView: NSScrollView?
-    private var translateButton: NSButton?
-    private var closeButton: NSButton?
+    private var content: OCRCopyPanelContentView?
     private var escMonitor: Any?
     private var tornDown = false
     private var translationTask: Task<Void, Never>?
     private var translationRequestID = UUID()
+    private var isTranslating = false
     private let owner: CaptureCommandOwner?
     private let onDismiss: ((CaptureCommandOwner) -> Void)?
     private var didNotifyDismiss = false
 
-    /// 收起/展开尺寸（译文区展开时自适应加高，仍保持迷你）
-    private let collapsedSize = NSSize(width: 440, height: 294)
-    private let expandedSize = NSSize(width: 440, height: 468)
-    private var isExpanded = false
-    private var isTranslating = false
-
-    private init(
-        owner: CaptureCommandOwner?,
-        onDismiss: ((CaptureCommandOwner) -> Void)?
-    ) {
+    private init(owner: CaptureCommandOwner?, onDismiss: ((CaptureCommandOwner) -> Void)?) {
         self.owner = owner
         self.onDismiss = onDismiss
     }
 
-    // MARK: - 装配
-
-    private func present(text: String, near region: CGRect) {
+    private func present(text: String, near region: CGRect, copySucceeded: Bool) {
         NSApp.activate(ignoringOtherApps: true)
-
+        let card = OCRCopyPanelContentView(text: text, target: self, actions: .init(
+            copyOriginal: #selector(copyOriginal), speakOriginal: #selector(speakOriginal),
+            translate: #selector(translateClicked), copyTranslated: #selector(copyTranslated),
+            speakTranslated: #selector(speakTranslated), close: #selector(closeClicked)
+        ))
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 1080
-        let screen = NSScreen.screens.first(where: {
-            $0.frame.contains(NSPoint(x: region.midX, y: primaryHeight - region.midY))
-        }) ?? NSScreen.main
+        let point = NSPoint(x: region.midX, y: primaryHeight - region.midY)
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(point) }) ?? NSScreen.main
         let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1920, height: 1080)
-        var panelY = (primaryHeight - region.maxY) - collapsedSize.height - 10
-        if panelY < visible.minY + 4 {
-            panelY = (primaryHeight - region.minY) + 10
-        }
-        let panelX = min(
-            max(region.midX - collapsedSize.width / 2, visible.minX + 8),
-            visible.maxX - collapsedSize.width - 8
+        let frame = OCRCopyPanelLayout.placement(
+            size: card.preferredSize, near: region, primaryHeight: primaryHeight, visible: visible
         )
-
-        let container = VisionMaterialView(frame: NSRect(origin: .zero, size: collapsedSize))
-        container.material = .popover
-        container.blendingMode = .behindWindow
-        container.state = .active
-        container.wantsLayer = true
-        container.layer?.cornerRadius = VisionDesign.panelRadius
-        container.layer?.borderWidth = 1
-        container.layer?.borderColor = VisionDesign.panelBorder.cgColor
-        container.layer?.masksToBounds = true
-
-        // ── 上区：原文（可编辑）──
-        let originalHeader = makeSectionHeader(
-            title: "OCR 文本   ·   已复制   ·   可编辑",
-            y: collapsedSize.height - 34,
-            width: collapsedSize.width,
-            actions: [
-                ("speaker.wave.2", #selector(speakOriginal), "朗读原文"),
-                ("doc.on.doc", #selector(copyOriginal), "复制原文"),
-            ]
-        )
-        container.addSubview(originalHeader)
-        self.originalHeader = originalHeader
-
-        let originalScroll = makeTextScrollView(
-            frame: NSRect(x: 14, y: 72, width: collapsedSize.width - 28, height: 178),
-            editable: true, fontSize: 13
-        )
-        let originalText = originalScroll.documentView as? NSTextView
-        originalText?.string = text
-        container.addSubview(originalScroll)
-        originalScrollView = originalScroll
-        originalTextView = originalText
-
-        // ── 中部：翻译主按钮 ──
-        let translate = NSButton(
-            frame: NSRect(x: 14, y: 20, width: 122, height: 32)
-        )
-        translate.title = "翻译此文本"
-        translate.image = NSImage(
-            systemSymbolName: "character.book.closed",
-            accessibilityDescription: "翻译此文本"
-        )
-        translate.imagePosition = .imageLeading
-        translate.bezelStyle = .rounded
-        translate.controlSize = .regular
-        translate.font = NSFont.systemFont(ofSize: 12, weight: .medium)
-        translate.bezelColor = .systemBlue
-        translate.target = self
-        translate.action = #selector(translateClicked)
-        container.addSubview(translate)
-        translateButton = translate
-
-        // ── 下区：译文（默认隐藏，翻译后展开）──
-        let translatedHeader = makeSectionHeader(
-            title: "译文   ·   可编辑",
-            y: 174,
-            width: collapsedSize.width,
-            actions: [
-                ("speaker.wave.2", #selector(speakTranslated), "朗读译文"),
-                ("doc.on.doc", #selector(copyTranslated), "复制译文"),
-            ]
-        )
-        translatedHeader.isHidden = true
-        container.addSubview(translatedHeader)
-        self.translatedHeader = translatedHeader
-
-        let translatedScroll = makeTextScrollView(
-            frame: NSRect(x: 14, y: 58, width: collapsedSize.width - 28, height: 110),
-            editable: true, fontSize: 13
-        )
-        translatedScroll.isHidden = true
-        container.addSubview(translatedScroll)
-        translatedScrollView = translatedScroll
-        translatedTextView = translatedScroll.documentView as? NSTextView
-
-        // ── 底部：关闭 ──
-        let closeButton = NSButton(frame: NSRect(x: collapsedSize.width - 82, y: 20, width: 68, height: 30))
-        closeButton.title = "关闭"
-        closeButton.bezelStyle = .rounded
-        closeButton.controlSize = .small
-        closeButton.font = NSFont.systemFont(ofSize: 11)
-        closeButton.target = self
-        closeButton.action = #selector(closeClicked)
-        container.addSubview(closeButton)
-        self.closeButton = closeButton
-
         let panel = OCRWorkspacePanel(
-            contentRect: NSRect(origin: NSPoint(x: panelX, y: panelY), size: collapsedSize),
-            styleMask: [.borderless],
-            backing: .buffered, defer: false
+            contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false
         )
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -179,95 +78,38 @@ final class OCRCopyPanelController {
         panel.hidesOnDeactivate = false
         panel.isMovableByWindowBackground = true
         panel.isReleasedWhenClosed = false
-        panel.contentView = container
-        panel.makeKeyAndOrderFront(nil)
-        panel.makeFirstResponder(originalText)
-        originalText?.setSelectedRange(NSRange(location: text.utf16.count, length: 0))
+        panel.contentView = card
+        self.content = card
         self.panel = panel
+        panel.makeKeyAndOrderFront(nil)
+        panel.makeFirstResponder(card.originalTextView)
+        card.originalTextView.setSelectedRange(NSRange(location: 0, length: 0))
+        card.showCopyFeedback(succeeded: copySucceeded)
 
         escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.keyCode == 53 {
-                self?.teardown()
-                return nil
-            }
-            return event
+            guard let self, let panel = self.panel,
+                  OCRCopyPanelDismissalPolicy.shouldDismiss(
+                    keyCode: event.keyCode, flags: event.modifierFlags,
+                    eventBelongsToPanel: panel.isVisible && event.window === panel,
+                    hasMarkedText: (panel.firstResponder as? NSTextInputClient)?.hasMarkedText() ?? false
+                  ) else { return event }
+            self.teardown()
+            return nil
         }
     }
-
-    /// 区块头：标题 + 右侧行内小图标按钮
-    private func makeSectionHeader(
-        title: String, y: CGFloat, width: CGFloat,
-        actions: [(symbol: String, action: Selector, tooltip: String)]
-    ) -> NSView {
-        let header = NSView(frame: NSRect(x: 14, y: y, width: width - 28, height: 24))
-        let label = NSTextField(labelWithString: title)
-        label.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-        label.textColor = .labelColor
-        label.frame = NSRect(x: 0, y: 2, width: 305, height: 20)
-        header.addSubview(label)
-
-        var buttonX = width - 28 - 26
-        for item in actions {
-            let button = NSButton(frame: NSRect(x: buttonX, y: 0, width: 24, height: 20))
-            button.image = NSImage(systemSymbolName: item.symbol, accessibilityDescription: item.tooltip)
-            button.isBordered = false
-            button.contentTintColor = .secondaryLabelColor
-            button.toolTip = item.tooltip
-            button.target = self
-            button.action = item.action
-            header.addSubview(button)
-            buttonX -= 28
-        }
-        return header
-    }
-
-    private func makeTextScrollView(frame: NSRect, editable: Bool, fontSize: CGFloat) -> NSScrollView {
-        let scrollView = VisionTextScrollView(frame: frame)
-        scrollView.hasVerticalScroller = true
-        scrollView.autohidesScrollers = true
-        scrollView.borderType = .noBorder
-        scrollView.drawsBackground = true
-        scrollView.backgroundColor = .textBackgroundColor
-        scrollView.autoresizingMask = [.width]
-        scrollView.wantsLayer = true
-        scrollView.layer?.cornerRadius = VisionDesign.compactRadius
-        scrollView.layer?.borderWidth = 1
-        scrollView.layer?.borderColor = VisionDesign.panelBorder.cgColor
-
-        let textView = NSTextView(frame: NSRect(
-            x: 0, y: 0, width: scrollView.contentSize.width, height: scrollView.contentSize.height
-        ))
-        textView.isEditable = editable
-        textView.isSelectable = true
-        textView.font = NSFont.systemFont(ofSize: fontSize)
-        textView.textColor = .textColor
-        textView.backgroundColor = .textBackgroundColor
-        textView.insertionPointColor = .controlAccentColor
-        textView.textContainerInset = NSSize(width: 10, height: 9)
-        textView.allowsUndo = true
-        textView.isRichText = false
-        textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false
-        textView.autoresizingMask = [.width]
-        textView.textContainer?.widthTracksTextView = true
-        scrollView.documentView = textView
-        return scrollView
-    }
-
-    // MARK: - 翻译
 
     @objc private func translateClicked() {
         guard !isTranslating else { return }
         // 取编辑框里的最新文本（用户可能改过）
-        guard let rawText = originalTextView?.string,
+        guard let rawText = content?.originalTextView.string,
               let text = PanelTextNormalizer.textForTranslation(rawText) else {
             showTranslationError("没有可翻译的内容")
             return
         }
 
         isTranslating = true
-        translateButton?.title = "翻译中…"
-        translateButton?.isEnabled = false
+        content?.translateButton.title = "翻译中…"
+        content?.translateButton.isEnabled = false
 
         translationTask?.cancel()
         let requestID = UUID()
@@ -296,91 +138,66 @@ final class OCRCopyPanelController {
             await MainActor.run {
                 guard !self.tornDown, self.translationRequestID == requestID else { return }
                 self.isTranslating = false
-                self.translateButton?.title = "翻译此文本"
-                self.translateButton?.isEnabled = true
+                self.content?.translateButton.title = "翻译"
+                self.content?.translateButton.isEnabled = true
                 self.translationTask = nil
             }
         }
     }
 
+
     private func showTranslation(_ text: String) {
-        translatedTextView?.string = text
-        translatedTextView?.textColor = .textColor
-        expandIfNeeded()
+        content?.showTranslation(text, isError: false)
+        resizeForContent()
     }
 
     private func showTranslationError(_ message: String) {
-        translatedTextView?.string = "翻译失败：\(message)"
-        translatedTextView?.textColor = VisionDesign.failureText
-        expandIfNeeded()
+        content?.showTranslation("翻译失败：\(message)", isError: true)
+        resizeForContent()
     }
 
-    /// 译文区展开：面板向下加高（保持顶边不动），显式重排各区块
-    private func expandIfNeeded() {
-        guard !isExpanded, let panel = panel, let container = panel.contentView else { return }
-        isExpanded = true
-
-        var frame = panel.frame
-        frame.origin.y -= (expandedSize.height - frame.height)
-        frame.size = expandedSize
-        panel.setFrame(
-            frame,
-            display: true,
-            animate: VisionMotionPolicy.shouldAnimate(
-                reduceMotionEnabled: VisionMotionPolicy.reduceMotionEnabled
-            )
+    private func resizeForContent() {
+        guard let panel, let content else { return }
+        let size = content.preferredSize
+        var frame = NSRect(
+            x: panel.frame.minX, y: panel.frame.maxY - size.height,
+            width: size.width, height: size.height
         )
-        container.frame = NSRect(origin: .zero, size: expandedSize)
-
-        // 显式布局：上区贴顶，中部按钮，下区译文，关闭钉底
-        originalHeader?.frame.origin.y = expandedSize.height - 34
-        originalScrollView?.frame = NSRect(
-            x: 14, y: expandedSize.height - 204,
-            width: expandedSize.width - 28, height: 158
-        )
-        translateButton?.frame.origin.y = expandedSize.height - 246
-        translatedHeader?.frame.origin.y = expandedSize.height - 282
-        translatedScrollView?.frame = NSRect(
-            x: 14, y: 60,
-            width: expandedSize.width - 28,
-            height: expandedSize.height - 348
-        )
-        closeButton?.frame.origin.y = 18
-
-        translatedHeader?.isHidden = false
-        translatedScrollView?.isHidden = false
+        if let visible = panel.screen?.visibleFrame {
+            frame.origin.y = min(max(frame.minY, visible.minY + 12), visible.maxY - size.height - 12)
+        }
+        panel.setFrame(frame, display: true, animate: VisionMotionPolicy.shouldAnimate(
+            reduceMotionEnabled: VisionMotionPolicy.reduceMotionEnabled
+        ))
+        content.frame.size = size
+        content.needsLayout = true
     }
-
-    // MARK: - 动作
 
     @objc private func copyOriginal() {
-        guard let text = originalTextView?.string else { return }
-        let normalized = PanelTextNormalizer.textForCopy(text)
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(normalized, forType: .string)
-        ToastWindow.show(message: "已复制 \(normalized.count) 个字符")
+        guard let text = content?.originalTextView.string else { return }
+        copyToClipboard(PanelTextNormalizer.textForCopy(text))
     }
 
     @objc private func copyTranslated() {
-        guard let text = translatedTextView?.string, !text.isEmpty else { return }
+        guard let text = content?.translatedTextView.string, !text.isEmpty else { return }
+        copyToClipboard(text)
+    }
+
+    private func copyToClipboard(_ text: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
-        ToastWindow.show(message: "译文已复制")
+        content?.showCopyFeedback(succeeded: pasteboard.setString(text, forType: .string))
     }
 
     @objc private func speakOriginal() {
-        SpeechService.shared.toggle(text: originalTextView?.string ?? "")
+        SpeechService.shared.toggle(text: content?.originalTextView.string ?? "")
     }
 
     @objc private func speakTranslated() {
-        SpeechService.shared.toggle(text: translatedTextView?.string ?? "")
+        SpeechService.shared.toggle(text: content?.translatedTextView.string ?? "")
     }
 
-    @objc private func closeClicked() {
-        teardown()
-    }
+    @objc private func closeClicked() { teardown() }
 
     private func teardown() {
         guard !tornDown else { return }
@@ -388,9 +205,9 @@ final class OCRCopyPanelController {
         translationRequestID = UUID()
         translationTask?.cancel()
         translationTask = nil
+        content?.invalidateCopyFeedback()
         SpeechService.shared.stop()
         notifyDismissIfNeeded()
-
         if let monitor = escMonitor {
             NSEvent.removeMonitor(monitor)
             escMonitor = nil
@@ -398,32 +215,271 @@ final class OCRCopyPanelController {
         let oldPanel = panel
         oldPanel?.orderOut(nil)
         panel = nil
-        originalHeader = nil
-        originalScrollView = nil
-        originalTextView = nil
-        translatedTextView = nil
-        translatedHeader = nil
-        translatedScrollView = nil
-        translateButton = nil
-        closeButton = nil
+        content = nil
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
             _ = oldPanel
-            if OCRCopyPanelController.current === self {
-                OCRCopyPanelController.current = nil
-            }
+            if OCRCopyPanelController.current === self { OCRCopyPanelController.current = nil }
         }
     }
 
     private func notifyDismissIfNeeded() {
         guard !didNotifyDismiss else { return }
         didNotifyDismiss = true
-        if let owner {
-            onDismiss?(owner)
-        }
+        if let owner { onDismiss?(owner) }
     }
 }
 
-/// OCR 文本需要真正拿到键盘焦点；非激活面板只能“看起来可编辑”，实际点不进去。
+/// Single clipped paper surface. Editors are transparent so they cannot paint square corners.
+final class OCRCopyPanelContentView: VisionSurfaceView {
+    struct Actions {
+        let copyOriginal: Selector
+        let speakOriginal: Selector
+        let translate: Selector
+        let copyTranslated: Selector
+        let speakTranslated: Selector
+        let close: Selector
+    }
+
+    let originalTextView: NSTextView
+    let translatedTextView: NSTextView
+    let translateButton = NSButton(title: "翻译", target: nil, action: nil)
+    let copyFeedbackLabel = NSTextField(labelWithString: "")
+    private let originalScroll: NSScrollView
+    private let translatedScroll: NSScrollView
+    private let title = NSTextField(labelWithString: "识别文本")
+    private let translatedTitle = NSTextField(labelWithString: "译文")
+    private let footerDivider = VisionSurfaceView()
+    private let sectionDivider = VisionSurfaceView()
+    private let feedbackView = NSView()
+    private let feedbackIcon = NSImageView()
+    private var headerButtons: [NSButton] = []
+    private var translationButtons: [NSButton] = []
+    private var originalHeight: CGFloat
+    private var translatedHeight: CGFloat?
+    private var feedbackGeneration = UUID()
+    private var feedbackDismissal: DispatchWorkItem?
+
+    var preferredSize: NSSize {
+        OCRCopyPanelLayout.size(originalHeight: originalHeight, translatedHeight: translatedHeight)
+    }
+
+    init(text: String, target: AnyObject, actions: Actions) {
+        originalHeight = OCRCopyPanelLayout.textHeight(text, minimum: 96, maximum: 216)
+        (originalScroll, originalTextView) = Self.makeEditor(text: text)
+        (translatedScroll, translatedTextView) = Self.makeEditor(text: "")
+        super.init(frame: NSRect(origin: .zero, size: .zero))
+        surfaceColor = .textBackgroundColor
+        outlineColor = .separatorColor
+        wantsLayer = true
+        layer?.cornerRadius = 16
+        layer?.cornerCurve = .continuous
+        layer?.borderWidth = 0.5
+        layer?.masksToBounds = true
+        setAccessibilityIdentifier("ocr.copy.card")
+
+        for label in [title, translatedTitle] {
+            label.font = .systemFont(ofSize: 12, weight: .semibold)
+            label.textColor = .secondaryLabelColor
+            addSubview(label)
+        }
+        headerButtons = [
+            Self.iconButton("doc.on.doc", label: "复制文本", target: target, action: actions.copyOriginal),
+            Self.iconButton("speaker.wave.2", label: "朗读文本", target: target, action: actions.speakOriginal),
+            Self.iconButton("xmark", label: "关闭", target: target, action: actions.close),
+        ]
+        translationButtons = [
+            Self.iconButton("doc.on.doc", label: "复制译文", target: target, action: actions.copyTranslated),
+            Self.iconButton("speaker.wave.2", label: "朗读译文", target: target, action: actions.speakTranslated),
+        ]
+        (headerButtons + translationButtons).forEach(addSubview)
+        addSubview(originalScroll)
+        addSubview(translatedScroll)
+        translatedTextView.setAccessibilityLabel("译文，可编辑")
+        originalTextView.setAccessibilityLabel("识别文本，可编辑")
+
+        translateButton.target = target
+        translateButton.action = actions.translate
+        translateButton.bezelStyle = .rounded
+        translateButton.controlSize = .small
+        translateButton.font = .systemFont(ofSize: 11, weight: .medium)
+        translateButton.image = NSImage(systemSymbolName: "character.bubble", accessibilityDescription: nil)
+        translateButton.imagePosition = .imageLeading
+        translateButton.image?.size = NSSize(width: 13, height: 13)
+        translateButton.setAccessibilityLabel("翻译此文本")
+        addSubview(translateButton)
+        for divider in [footerDivider, sectionDivider] {
+            divider.surfaceColor = .separatorColor
+            addSubview(divider)
+        }
+        copyFeedbackLabel.font = .systemFont(ofSize: 11)
+        copyFeedbackLabel.textColor = .secondaryLabelColor
+        feedbackIcon.contentTintColor = .secondaryLabelColor
+        feedbackIcon.imageScaling = .scaleProportionallyDown
+        feedbackView.wantsLayer = true
+        feedbackView.addSubview(feedbackIcon)
+        feedbackView.addSubview(copyFeedbackLabel)
+        addSubview(feedbackView)
+        feedbackView.isHidden = true
+        frame.size = preferredSize
+        applyLayout()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func layout() {
+        super.layout()
+        applyLayout()
+    }
+
+    private func applyLayout() {
+        let width = bounds.width
+        let originalY: CGFloat = translatedHeight.map { 52 + $0 + 48 } ?? 52
+        title.frame = NSRect(x: 20, y: bounds.height - 34, width: width - 152, height: 20)
+        for (index, button) in headerButtons.enumerated() {
+            button.frame = NSRect(x: width - 106 + CGFloat(index) * 30, y: bounds.height - 38, width: 26, height: 26)
+        }
+        originalScroll.frame = NSRect(x: 20, y: originalY, width: width - 40, height: originalHeight)
+        footerDivider.frame = NSRect(x: 20, y: 44, width: width - 40, height: 0.5)
+        translateButton.frame = NSRect(x: width - 100, y: 10, width: 80, height: 26)
+        feedbackView.frame = NSRect(x: 20, y: 13, width: width - 134, height: 18)
+        feedbackIcon.frame = NSRect(x: 0, y: 2, width: 13, height: 13)
+        copyFeedbackLabel.frame = NSRect(x: 19, y: 0, width: feedbackView.bounds.width - 19, height: 18)
+
+        let expanded = translatedHeight != nil
+        (translationButtons + [translatedTitle, translatedScroll, sectionDivider]).forEach { $0.isHidden = !expanded }
+        if let height = translatedHeight {
+            translatedScroll.frame = NSRect(x: 20, y: 52, width: width - 40, height: height)
+            translatedTitle.frame = NSRect(x: 20, y: 52 + height + 8, width: width - 112, height: 24)
+            for (index, button) in translationButtons.enumerated() {
+                button.frame = NSRect(x: width - 76 + CGFloat(index) * 30, y: 52 + height + 7, width: 26, height: 26)
+            }
+            sectionDivider.frame = NSRect(x: 20, y: 52 + height + 38, width: width - 40, height: 0.5)
+        }
+    }
+
+    func showTranslation(_ text: String, isError: Bool) {
+        translatedTextView.string = text
+        translatedTextView.textColor = isError ? VisionDesign.failureText : .textColor
+        translatedHeight = OCRCopyPanelLayout.textHeight(text, minimum: 88, maximum: 164)
+    }
+
+    /// Feedback stays inside the card and never takes focus, plays a sound, or opens a window.
+    func showCopyFeedback(succeeded: Bool) {
+        invalidateCopyFeedback()
+        feedbackView.isHidden = false
+        feedbackView.layer?.removeAllAnimations()
+        feedbackView.alphaValue = 1
+        copyFeedbackLabel.stringValue = succeeded ? "已复制进剪贴板" : "复制失败，请重试"
+        let feedbackColor: NSColor = succeeded ? VisionDesign.brandAccent : .secondaryLabelColor
+        copyFeedbackLabel.textColor = feedbackColor
+        feedbackIcon.contentTintColor = feedbackColor
+        feedbackIcon.image = NSImage(
+            systemSymbolName: succeeded ? "checkmark.circle" : "exclamationmark.circle",
+            accessibilityDescription: nil
+        )
+        guard succeeded else { return }
+        let generation = feedbackGeneration
+        let dismissal = DispatchWorkItem { [weak self] in
+            guard let self, self.feedbackGeneration == generation else { return }
+            let hide = { [weak self] in
+                guard let self, self.feedbackGeneration == generation else { return }
+                self.feedbackView.isHidden = true
+            }
+            guard VisionMotionPolicy.shouldAnimate(
+                reduceMotionEnabled: VisionMotionPolicy.reduceMotionEnabled
+            ) else { hide(); return }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.18
+                self.feedbackView.animator().alphaValue = 0
+            } completionHandler: { hide() }
+        }
+        feedbackDismissal = dismissal
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8, execute: dismissal)
+    }
+
+    func invalidateCopyFeedback() {
+        feedbackGeneration = UUID()
+        feedbackDismissal?.cancel()
+        feedbackDismissal = nil
+    }
+
+    private static func iconButton(_ symbol: String, label: String, target: AnyObject, action: Selector) -> NSButton {
+        let button = NSButton()
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
+            .withSymbolConfiguration(.init(pointSize: 12, weight: .regular))
+        button.isBordered = false
+        button.contentTintColor = .secondaryLabelColor
+        button.toolTip = label
+        button.setAccessibilityLabel(label)
+        button.target = target
+        button.action = action
+        return button
+    }
+
+    private static func makeEditor(text: String) -> (NSScrollView, NSTextView) {
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
+        scroll.borderType = .noBorder
+        scroll.drawsBackground = false
+        scroll.contentView.drawsBackground = false
+        let editor = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 96))
+        editor.string = text
+        editor.isEditable = true
+        editor.isSelectable = true
+        editor.isRichText = false
+        editor.drawsBackground = false
+        editor.textColor = .textColor
+        editor.insertionPointColor = .controlAccentColor
+        editor.font = .systemFont(ofSize: 14)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 3
+        editor.defaultParagraphStyle = paragraph
+        editor.textContainerInset = NSSize(width: 0, height: 3)
+        editor.allowsUndo = true
+        editor.isAutomaticQuoteSubstitutionEnabled = false
+        editor.isAutomaticDashSubstitutionEnabled = false
+        editor.isHorizontallyResizable = false
+        editor.isVerticallyResizable = true
+        editor.autoresizingMask = [.width]
+        editor.minSize = NSSize(width: 0, height: 0)
+        editor.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        editor.textContainer?.containerSize = NSSize(width: 400, height: CGFloat.greatestFiniteMagnitude)
+        editor.textContainer?.widthTracksTextView = true
+        scroll.documentView = editor
+        return (scroll, editor)
+    }
+}
+
+enum OCRCopyPanelLayout {
+    static func textHeight(_ text: String, minimum: CGFloat, maximum: CGFloat) -> CGFloat {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 3
+        let rect = (text as NSString).boundingRect(
+            with: NSSize(width: 400, height: 10_000),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: NSFont.systemFont(ofSize: 14), .paragraphStyle: paragraph]
+        )
+        return min(maximum, max(minimum, ceil(rect.height) + 8))
+    }
+
+    static func size(originalHeight: CGFloat, translatedHeight: CGFloat?) -> NSSize {
+        NSSize(width: 440, height: originalHeight + 100 + (translatedHeight.map { $0 + 48 } ?? 0))
+    }
+
+    static func placement(size: NSSize, near region: CGRect, primaryHeight: CGFloat, visible: CGRect) -> CGRect {
+        let below = primaryHeight - region.maxY - size.height - 12
+        let above = primaryHeight - region.minY + 12
+        let preferredY = below >= visible.minY + 12 ? below : above
+        return CGRect(
+            x: min(max(region.midX - size.width / 2, visible.minX + 12), visible.maxX - size.width - 12),
+            y: min(max(preferredY, visible.minY + 12), visible.maxY - size.height - 12),
+            width: size.width, height: size.height
+        )
+    }
+}
+
 final class OCRWorkspacePanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }

@@ -124,6 +124,8 @@ enum XLGConfigImportError: LocalizedError {
   case missingKarabinerElements
   case unreadableKarabinerConfig(backupURL: URL?)
   case rollbackFailed(original: Error, rollback: Error)
+  case failedWithBackup(original: Error, backupURL: URL)
+  case incompleteCompensation([String])
 
   var errorDescription: String? {
     switch self {
@@ -148,10 +150,23 @@ enum XLGConfigImportError: LocalizedError {
         return "Karabiner 配置文件读不出来。已保留原文件备份：\(backupURL.path)。请重新打开 Karabiner 后再导入；如果仍失败，把错误反馈给小龙哥。"
       }
       return "Karabiner 配置文件读不出来。请重新打开 Karabiner 后再导入；如果仍失败，把错误反馈给小龙哥。"
+    case .failedWithBackup(let original, _):
+      return "恢复未完成，恢复前的配置副本已保留。\(original.localizedDescription)"
+    case .incompleteCompensation(let failures):
+      return "部分配置未能还原：" + failures.joined(separator: "；")
     case .rollbackFailed(let original, let rollback):
       return "导入失败且回滚未完全成功：\(original.localizedDescription)；回滚错误：\(rollback.localizedDescription)"
     }
   }
+}
+
+/// Immutable preimage and two effects supplied by the application's one shortcut writer.
+/// The importer cannot create its own live writer or copy a backup over a later edit.
+struct XLGConfigShortcutTransaction {
+  let fileURL: URL
+  let originalData: Data?
+  let commit: @MainActor (Data?) throws -> Void
+  let rollback: @MainActor () throws -> Void
 }
 
 struct XLGConfigImportRequest {
@@ -169,6 +184,7 @@ struct XLGConfigImportRequest {
   var karabinerAppURL: URL
   var karabinerConfigURL: URL
   var karabinerCLIURL: URL
+  var shortcutTransaction: XLGConfigShortcutTransaction?
 
   init(
     applicationSupportURL: URL,
@@ -184,7 +200,8 @@ struct XLGConfigImportRequest {
     inputMethodRulesURL: URL? = nil,
     launcherPinnedURL: URL? = nil,
     youmuSettingsURL: URL? = nil,
-    pdfDefaults: UserDefaults? = nil
+    pdfDefaults: UserDefaults? = nil,
+    shortcutTransaction: XLGConfigShortcutTransaction? = nil
   ) {
     self.applicationSupportURL = applicationSupportURL
     self.shortcutsURL = shortcutsURL
@@ -199,6 +216,7 @@ struct XLGConfigImportRequest {
       youmuSettingsURL
       ?? applicationSupportURL.appendingPathComponent("Features/Youmu/settings.json")
     self.defaults = defaults
+    self.shortcutTransaction = shortcutTransaction
     self.pdfDefaults = pdfDefaults ?? defaults
     self.allowNetworkDownload = allowNetworkDownload
     self.includeKarabiner = includeKarabiner
@@ -461,6 +479,7 @@ enum XLGConfigImporter {
     var backupURL: URL?
   }
 
+  @MainActor
   static func importRecommendedConfig(
     request: XLGConfigImportRequest
   ) async throws -> XLGConfigImportResult {
@@ -469,28 +488,35 @@ enum XLGConfigImporter {
 
   /// Detect an entirely new configuration. Missing shortcuts alone never means a new user:
   /// any existing managed file (even malformed/a broken symlink) or preference preserves the profile.
+  @MainActor
   static func installBundledConfigurationIfNeeded(
     request: XLGConfigImportRequest
   ) throws -> XLGConfigImportResult? {
+    guard shouldInstallBundledConfiguration(request: request) else { return nil }
+    return try importBundledConfiguration(request: request)
+  }
+
+  static func shouldInstallBundledConfiguration(request: XLGConfigImportRequest) -> Bool {
     let files = [
       request.shortcutsURL, request.phrasesURL, request.inputMethodRulesURL,
       request.launcherPinnedURL, request.youmuSettingsURL,
     ]
     for file in files {
       var info = stat()
-      if lstat(file.path, &info) == 0 { return nil }
-      if errno != ENOENT { return nil }
+      if lstat(file.path, &info) == 0 { return false }
+      if errno != ENOENT { return false }
     }
     if allowlistedUserDefaultsKeys.contains(where: { request.defaults.object(forKey: $0) != nil })
       || request.pdfDefaults.object(forKey: pdfShortcutsKey) != nil
     {
-      return nil
+      return false
     }
-    return try importBundledConfiguration(request: request)
+    return true
   }
 
   /// A synchronous transaction for the first launch after the caller has verified no existing
   /// user configuration is present. Ordinary upgrades must not invoke this automatically.
+  @MainActor
   static func importBundledConfiguration(
     request: XLGConfigImportRequest
   ) throws -> XLGConfigImportResult {
@@ -500,6 +526,7 @@ enum XLGConfigImporter {
       warnings: [], sourceTrust: .bundled, request: request, replaceManagedConfiguration: true)
   }
 
+  @MainActor
   static func importConfigData(
     _ data: Data,
     sourceDescription: String,
@@ -516,6 +543,7 @@ enum XLGConfigImporter {
       replaceManagedConfiguration: false)
   }
 
+  @MainActor
   static func importConfigData(
     _ data: Data,
     sourceDescription: String,
@@ -546,24 +574,39 @@ enum XLGConfigImporter {
       }
     }
 
-    let backup = try makeBackup(request: request)
+    guard let shortcutTransaction = request.shortcutTransaction,
+      shortcutTransaction.fileURL.standardizedFileURL == request.shortcutsURL.standardizedFileURL
+    else {
+      throw XLGConfigImportError.invalidPayload("恢复事务尚未就绪，未修改配置")
+    }
+    let backup = try makeBackup(request: request, shortcutTransaction: shortcutTransaction)
+    var touched: Set<String> = []
     do {
-      try write(importedShortcuts, to: request.shortcutsURL)
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+      try shortcutTransaction.commit(encoder.encode(importedShortcuts))
+      touched.insert("phrases")
       try write(payload.app.phrases, to: request.phrasesURL)
       if replaceManagedConfiguration {
+        touched.insert("launcher")
         try writeJSONObject(
           payload.app.launcherPinned?.jsonObject ?? ["version": 1, "items": []],
           to: request.launcherPinnedURL)
+        touched.insert("youmu")
         try writeJSONObject(
           payload.app.youmuSettings?.jsonObject ?? [:], to: request.youmuSettingsURL)
+        touched.insert("defaults")
         clearManagedUserDefaults(request.defaults)
+        touched.insert("pdf")
         try applyPDFShortcuts(payload.app.pdfShortcuts, defaults: request.pdfDefaults)
       }
+      touched.insert("defaults")
       let appliedDefaults = try applyUserDefaults(
         payload.app.userDefaults,
         defaults: request.defaults)
       let karabinerMessage: String
       if request.includeKarabiner, payload.karabiner?.importCapsEntryKeyRule == true {
+        touched.insert("karabiner")
         karabinerMessage = try importKarabinerRule(
           request: request,
           backupURL: backup.directoryURL,
@@ -582,11 +625,15 @@ enum XLGConfigImporter {
         warnings: warnings)
     } catch {
       do {
-        try rollback(backup: backup, request: request)
+        try rollback(
+          backup: backup, request: request, shortcutTransaction: shortcutTransaction,
+          touched: touched)
       } catch let rollbackError {
-        throw XLGConfigImportError.rollbackFailed(original: error, rollback: rollbackError)
+        throw XLGConfigImportError.failedWithBackup(
+          original: XLGConfigImportError.rollbackFailed(original: error, rollback: rollbackError),
+          backupURL: backup.directoryURL)
       }
-      throw error
+      throw XLGConfigImportError.failedWithBackup(original: error, backupURL: backup.directoryURL)
     }
   }
 
@@ -784,18 +831,18 @@ enum XLGConfigImporter {
     var karabinerExisted: Bool
   }
 
-  private static func makeBackup(request: XLGConfigImportRequest) throws -> BackupState {
+  private static func makeBackup(
+    request: XLGConfigImportRequest, shortcutTransaction: XLGConfigShortcutTransaction
+  ) throws -> BackupState {
     let backupURL = request.applicationSupportURL
       .appendingPathComponent("backups", isDirectory: true)
       .appendingPathComponent("xlg-config-import-\(timestamp())", isDirectory: true)
     try FileManager.default.createDirectory(
       at: backupURL, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
 
-    let shortcutsExisted = FileManager.default.fileExists(atPath: request.shortcutsURL.path)
-    if shortcutsExisted {
-      try FileManager.default.copyItem(
-        at: request.shortcutsURL,
-        to: backupURL.appendingPathComponent("shortcuts.json"))
+    let shortcutsExisted = shortcutTransaction.originalData != nil
+    if let original = shortcutTransaction.originalData {
+      try original.write(to: backupURL.appendingPathComponent("shortcuts.json"), options: .atomic)
     }
 
     let phrasesExisted = FileManager.default.fileExists(atPath: request.phrasesURL.path)
@@ -851,39 +898,65 @@ enum XLGConfigImporter {
       karabinerExisted: karabinerExisted)
   }
 
-  private static func rollback(backup: BackupState, request: XLGConfigImportRequest) throws {
-    try restoreFile(
-      original: request.shortcutsURL,
-      backup: backup.directoryURL.appendingPathComponent("shortcuts.json"),
-      existed: backup.shortcutsExisted)
-    try restoreFile(
-      original: request.phrasesURL,
-      backup: backup.directoryURL.appendingPathComponent("phrases.json"),
-      existed: backup.phrasesExisted)
-    try restoreFile(
-      original: request.inputMethodRulesURL,
-      backup: backup.directoryURL.appendingPathComponent("input-method-rules.json"),
-      existed: backup.inputMethodRulesExisted)
-    try restoreFile(
-      original: request.launcherPinnedURL,
-      backup: backup.directoryURL.appendingPathComponent("launcher-pinned.json"),
-      existed: backup.launcherPinnedExisted)
-    try restoreFile(
-      original: request.youmuSettingsURL,
-      backup: backup.directoryURL.appendingPathComponent("youmu-settings.json"),
-      existed: backup.youmuSettingsExisted)
-    try restoreUserDefaults(
-      request.defaults,
-      from: backup.directoryURL.appendingPathComponent(userDefaultsBackupName))
-    try restoreUserDefaults(
-      request.pdfDefaults, from: backup.directoryURL.appendingPathComponent("pdf-shortcuts.plist"),
-      keys: [pdfShortcutsKey])
-    if request.includeKarabiner {
-      try restoreFile(
-        original: request.karabinerConfigURL,
-        backup: backup.directoryURL.appendingPathComponent("karabiner.json"),
-        existed: backup.karabinerExisted)
+  @MainActor
+  private static func rollback(
+    backup: BackupState, request: XLGConfigImportRequest,
+    shortcutTransaction: XLGConfigShortcutTransaction, touched: Set<String>
+  ) throws {
+    var failures: [String] = []
+    func compensate(_ name: String, _ action: () throws -> Void) {
+      do { try action() } catch { failures.append("\(name)：\(error.localizedDescription)") }
     }
+    // Always finish every attempted participant; one failed CAS must not skip other repairs.
+    compensate("快捷键") { try shortcutTransaction.rollback() }
+    if touched.contains("phrases") {
+      compensate("快捷短语") {
+        try restoreFile(
+          original: request.phrasesURL,
+          backup: backup.directoryURL.appendingPathComponent("phrases.json"),
+          existed: backup.phrasesExisted)
+      }
+    }
+    if touched.contains("launcher") {
+      compensate("启动器") {
+        try restoreFile(
+          original: request.launcherPinnedURL,
+          backup: backup.directoryURL.appendingPathComponent("launcher-pinned.json"),
+          existed: backup.launcherPinnedExisted)
+      }
+    }
+    if touched.contains("youmu") {
+      compensate("截图设置") {
+        try restoreFile(
+          original: request.youmuSettingsURL,
+          backup: backup.directoryURL.appendingPathComponent("youmu-settings.json"),
+          existed: backup.youmuSettingsExisted)
+      }
+    }
+    if touched.contains("defaults") {
+      compensate("应用设置") {
+        try restoreUserDefaults(
+          request.defaults, from: backup.directoryURL.appendingPathComponent(userDefaultsBackupName)
+        )
+      }
+    }
+    if touched.contains("pdf") {
+      compensate("PDF 设置") {
+        try restoreUserDefaults(
+          request.pdfDefaults,
+          from: backup.directoryURL.appendingPathComponent("pdf-shortcuts.plist"),
+          keys: [pdfShortcutsKey])
+      }
+    }
+    if touched.contains("karabiner") {
+      compensate("Karabiner") {
+        try restoreFile(
+          original: request.karabinerConfigURL,
+          backup: backup.directoryURL.appendingPathComponent("karabiner.json"),
+          existed: backup.karabinerExisted)
+      }
+    }
+    if !failures.isEmpty { throw XLGConfigImportError.incompleteCompensation(failures) }
   }
 
   private static func restoreFile(original: URL, backup: URL, existed: Bool) throws {

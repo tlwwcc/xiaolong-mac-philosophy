@@ -5,7 +5,7 @@ func runInstalledTranslationSmoke() async -> [String: String] {
   #if canImport(BuiltinFeatureCatalog) && canImport(PijuanPDFFeature) && canImport(PlatformContracts) && canImport(PlatformServices) && canImport(YoumuFeature)
     return await YoumuTranslationDiagnostics.runInstalledModelSmoke()
   #else
-    return ["status": "SKIP", "reason": "本构建未包含游目翻译模块。"]
+    return ["status": "SKIP", "reason": "本构建未包含截图翻译模块。"]
   #endif
 }
 
@@ -162,13 +162,13 @@ func runInstalledTranslationSmoke() async -> [String: String] {
       Task { @MainActor [weak self] in
         guard let self else { return }
         if youmuRuntime.cancelIfActive(commandID: command) {
-          model?.statusMessage = "已关闭游目当前动作。"
+          model?.statusMessage = "已关闭截图当前动作。"
           return
         }
         guard model?.hasGlobalInputOwnership == true else {
           model?.statusMessage =
             model?.globalInputOwnershipBlockedMessage
-            ?? "全局输入独占权尚未取得，游目未执行。"
+            ?? "全局输入独占权尚未取得，截图未执行。"
           return
         }
         do {
@@ -178,7 +178,7 @@ func runInstalledTranslationSmoke() async -> [String: String] {
           )
           switch result {
           case .executed:
-            model?.statusMessage = "游目动作已开始。"
+            model?.statusMessage = "截图动作已开始。"
           case .denied(let reason):
             model?.statusMessage = reason
           case .entitlementDenied(_, let reason):
@@ -189,7 +189,7 @@ func runInstalledTranslationSmoke() async -> [String: String] {
         } catch let accessError as YoumuFinalAccessRevoked {
           handleYoumuFinalAccessRevocation(accessError.decision)
         } catch {
-          model?.statusMessage = "游目未能执行：\(error.localizedDescription)"
+          model?.statusMessage = "截图未能执行：\(error.localizedDescription)"
         }
       }
     }
@@ -199,7 +199,7 @@ func runInstalledTranslationSmoke() async -> [String: String] {
       switch permissionID {
       case .screenRecording:
         model?.presentAuthorizationCenter()
-        model?.statusMessage = "请在统一授权中心开启屏幕录制，完成后游目会自动恢复。"
+        model?.statusMessage = "请在统一授权中心开启屏幕录制，完成后截图会自动恢复。"
       case .inputMonitoring, .accessibility:
         model?.presentAuthorizationCenter()
       default:
@@ -221,13 +221,13 @@ func runInstalledTranslationSmoke() async -> [String: String] {
     private func showPijuanPDF() {
       _ = pijuanPDF.showWindow()
       NSApp.activate(ignoringOtherApps: true)
-      model?.statusMessage = "已打开披卷。"
+      model?.statusMessage = "已打开PDF 浏览器。"
     }
 
     private func openPijuanPDF(_ url: URL) {
       _ = pijuanPDF.showWindow(opening: url)
       NSApp.activate(ignoringOtherApps: true)
-      model?.statusMessage = "已用披卷打开 \(url.lastPathComponent)。"
+      model?.statusMessage = "已用PDF 浏览器打开 \(url.lastPathComponent)。"
     }
   }
 
@@ -235,7 +235,7 @@ func runInstalledTranslationSmoke() async -> [String: String] {
     case pdfPreferencesUnavailable
 
     var errorDescription: String? {
-      "无法建立披卷的独立偏好域。"
+      "无法建立PDF 浏览器的独立偏好域。"
     }
   }
 

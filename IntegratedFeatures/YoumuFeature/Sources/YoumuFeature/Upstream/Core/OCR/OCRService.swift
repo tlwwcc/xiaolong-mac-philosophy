@@ -1,5 +1,6 @@
 import Vision
 import AppKit
+import CoreText
 
 /// 基于 Apple Vision 框架的 OCR 服务，支持中英文混合识别
 nonisolated final class OCRService: Sendable {
@@ -8,6 +9,7 @@ nonisolated final class OCRService: Sendable {
 
     typealias Recognition = @Sendable (CGImage, ImageProcessingCancellation) throws -> [OCRTextBlock]
     private let recognition: Recognition
+    private let warmup = OCRWarmup()
 
     init(recognition: @escaping Recognition = { image, cancellation in
         try OCRService.recognizeOnWorker(image: image, cancellation: cancellation)
@@ -16,19 +18,79 @@ nonisolated final class OCRService: Sendable {
     }
 
     func recognizeText(from image: CGImage) async throws -> [OCRTextBlock] {
-        try await ImageProcessingWork.run { cancellation in
+        try await warmup.waitIfRunning()
+        return try await ImageProcessingWork.run { cancellation in
             try self.recognition(image, cancellation)
+        }
+    }
+
+    /// Load the same accurate Vision models using generated text, without capturing a screen.
+    /// A first real request joins preparation instead of loading the models a second time.
+    func prewarm() {
+        warmup.start {
+            autoreleasepool {
+                guard let context = CGContext(data: nil, width: 640, height: 96,
+                    bitsPerComponent: 8, bytesPerRow: 0,
+                    space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+                context.setFillColor(CGColor(gray: 1, alpha: 1))
+                context.fill(CGRect(x: 0, y: 0, width: 640, height: 96))
+                let font = CTFontCreateWithName("Helvetica" as CFString, 28, nil)
+                let text = NSAttributedString(string: "Ready 保存 翻譯 123", attributes: [
+                    NSAttributedString.Key(kCTFontAttributeName as String): font,
+                    NSAttributedString.Key(kCTForegroundColorAttributeName as String): CGColor(gray: 0, alpha: 1)
+                ])
+                context.textPosition = CGPoint(x: 12, y: 32)
+                CTLineDraw(CTLineCreateWithAttributedString(text), context)
+                guard let image = context.makeImage() else { return }
+                // Preparation failure must not disable a later real recognition attempt.
+                _ = try? self.recognition(image, ImageProcessingCancellation())
+            }
         }
     }
 
     private static func recognizeOnWorker(
         image: CGImage, cancellation: ImageProcessingCancellation
     ) throws -> [OCRTextBlock] {
+        let image = try normalizedImage(image)
+        return try OCRRecognitionRecovery.run(cancellation: cancellation) { useCPU in
+            try performRecognition(image: image, cancellation: cancellation, useCPU: useCPU)
+        }
+    }
+
+    /// Screenshot color spaces and HDR surfaces must not leak into Vision's image reader.
+    static func normalizedImage(_ image: CGImage) throws -> CGImage {
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+            let context = CGContext(
+                data: nil, width: image.width, height: image.height,
+                bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                    | CGBitmapInfo.byteOrder32Big.rawValue
+            )
+        else { throw OCRImagePreparationError.cannotCreateBitmap }
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        guard let result = context.makeImage() else {
+            throw OCRImagePreparationError.cannotCreateBitmap
+        }
+        return result
+    }
+
+    static func performRecognition(
+        image: CGImage, cancellation: ImageProcessingCancellation, useCPU: Bool
+    ) throws -> [OCRTextBlock] {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
-        request.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US", "ja-JP", "ko-KR"]
-        request.automaticallyDetectsLanguage = true
+        // Apple supports pairing Chinese with English, not Japanese/Korean in the same request.
+        request.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
+        // Detecting one dominant language drops Latin lines in mixed Chinese/English captures.
+        // Let Vision use the explicit supported language list for every observation instead.
+        request.automaticallyDetectsLanguage = false
         request.usesLanguageCorrection = true
+        // A fresh accurate request on the CPU avoids the affected device's accelerator/model
+        // loading path. This is one invocation's recovery, never a persistent system setting.
+        request.usesCPUOnly = useCPU
         let requestCancellation = VisionRequestCancellation(request)
         cancellation.setHandler { requestCancellation.cancel() }
         defer {
@@ -53,6 +115,52 @@ nonisolated final class OCRService: Sendable {
                 confidence: candidate.confidence
             )
         }
+    }
+
+    /// Join clear wrapped Latin prose before translation. Independent menu rows and columns
+    /// remain separate. A fragment such as "and drinks." must not become its own JSON item.
+    static func translationBlocks(_ blocks: [OCRTextBlock]) -> [OCRTextBlock] {
+        var result: [OCRTextBlock] = []
+        var previousLine: OCRTextBlock?
+        func isLatinProse(_ text: String) -> Bool {
+            let letters = text.unicodeScalars.filter { CharacterSet.letters.contains($0) }
+            return !letters.isEmpty && letters.filter { $0.isASCII }.count * 4 >= letters.count * 3
+        }
+        for block in blocks {
+            defer { previousLine = block }
+            if let previousLine, let group = result.last {
+                let a = previousLine.boundingBox, b = block.boundingBox
+                let gap = a.minY - b.maxY
+                let joined = group.text + " " + block.text
+                let continues = previousLine.text.count >= 50
+                    && isLatinProse(previousLine.text) && isLatinProse(block.text)
+                    && !(previousLine.text.last.map { ".!?。！？:：;；".contains($0) } ?? true)
+                    && a.width >= 0.35 && abs(a.minX - b.minX) < 0.012
+                    && b.midY < a.midY && gap >= -a.height * 0.1 && gap <= a.height * 1.2
+                    && b.height >= a.height * 0.75 && b.height <= a.height * 1.33
+                    && joined.utf8.count <= 1_600
+                if continues {
+                    result[result.count - 1] = OCRTextBlock(text: joined,
+                        boundingBox: group.boundingBox.union(b),
+                        confidence: min(group.confidence, block.confidence))
+                    continue
+                }
+            }
+            result.append(block)
+        }
+        return result
+    }
+
+    /// Vision can turn program placeholders into full-width or unmatched braces. This is
+    /// an uncertainty signal, never permission to guess the original variable/number.
+    static func hasUncertainLiteral(_ text: String) -> Bool {
+        if text.contains("｛") || text.contains("｝") { return true }
+        var depth = 0
+        for character in text {
+            if character == "{" { depth += 1 }
+            if character == "}" { depth -= 1; if depth < 0 { return true } }
+        }
+        return depth != 0
     }
 
     /// 把 OCR 结果按自然阅读顺序拼接成文本：
@@ -190,6 +298,42 @@ nonisolated final class OCRService: Sendable {
             (0xFF00...0xFF65).contains(scalar.value)      // 全角字符+半角片假名/韩文
         }
     }
+}
+
+nonisolated enum OCRTranslationPreparationError: LocalizedError {
+    case uncertainCharacters
+    var errorDescription: String? {
+        "部分符号未能可靠识别，请放大选区重试，或直接选择文字翻译。"
+    }
+}
+
+/// Only the reported native image-reader failure may retry on another compute path.
+nonisolated enum OCRImagePreparationError: LocalizedError {
+  case cannotCreateBitmap
+  var errorDescription: String? { "无法准备识别图片，请缩小选区后再试。" }
+}
+
+nonisolated enum OCRRecognitionRecovery {
+  static func run(
+    cancellation: ImageProcessingCancellation,
+    attempt: (Bool) throws -> [OCRTextBlock]
+  ) throws -> [OCRTextBlock] {
+    try cancellation.checkCancellation()
+    do { return try attempt(false) } catch {
+      try cancellation.checkCancellation()
+      guard isImageReaderFailure(error as NSError) else { throw error }
+      return try attempt(true)
+    }
+  }
+
+  private static func isImageReaderFailure(_ error: NSError, depth: Int = 0) -> Bool {
+    guard depth < 4 else { return false }
+    if error.domain == "TextRecognition.CRImageReaderError", error.code == 1 { return true }
+    if let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError {
+      return isImageReaderFailure(underlying, depth: depth + 1)
+    }
+    return false
+  }
 }
 
 /// A narrowly scoped cross-thread handle for Vision's in-flight cancellation API.

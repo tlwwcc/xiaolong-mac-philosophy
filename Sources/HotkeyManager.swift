@@ -147,6 +147,33 @@ final class HotkeyManager {
 
   private(set) var failures: [String] = []
 
+  /// A registration report, not proof that an actual physical key press was tested.
+  func registrationState(for itemID: String) -> String {
+    if let entry = hotkeyMap.first(where: { $0.value.id == itemID }) {
+      guard eventHandlerRef != nil else { return "registrationFailed" }
+      if carbonEventTapReleaseWatchIDs.contains(entry.key), !automationEventTapRunning {
+        return "registrationPending"
+      }
+      return "registered"
+    }
+    if eventTapItems.contains(where: { $0.id == itemID }) {
+      return automationEventTapRunning ? "registered" : "registrationPending"
+    }
+    if modifierDoubleTapItems.values.contains(where: { $0.id == itemID }) {
+      return modifierDoubleTapListener?.isRunning == true
+        && modifierDoubleTapListener?.hasAcceptedPhysicalKeyboard == true
+        ? "registered" : "registrationPending"
+    }
+    return "registrationFailed"
+  }
+
+  private var automationEventTapRunning: Bool {
+    eventTapLifecycle.read {
+      guard let eventTap, eventTapRunLoop != nil, CFMachPortIsValid(eventTap) else { return false }
+      return CGEvent.tapIsEnabled(tap: eventTap)
+    }
+  }
+
   var commandWProtectionRunning: Bool {
     guard !commandWProtection.bundleIDs.isEmpty else { return false }
     return eventTapLifecycle.read {

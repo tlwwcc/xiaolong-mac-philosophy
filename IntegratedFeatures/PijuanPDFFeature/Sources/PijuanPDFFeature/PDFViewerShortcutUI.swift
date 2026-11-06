@@ -85,7 +85,7 @@ struct PDFViewerShortcutSettingsView: View {
 
   private var sectionIdentity: some View {
     VStack(alignment: .leading, spacing: 3) {
-      Text(embedded ? "披卷" : "披卷快捷键")
+      Text(embedded ? "PDF 浏览器" : "PDF 浏览器快捷键")
         .font(.system(size: embedded ? 16 : 20, weight: .semibold))
       Text("PDF 阅读 · \(shortcuts.activeShortcutCount) 条快捷键")
         .font(.system(size: 12, weight: .medium))
@@ -127,14 +127,14 @@ struct PDFViewerShortcutSettingsView: View {
       Image(systemName: "keyboard.badge.ellipsis")
         .font(.system(size: 30, weight: .light))
         .foregroundStyle(.secondary)
-      Text("披卷快捷键已全部删除")
+      Text("PDF 浏览器快捷键已全部删除")
         .font(.system(size: 15, weight: .semibold))
       Text("功能仍然保留；可用菜单和界面按钮操作。")
         .font(.system(size: 12))
         .foregroundStyle(.secondary)
       Button("恢复已删除快捷键") {
         shortcuts.restoreAllDeleted()
-        feedbackText = "已恢复披卷默认快捷键。"
+        feedbackText = "已恢复PDF 浏览器默认快捷键。"
       }
     }
     .frame(maxWidth: .infinity, minHeight: 280)

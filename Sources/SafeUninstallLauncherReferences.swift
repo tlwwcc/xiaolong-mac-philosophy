@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import MacAutomationCore
 
 private struct SafeUninstallReferenceFileSnapshot: Codable {
   let label: String
@@ -21,6 +22,8 @@ enum SafeUninstallReferenceStoreError: Error, LocalizedError {
   case snapshotTargetMismatch
   case referenceChangedAfterUninstall(String)
   case unsupportedReferenceFormat(String)
+  case transactionAlreadyAttempted
+  case transactionFailed(original: String, compensationFailures: [String])
 
   var errorDescription: String? {
     switch self {
@@ -29,27 +32,40 @@ enum SafeUninstallReferenceStoreError: Error, LocalizedError {
     case .referenceChangedAfterUninstall(let label):
       return "\(label) 在卸载后已被修改，未覆盖新设置。"
     case .unsupportedReferenceFormat(let label): return "\(label) 数据格式无法安全识别。"
+    case .transactionAlreadyAttempted: return "本次引用更新已执行，请重新读取后再试。"
+    case .transactionFailed(let original, let failures):
+      return failures.isEmpty
+        ? "引用更新失败，已还原本次已写内容：\(original)"
+        : "引用更新失败，部分内容发生变化而未覆盖；请保留引用备份：\(failures.joined(separator: "；"))"
     }
   }
 }
 
 /// Removes only this App's launcher shortcut, learned history and pinned card. Every file is
 /// snapshotted first; restoration refuses to overwrite settings changed after uninstall.
+@MainActor
 final class SafeUninstallLauncherReferenceStore: SafeUninstallReferenceCommitting {
+  private let shortcutTransaction: XLGConfigShortcutTransaction
   private let shortcutsURL: URL
   private let historyURL: URL
   private let pinnedURL: URL
   private let snapshotDirectory: URL
   private let fileManager: FileManager
   private var preparedSnapshotIDByTarget: [String: String] = [:]
+  private var hasAttemptedTransaction = false
 
   init(
     shortcutsURL: URL,
+    shortcutTransaction: XLGConfigShortcutTransaction,
     historyURL: URL,
     pinnedURL: URL,
     snapshotDirectory: URL,
     fileManager: FileManager = .default
   ) throws {
+    guard shortcutTransaction.fileURL.standardizedFileURL == shortcutsURL.standardizedFileURL else {
+      throw SafeUninstallReferenceStoreError.snapshotTargetMismatch
+    }
+    self.shortcutTransaction = shortcutTransaction
     self.shortcutsURL = shortcutsURL
     self.historyURL = historyURL
     self.pinnedURL = pinnedURL
@@ -72,9 +88,11 @@ final class SafeUninstallLauncherReferenceStore: SafeUninstallReferenceCommittin
       targetPath: target.path,
       createdAt: Date(),
       files: [
-        fileSnapshot(label: "快捷键", url: shortcutsURL),
-        fileSnapshot(label: "启动历史", url: historyURL),
-        fileSnapshot(label: "固定项", url: pinnedURL),
+        SafeUninstallReferenceFileSnapshot(
+          label: "快捷键", path: shortcutsURL.path,
+          originalData: shortcutTransaction.originalData, committedDigest: nil),
+        try fileSnapshot(label: "启动历史", url: historyURL),
+        try fileSnapshot(label: "固定项", url: pinnedURL),
       ])
     try save(snapshot)
     preparedSnapshotIDByTarget[targetKey(target)] = id
@@ -90,17 +108,13 @@ final class SafeUninstallLauncherReferenceStore: SafeUninstallReferenceCommittin
     let transformed = try snapshot.files.map { file in
       try transformedData(for: file, target: target)
     }
-    do {
-      for (index, file) in snapshot.files.enumerated() {
-        try write(transformed[index], to: URL(fileURLWithPath: file.path))
-        snapshot.files[index].committedDigest = digest(transformed[index])
+    try apply(
+      snapshot: snapshot, expected: snapshot.files.map(\.originalData), replacements: transformed
+    ) {
+      for index in snapshot.files.indices {
+        snapshot.files[index].committedDigest = self.digest(transformed[index])
       }
-      try save(snapshot)
-    } catch {
-      for file in snapshot.files {
-        try? write(file.originalData, to: URL(fileURLWithPath: file.path))
-      }
-      throw error
+      try self.save(snapshot)
     }
   }
 
@@ -110,19 +124,91 @@ final class SafeUninstallLauncherReferenceStore: SafeUninstallReferenceCommittin
   ) throws {
     let snapshot = try load(expectedSnapshotDigest)
     try validate(snapshot, target: target)
-    for file in snapshot.files {
+    var current: [Data?] = []
+    for (index, file) in snapshot.files.enumerated() {
       guard let committedDigest = file.committedDigest else {
         throw SafeUninstallReferenceStoreError.missingPreparedSnapshot
       }
-      let url = URL(fileURLWithPath: file.path)
-      let currentData = fileManager.contents(atPath: url.path)
-      guard digest(currentData) == committedDigest else {
+      let data = try currentData(at: index, file: file)
+      guard digest(data) == committedDigest else {
+        throw SafeUninstallReferenceStoreError.referenceChangedAfterUninstall(file.label)
+      }
+      current.append(data)
+    }
+    try apply(
+      snapshot: snapshot, expected: current, replacements: snapshot.files.map(\.originalData)
+    ) {}
+  }
+
+  /// Each participant has its own durable CAS receipt. A partial failure compensates only
+  /// attempted writes, against their observed after-revision; unrelated later edits survive.
+  private func apply(
+    snapshot: SafeUninstallReferenceSnapshot, expected: [Data?], replacements: [Data?],
+    finish: () throws -> Void
+  ) throws {
+    guard !hasAttemptedTransaction else {
+      throw SafeUninstallReferenceStoreError.transactionAlreadyAttempted
+    }
+    for (index, file) in snapshot.files.enumerated() {
+      guard digest(try currentData(at: index, file: file)) == digest(expected[index]) else {
         throw SafeUninstallReferenceStoreError.referenceChangedAfterUninstall(file.label)
       }
     }
-    for file in snapshot.files {
-      try write(file.originalData, to: URL(fileURLWithPath: file.path))
+    let operation = UUID().uuidString
+    var attempted: [Int] = []
+    var receipts: [Int: ConfigurationCommitReceipt] = [:]
+    func requestID(_ index: Int) -> String { "uninstall-reference-\(operation)-\(index)" }
+    // The shortcut participant belongs to one attempt. A later invocation must never
+    // enter compensation for a receipt produced by an earlier successful invocation.
+    hasAttemptedTransaction = true
+    do {
+      for (index, file) in snapshot.files.enumerated() {
+        attempted.append(index)
+        if index == 0 {
+          try shortcutTransaction.commit(replacements[index])
+        } else {
+          let store = ConfigurationTransactionStore(fileURL: URL(fileURLWithPath: file.path))
+          receipts[index] = try store.commit(
+            requestID: requestID(index),
+            requestData: Data("\(snapshot.id):\(index):\(digest(replacements[index]))".utf8),
+            expectedRevision: digest(expected[index]), replacement: replacements[index])
+        }
+      }
+      try finish()
+    } catch {
+      let original = error
+      var failures: [String] = []
+      for index in attempted.reversed() {
+        do {
+          if index == 0 {
+            try shortcutTransaction.rollback()
+            continue
+          }
+          let file = snapshot.files[index]
+          let store = ConfigurationTransactionStore(fileURL: URL(fileURLWithPath: file.path))
+          try store.recover()
+          if receipts[index] == nil, try store.read().revision == digest(expected[index]) {
+            continue
+          }
+          guard
+            let receipt = try receipts[index] ?? store.lookupReceipt(requestID: requestID(index)),
+            receipt.changed
+          else { continue }
+          _ = try store.commit(
+            requestID: "undo-\(requestID(index))", requestData: Data(snapshot.id.utf8),
+            expectedRevision: receipt.afterRevision, replacement: expected[index])
+        } catch { failures.append("\(snapshot.files[index].label)：\(error.localizedDescription)") }
+      }
+      throw SafeUninstallReferenceStoreError.transactionFailed(
+        original: original.localizedDescription, compensationFailures: failures)
     }
+  }
+
+  private func currentData(at index: Int, file: SafeUninstallReferenceFileSnapshot) throws -> Data?
+  {
+    if index == 0 { return shortcutTransaction.originalData }
+    let current = try ConfigurationTransactionStore(fileURL: URL(fileURLWithPath: file.path)).read()
+    return current.exists ? current.data : nil
   }
 
   private func transformedData(
@@ -181,19 +267,21 @@ final class SafeUninstallLauncherReferenceStore: SafeUninstallReferenceCommittin
         == URL(fileURLWithPath: target.path).standardizedFileURL.path
   }
 
-  private func fileSnapshot(label: String, url: URL) -> SafeUninstallReferenceFileSnapshot {
-    SafeUninstallReferenceFileSnapshot(
-      label: label,
-      path: url.standardizedFileURL.path,
-      originalData: fileManager.contents(atPath: url.path),
-      committedDigest: nil)
+  private func fileSnapshot(label: String, url: URL) throws -> SafeUninstallReferenceFileSnapshot {
+    let snapshot = try ConfigurationTransactionStore(fileURL: url).read()
+    return SafeUninstallReferenceFileSnapshot(
+      label: label, path: url.path,
+      originalData: snapshot.exists ? snapshot.data : nil, committedDigest: nil)
   }
 
   private func validate(
     _ snapshot: SafeUninstallReferenceSnapshot,
     target: SafeUninstallTargetSnapshot
   ) throws {
-    guard snapshot.targetBundleIdentifier == target.bundleIdentifier,
+    guard snapshot.files.map(\.label) == ["快捷键", "启动历史", "固定项"],
+      snapshot.files.map({ URL(fileURLWithPath: $0.path).standardizedFileURL })
+        == [shortcutsURL, historyURL, pinnedURL].map(\.standardizedFileURL),
+      snapshot.targetBundleIdentifier == target.bundleIdentifier,
       URL(fileURLWithPath: snapshot.targetPath).standardizedFileURL.path
         == URL(fileURLWithPath: target.path).standardizedFileURL.path
     else { throw SafeUninstallReferenceStoreError.snapshotTargetMismatch }
@@ -217,22 +305,14 @@ final class SafeUninstallLauncherReferenceStore: SafeUninstallReferenceCommittin
   }
 
   private func load(_ id: String) throws -> SafeUninstallReferenceSnapshot {
+    guard UUID(uuidString: id) != nil else {
+      throw SafeUninstallReferenceStoreError.missingPreparedSnapshot
+    }
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
     return try decoder.decode(
       SafeUninstallReferenceSnapshot.self,
       from: Data(contentsOf: snapshotURL(id)))
-  }
-
-  private func write(_ data: Data?, to url: URL) throws {
-    if let data {
-      try fileManager.createDirectory(
-        at: url.deletingLastPathComponent(),
-        withIntermediateDirectories: true)
-      try data.write(to: url, options: [.atomic])
-    } else if fileManager.fileExists(atPath: url.path) {
-      try fileManager.removeItem(at: url)
-    }
   }
 
   private func digest(_ data: Data?) -> String {

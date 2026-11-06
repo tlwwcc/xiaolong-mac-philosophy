@@ -20,6 +20,9 @@ let package = Package(
     .executableTarget(
       name: "aixlg-hotkeys",
       dependencies: [
+        "MacAutomationCore",
+        "MacFeatureCatalog",
+        "SystemMetricsSupport",
         "YoumuFeature",
         "PijuanPDFFeature",
         .product(
@@ -94,6 +97,7 @@ let package = Package(
     ),
     .executableTarget(
       name: "NetworkSpeedStatusHelper",
+      dependencies: ["SystemMetricsSupport"],
       path: "HelperSources",
       linkerSettings: [
         .linkedFramework("AppKit")
@@ -105,6 +109,20 @@ let package = Package(
       linkerSettings: [
         .linkedFramework("AppKit")
       ]
+    ),
+    .target(
+      name: "MacAutomationCore",
+      path: "Platform/AutomationCore",
+      swiftSettings: [.swiftLanguageMode(.v6)]
+    ),
+    .target(
+      name: "MacFeatureCatalog",
+      path: "Platform/FeatureCatalog",
+      swiftSettings: [.swiftLanguageMode(.v6)]
+    ),
+    .target(
+      name: "SystemMetricsSupport",
+      path: "Platform/SystemMetricsSupport"
     ),
     .testTarget(
       name: "YoumuFeatureTests",

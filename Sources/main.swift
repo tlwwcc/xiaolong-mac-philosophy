@@ -21,6 +21,12 @@ if !ProductReleaseIdentity.matchesPublicationMetadata(
   exit(78)
 }
 
+// The installed binary provides its CLI without creating AppModel, acquiring the GUI lock,
+// or starting any input listeners. The normal stable-identity gates above still apply.
+if let automationStatus = AutomationCLI.runIfRequested() {
+  exit(automationStatus)
+}
+
 private let runtimeIdentity = AppRuntimeIdentity.current
 
 // Fixed-text, installed-binary diagnostic. It neither loads customer settings nor starts

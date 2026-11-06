@@ -1,12 +1,13 @@
 import BuiltinFeatureCatalog
 import Foundation
 import PlatformContracts
-import XCTest
+import Testing
 
 @testable import YoumuFeature
 
 @MainActor
-final class YoumuFeatureRuntimeTests: XCTestCase {
+@Suite(.serialized)
+final class YoumuFeatureRuntimeTests {
   private let expectedMappings: [(CommandID, YoumuCaptureMode, TranslateMode)] = [
     (YoumuFeatureIDs.quickSnapshot, .quickSnapshot, .quickSnapshot),
     (YoumuFeatureIDs.annotatedScreenshot, .annotatedScreenshot, .screenshotEdit),
@@ -18,20 +19,18 @@ final class YoumuFeatureRuntimeTests: XCTestCase {
     (YoumuFeatureIDs.ocrCopy, .ocrCopy, .silentOCR),
   ]
 
+  @Test
   func testEightStableCommandIDsMapToEightCaptureModes() {
-    XCTAssertEqual(expectedMappings.count, 8)
-    XCTAssertEqual(Set(expectedMappings.map(\.0)).count, 8)
-    XCTAssertEqual(Set(expectedMappings.map(\.1)).count, 8)
+    #expect((expectedMappings.count) == (8))
+    #expect((Set(expectedMappings.map(\.0)).count) == (8))
+    #expect((Set(expectedMappings.map(\.1)).count) == (8))
 
     for (commandID, featureMode, _) in expectedMappings {
-      XCTAssertEqual(
-        YoumuFeatureRuntime.captureMode(for: commandID.rawValue),
-        featureMode,
-        commandID.rawValue
-      )
+      #expect((YoumuFeatureRuntime.captureMode(for: commandID.rawValue)) == (featureMode), Comment(rawValue: commandID.rawValue))
     }
   }
 
+  @Test
   func testExecuteDispatchesEveryCommandToRealModeBoundary() throws {
     let environment = testEnvironment(channelRoot: "aixlg-hotkeys-dev")
     var received: [TranslateMode] = []
@@ -41,26 +40,25 @@ final class YoumuFeatureRuntimeTests: XCTestCase {
 
     for (commandID, _, expectedMode) in expectedMappings {
       try runtime.execute(commandID: commandID)
-      XCTAssertEqual(received.last, expectedMode, commandID.rawValue)
+      #expect((received.last) == (expectedMode), Comment(rawValue: commandID.rawValue))
     }
-    XCTAssertEqual(received.count, 8)
+    #expect((received.count) == (8))
   }
 
+  @Test
   func testUnknownCommandFailsClosedWithoutStartingCapture() {
     var received: [TranslateMode] = []
     let runtime = YoumuFeatureRuntime(environment: testEnvironment()) { mode in
       received.append(mode)
     }
 
-    XCTAssertThrowsError(try runtime.execute(commandID: "unknown.command")) { error in
-      XCTAssertEqual(
-        error as? YoumuFeatureRuntimeError,
-        .unsupportedCommandID("unknown.command")
-      )
+    expectThrowsError(try runtime.execute(commandID: "unknown.command")) { error in
+      #expect((error as? YoumuFeatureRuntimeError) == (.unsupportedCommandID("unknown.command")))
     }
-    XCTAssertTrue(received.isEmpty)
+    #expect(received.isEmpty)
   }
 
+  @Test
   func testStableAndDevelopmentStorageAndKeychainAreSeparated() {
     let root = URL(fileURLWithPath: "/tmp/youmu-feature-tests", isDirectory: true)
     let stable = YoumuFeatureEnvironment(
@@ -76,58 +74,40 @@ final class YoumuFeatureRuntimeTests: XCTestCase {
       temporaryRoot: root
     )
 
-    XCTAssertEqual(
-      stable.settingsURL.path,
-      "/tmp/youmu-feature-tests/aixlg-hotkeys/Features/Youmu/settings.json"
-    )
-    XCTAssertEqual(
-      development.settingsURL.path,
-      "/tmp/youmu-feature-tests/aixlg-hotkeys-dev/Features/Youmu/settings.json"
-    )
-    XCTAssertNotEqual(stable.settingsURL, development.settingsURL)
-    XCTAssertNotEqual(stable.translationKeychainService, development.translationKeychainService)
-    XCTAssertEqual(
-      stable.translationKeychainService,
-      "cn.tlww.aixlg.hotkeys.feature.youmu.translation-credentials"
-    )
-    XCTAssertEqual(
-      development.translationKeychainService,
-      "cn.tlww.aixlg.hotkeys.dev.feature.youmu.translation-credentials"
-    )
+    #expect((stable.settingsURL.path) == ("/tmp/youmu-feature-tests/aixlg-hotkeys/Features/Youmu/settings.json"))
+    #expect((development.settingsURL.path) == ("/tmp/youmu-feature-tests/aixlg-hotkeys-dev/Features/Youmu/settings.json"))
+    #expect((stable.settingsURL) != (development.settingsURL))
+    #expect((stable.translationKeychainService) != (development.translationKeychainService))
+    #expect((stable.translationKeychainService) == ("cn.tlww.aixlg.hotkeys.feature.youmu.translation-credentials"))
+    #expect((development.translationKeychainService) == ("cn.tlww.aixlg.hotkeys.dev.feature.youmu.translation-credentials"))
   }
 
+  @Test
   func testChannelInferenceSeparatesDevelopmentAutomatically() {
-    XCTAssertEqual(
-      YoumuFeatureEnvironment.inferredChannelRoot(
+    #expect((YoumuFeatureEnvironment.inferredChannelRoot(
         hostBundleIdentifier: YoumuFeatureEnvironment.stableHostBundleIdentifier,
         buildChannel: "stable"
-      ),
-      "aixlg-hotkeys"
-    )
-    XCTAssertEqual(
-      YoumuFeatureEnvironment.inferredChannelRoot(
+      )) == ("aixlg-hotkeys"))
+    #expect((YoumuFeatureEnvironment.inferredChannelRoot(
         hostBundleIdentifier: YoumuFeatureEnvironment.developmentHostBundleIdentifier,
         buildChannel: nil
-      ),
-      "aixlg-hotkeys-dev"
-    )
-    XCTAssertEqual(
-      YoumuFeatureEnvironment.inferredChannelRoot(
+      )) == ("aixlg-hotkeys-dev"))
+    #expect((YoumuFeatureEnvironment.inferredChannelRoot(
         hostBundleIdentifier: YoumuFeatureEnvironment.stableHostBundleIdentifier,
         buildChannel: "development"
-      ),
-      "aixlg-hotkeys-dev"
-    )
+      )) == ("aixlg-hotkeys-dev"))
   }
 
+  @Test
   func testDefaultsNotificationsPasteboardAndTemporaryFilesAreNamespaced() {
     let environment = testEnvironment()
-    XCTAssertTrue(environment.userDefaultsKey("consent").contains(".feature.youmu."))
-    XCTAssertTrue(environment.notificationName("speech").rawValue.contains(".feature.youmu."))
-    XCTAssertTrue(environment.pasteboardPixelScaleType.contains(".feature.youmu."))
-    XCTAssertTrue(environment.temporaryDirectory.lastPathComponent.contains(".feature.youmu."))
+    #expect(environment.userDefaultsKey("consent").contains(".feature.youmu."))
+    #expect(environment.notificationName("speech").rawValue.contains(".feature.youmu."))
+    #expect(environment.pasteboardPixelScaleType.contains(".feature.youmu."))
+    #expect(environment.temporaryDirectory.lastPathComponent.contains(".feature.youmu."))
   }
 
+  @Test
   func testMainInterfaceIsHostInjected() throws {
     var didOpen = false
     let runtime = YoumuFeatureRuntime(
@@ -136,20 +116,18 @@ final class YoumuFeatureRuntimeTests: XCTestCase {
       captureHandler: { _ in }
     )
     try runtime.openMainInterface()
-    XCTAssertTrue(didOpen)
+    #expect(didOpen)
 
     let missingRoute = YoumuFeatureRuntime(
       environment: testEnvironment(),
       captureHandler: { _ in }
     )
-    XCTAssertThrowsError(try missingRoute.openMainInterface()) { error in
-      XCTAssertEqual(
-        error as? YoumuFeatureRuntimeError,
-        .hostManagedInterfaceUnavailable
-      )
+    expectThrowsError(try missingRoute.openMainInterface()) { error in
+      #expect((error as? YoumuFeatureRuntimeError) == (.hostManagedInterfaceUnavailable))
     }
   }
 
+  @Test
   func testHostCanCancelActiveGlobalInputSessionsBeforeYieldingLease() {
     var invalidations: [YoumuCommandSessionInvalidationReason] = []
     let runtime = YoumuFeatureRuntime(
@@ -160,9 +138,10 @@ final class YoumuFeatureRuntimeTests: XCTestCase {
 
     runtime.cancelActiveGlobalInputSessions()
 
-    XCTAssertEqual(invalidations, [.globalInputOwnershipYielded])
+    #expect((invalidations) == ([.globalInputOwnershipYielded]))
   }
 
+  @Test
   func testHostCanPreflightExactModeCancellationBeforeAccessGates() {
     var checked: [TranslateMode] = []
     let runtime = YoumuFeatureRuntime(
@@ -171,14 +150,15 @@ final class YoumuFeatureRuntimeTests: XCTestCase {
         checked.append(mode)
         return mode == .screenshotTranslate
       },
-      captureHandler: { _ in XCTFail("preflight must not start a new capture") }
+      captureHandler: { _ in Issue.record(Comment(rawValue: "preflight must not start a new capture")) }
     )
 
-    XCTAssertTrue(runtime.cancelIfActive(commandID: YoumuFeatureIDs.ocrTranslate))
-    XCTAssertFalse(runtime.cancelIfActive(commandID: "unknown.command"))
-    XCTAssertEqual(checked, [.screenshotTranslate])
+    #expect(runtime.cancelIfActive(commandID: YoumuFeatureIDs.ocrTranslate))
+    #expect(!(runtime.cancelIfActive(commandID: "unknown.command")))
+    #expect((checked) == ([.screenshotTranslate]))
   }
 
+  @Test
   func testHostForwardsTargetedLifecycleInvalidationReasons() {
     var invalidations: [YoumuCommandSessionInvalidationReason] = []
     let runtime = YoumuFeatureRuntime(
@@ -192,15 +172,12 @@ final class YoumuFeatureRuntimeTests: XCTestCase {
     runtime.invalidateCommandSessions(for: .inputMonitoringPermissionLost)
     runtime.cancelAllCommandSessions()
 
-    XCTAssertEqual(
-      invalidations,
-      [
+    #expect((invalidations) == ([
         .proEntitlementLost,
         .screenRecordingPermissionLost,
         .inputMonitoringPermissionLost,
         .globalInputOwnershipYielded,
-      ]
-    )
+      ]))
   }
 
   private func testEnvironment(

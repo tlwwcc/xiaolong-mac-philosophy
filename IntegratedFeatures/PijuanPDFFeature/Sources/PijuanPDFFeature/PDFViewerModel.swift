@@ -63,6 +63,7 @@ final class PDFViewerModel: ObservableObject {
   private var activeSearchDocument: PDFDocument?
   private var activeSearchQuery = ""
   private var searchGeneration = 0
+  private var presentationGeneration: UInt64 = 0
   private var searchTask: Task<Void, Never>?
   private var openGeneration = 0
   private var openTask: Task<Void, Never>?
@@ -130,7 +131,7 @@ final class PDFViewerModel: ObservableObject {
   }
 
   var documentTitle: String {
-    fileURL?.deletingPathExtension().lastPathComponent ?? "披卷"
+    fileURL?.deletingPathExtension().lastPathComponent ?? "PDF 浏览器"
   }
 
   var pageLabel: String {
@@ -301,7 +302,8 @@ final class PDFViewerModel: ObservableObject {
 
   func goToPage(_ oneBasedPage: Int) {
     guard let document = pdfView.document else { return }
-    let index = ReadingPositionPolicy.clampedPageIndex(oneBasedPage - 1, pageCount: document.pageCount)
+    let index = ReadingPositionPolicy.clampedPageIndex(
+      max(oneBasedPage, 1) - 1, pageCount: document.pageCount)
     guard let page = document.page(at: index) else { return }
     pdfView.go(to: page)
   }
@@ -367,6 +369,8 @@ final class PDFViewerModel: ObservableObject {
 
   func enterPresentationMode(toggleSystemFullScreen: Bool = true) {
     guard pageCount > 0, !isPresentationMode else { return }
+    presentationGeneration &+= 1
+    let generation = presentationGeneration
     isPresentationMode = true
     pdfView.displayMode = .singlePage
     pdfView.displaysPageBreaks = false
@@ -378,8 +382,17 @@ final class PDFViewerModel: ObservableObject {
       let window = pdfView.window,
       window.isKeyWindow
     else { return }
-    DispatchQueue.main.async { [weak window] in
-      window?.toggleFullScreen(nil)
+    let document = pdfView.document
+    DispatchQueue.main.async { [weak self, weak window, weak document] in
+      guard let self, let window, let document,
+        self.presentationGeneration == generation,
+        self.isPresentationMode,
+        self.pdfView.document === document,
+        self.pdfView.window === window,
+        window.isVisible,
+        !window.styleMask.contains(.fullScreen)
+      else { return }
+      window.toggleFullScreen(nil)
     }
   }
 
@@ -570,6 +583,7 @@ final class PDFViewerModel: ObservableObject {
   }
 
   private func restoreReadingLayout() {
+    presentationGeneration &+= 1
     isPresentationMode = false
     pdfView.displayMode = .singlePageContinuous
     pdfView.displaysPageBreaks = true

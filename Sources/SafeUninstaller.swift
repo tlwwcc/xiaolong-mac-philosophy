@@ -429,6 +429,7 @@ protocol SafeUninstallTransactionPersisting {
   func load(operationID: String) throws -> SafeUninstallTransaction?
 }
 
+@MainActor
 protocol SafeUninstallReferenceCommitting {
   func snapshotDigest(for target: SafeUninstallTargetSnapshot) throws -> String
   func commitRemoval(for target: SafeUninstallTargetSnapshot) throws
@@ -538,7 +539,7 @@ final class SafeUninstallPermanentEngine {
 
     do {
       try await revalidate(selected)
-      _ = try references.snapshotDigest(for: review.target)
+      _ = try await references.snapshotDigest(for: review.target)
       let running = await processes.runningProcesses(for: review.target)
       for process in running {
         try validate(process: process, target: review.target)
@@ -574,7 +575,7 @@ final class SafeUninstallPermanentEngine {
 
     if deletedApp {
       do {
-        try references.commitRemoval(for: review.target)
+        try await references.commitRemoval(for: review.target)
       } catch {
         failureMessages.append("启动器引用未能完整清理：\(error.localizedDescription)")
       }
@@ -820,7 +821,7 @@ final class SafeUninstallPhaseOneEngine {
 
     let referenceSnapshotDigest: String
     do {
-      referenceSnapshotDigest = try references.snapshotDigest(for: review.target)
+      referenceSnapshotDigest = try await references.snapshotDigest(for: review.target)
     } catch {
       transaction.state = .blocked
       transaction.lastDurableUpdateAt = Date()
@@ -897,7 +898,7 @@ final class SafeUninstallPhaseOneEngine {
 
       if candidate.type == .application, !referenceCommitted {
         do {
-          try references.commitRemoval(for: review.target)
+          try await references.commitRemoval(for: review.target)
           transaction.referenceCompensations.append(
             SafeUninstallReferenceCompensation(
               kind: "launcher-references",
@@ -988,7 +989,7 @@ final class SafeUninstallPhaseOneEngine {
 
     if let compensation = transaction.referenceCompensations.first(where: \.committed) {
       do {
-        try references.restoreRemoval(
+        try await references.restoreRemoval(
           for: transaction.targetSnapshot,
           expectedSnapshotDigest: compensation.snapshotDigest)
         if let index = transaction.referenceCompensations.firstIndex(of: compensation) {

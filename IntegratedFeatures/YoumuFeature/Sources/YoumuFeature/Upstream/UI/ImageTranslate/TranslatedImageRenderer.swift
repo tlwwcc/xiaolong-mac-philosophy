@@ -81,7 +81,8 @@ nonisolated enum TranslatedImageRenderer {
 
         for (index, block) in blocks.enumerated() {
             try cancellation?.checkCancellation()
-            guard let translated = translations[index],
+            // Failed OCR/translation must preserve original pixels, not redraw uncertain OCR.
+            guard !failedIndices.contains(index), let translated = translations[index],
                   !translated.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             else { continue }
 

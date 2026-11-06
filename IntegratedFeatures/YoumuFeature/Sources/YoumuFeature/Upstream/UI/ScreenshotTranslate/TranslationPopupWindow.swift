@@ -43,7 +43,7 @@ class TranslationPopupWindow {
             defer: false
         )
 
-        newPanel.title = "游目 · 翻译"
+        newPanel.title = "截图翻译"
         newPanel.contentView = hostingView
         newPanel.level = .floating
         newPanel.isFloatingPanel = true

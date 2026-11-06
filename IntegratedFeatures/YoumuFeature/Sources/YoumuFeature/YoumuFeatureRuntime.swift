@@ -41,9 +41,9 @@ public enum YoumuFeatureRuntimeError: LocalizedError, Equatable {
   public var errorDescription: String? {
     switch self {
     case .unsupportedCommandID(let commandID):
-      return "游目不支持命令：\(commandID)"
+      return "截图不支持命令：\(commandID)"
     case .hostManagedInterfaceUnavailable:
-      return "游目主界面由宿主应用中心管理，当前尚未注入打开路由。"
+      return "截图主界面由宿主应用中心管理，当前尚未注入打开路由。"
     }
   }
 }
@@ -102,6 +102,7 @@ public final class YoumuFeatureRuntime {
     }
     hostInterfaceHandler = openMainInterface
     shortcutManagerHandler = openShortcutManager
+    OCRService.shared.prewarm()
   }
 
   init(

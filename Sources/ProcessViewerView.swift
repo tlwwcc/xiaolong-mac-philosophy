@@ -602,13 +602,19 @@ extension Notification.Name {
 private struct ProcessViewerCommandFBridge: NSViewRepresentable {
   final class Coordinator {
     var monitor: Any?
-    deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
+    func stop() {
+      if let monitor { NSEvent.removeMonitor(monitor) }
+      monitor = nil
+    }
+    deinit { stop() }
   }
   func makeCoordinator() -> Coordinator { Coordinator() }
   func makeNSView(context: Context) -> NSView {
     let view = NSView()
-    context.coordinator.monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-      guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+    context.coordinator.monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak view] event in
+      guard let window = view?.window, window.isVisible,
+        event.window === window,
+        event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
         event.charactersIgnoringModifiers?.lowercased() == "f"
       else { return event }
       NotificationCenter.default.post(name: .processViewerFocusSearch, object: nil)
@@ -617,4 +623,7 @@ private struct ProcessViewerCommandFBridge: NSViewRepresentable {
     return view
   }
   func updateNSView(_ nsView: NSView, context: Context) {}
+  static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+    coordinator.stop()
+  }
 }

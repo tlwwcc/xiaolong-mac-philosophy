@@ -12,6 +12,53 @@ nonisolated struct ScrollCaptureStreamFrame: @unchecked Sendable {
     let capturedAt: TimeInterval
     let displayTime: UInt64
     let containsVisualChange: Bool
+
+    func mergingVisualChange(from discarded: Self) -> Self {
+        Self(sequenceNumber: sequenceNumber, image: image, capturedAt: capturedAt,
+             displayTime: displayTime,
+             containsVisualChange: containsVisualChange || discarded.containsVisualChange)
+    }
+}
+
+/// Every access is protected by the frame source's state lock. Keep the same eight-frame
+/// overlap window as the consumer ring while scheduling only one ordered delivery task.
+nonisolated struct ScrollCaptureFrameMailbox<Frame> {
+    let capacity: Int
+    private var generation: UInt64 = 0
+    private var pending: [Frame] = []
+    private var deliveryScheduled = false
+
+    init(capacity: Int = 8) { self.capacity = max(1, capacity) }
+    var pendingCount: Int { pending.count }
+
+    mutating func reset(generation: UInt64) {
+        self.generation = generation
+        pending.removeAll(keepingCapacity: true)
+        deliveryScheduled = false
+    }
+
+    mutating func offer(
+        _ frame: Frame, generation: UInt64, mergingDiscarded: (Frame, Frame) -> Frame
+    ) -> Bool {
+        guard self.generation == generation else { return false }
+        pending.append(frame)
+        if pending.count > capacity {
+            let discarded = pending.removeFirst()
+            pending[0] = mergingDiscarded(discarded, pending[0])
+        }
+        guard !deliveryScheduled else { return false }
+        deliveryScheduled = true
+        return true
+    }
+
+    mutating func take(generation: UInt64) -> Frame? {
+        guard self.generation == generation else { return nil }
+        guard !pending.isEmpty else {
+            deliveryScheduled = false
+            return nil
+        }
+        return pending.removeFirst()
+    }
 }
 
 nonisolated enum ScrollCaptureStreamError: LocalizedError {
@@ -109,6 +156,7 @@ nonisolated final class ScrollCaptureFrameSource: NSObject, @unchecked Sendable 
     private var lastDisplayTime: UInt64 = 0
     private var isAcceptingFrames = false
     private var streamGeneration: UInt64 = 0
+    private var pendingFrames = ScrollCaptureFrameMailbox<ScrollCaptureStreamFrame>()
 
     @MainActor
     func start(
@@ -123,6 +171,7 @@ nonisolated final class ScrollCaptureFrameSource: NSObject, @unchecked Sendable 
         }
         let startupGeneration = stateLock.withLock { () -> UInt64 in
             streamGeneration &+= 1
+            pendingFrames.reset(generation: streamGeneration)
             return streamGeneration
         }
 
@@ -216,11 +265,16 @@ nonisolated final class ScrollCaptureFrameSource: NSObject, @unchecked Sendable 
             guard stateLock.withLock({
                 streamGeneration == startupGeneration && self.stream === stream
             }) else {
-                try? await stream.stopCapture()
                 throw CancellationError()
             }
         } catch {
-            stop()
+            if stateLock.withLock({ streamGeneration == startupGeneration && self.stream === stream }) {
+                stop()
+            } else {
+                // A superseded startup may clean up only its own stream.
+                try? stream.removeStreamOutput(self, type: .screen)
+                try? await stream.stopCapture()
+            }
             throw error
         }
     }
@@ -234,6 +288,7 @@ nonisolated final class ScrollCaptureFrameSource: NSObject, @unchecked Sendable 
             onFailure = nil
             isAcceptingFrames = false
             streamGeneration &+= 1
+            pendingFrames.reset(generation: streamGeneration)
             return activeStream
         }
 
@@ -241,6 +296,26 @@ nonisolated final class ScrollCaptureFrameSource: NSObject, @unchecked Sendable 
         try? activeStream.removeStreamOutput(self, type: .screen)
         Task { @MainActor in
             try? await activeStream.stopCapture()
+        }
+    }
+
+    @MainActor
+    private func deliverPendingFrames(generation: UInt64) async {
+        let batchSize = stateLock.withLock { pendingFrames.capacity }
+        while true {
+            for _ in 0..<batchSize {
+                let delivery = stateLock.withLock {
+                    () -> (ScrollCaptureStreamFrame, @MainActor @Sendable (ScrollCaptureStreamFrame) -> Void)? in
+                    guard isAcceptingFrames, streamGeneration == generation,
+                          let handler = onFrame,
+                          let frame = pendingFrames.take(generation: generation)
+                    else { return nil }
+                    return (frame, handler)
+                }
+                guard let (frame, handler) = delivery else { return }
+                handler(frame)
+            }
+            await Task.yield()
         }
     }
 }
@@ -264,6 +339,10 @@ extension ScrollCaptureFrameSource: SCStreamOutput {
                   SCFrameStatus(rawValue: statusRaw) == .complete else { return }
 
             let displayTime = (attachment[.displayTime] as? NSNumber)?.uint64Value ?? 0
+            guard stateLock.withLock({
+                isAcceptingFrames && self.stream === stream
+                    && (displayTime == 0 || displayTime > lastDisplayTime)
+            }) else { return }
             // ScreenCaptureKit bridges SCStreamFrameInfoDirtyRects as NSArray<NSValue>.
             // A direct `[CGRect]` cast silently fails on real streams, which made every frame
             // look visually stationary even while the selected surface was changing.
@@ -277,29 +356,25 @@ extension ScrollCaptureFrameSource: SCStreamOutput {
             let image = CIImage(cvPixelBuffer: pixelBuffer)
             guard let cgImage = ciContext.createCGImage(image, from: imageRect) else { return }
 
-            let delivery = stateLock.withLock {
-                () -> (Int, UInt64, (@MainActor @Sendable (ScrollCaptureStreamFrame) -> Void)?)? in
+            let scheduledGeneration = stateLock.withLock { () -> UInt64? in
                 guard isAcceptingFrames, self.stream === stream,
                       displayTime == 0 || displayTime > lastDisplayTime else { return nil }
                 if displayTime > 0 { lastDisplayTime = displayTime }
                 nextSequenceNumber += 1
-                return (nextSequenceNumber, streamGeneration, onFrame)
+                let frame = ScrollCaptureStreamFrame(
+                    sequenceNumber: nextSequenceNumber,
+                    image: cgImage,
+                    capturedAt: ProcessInfo.processInfo.systemUptime,
+                    displayTime: displayTime,
+                    containsVisualChange: nextSequenceNumber == 1 || !dirtyRects.isEmpty
+                )
+                return pendingFrames.offer(frame, generation: streamGeneration) {
+                    discarded, survivor in survivor.mergingVisualChange(from: discarded)
+                } ? streamGeneration : nil
             }
-            guard let (sequenceNumber, generation, handler) = delivery else { return }
-
-            let frame = ScrollCaptureStreamFrame(
-                sequenceNumber: sequenceNumber,
-                image: cgImage,
-                capturedAt: ProcessInfo.processInfo.systemUptime,
-                displayTime: displayTime,
-                containsVisualChange: sequenceNumber == 1 || !dirtyRects.isEmpty
-            )
-            Task { @MainActor in
-                let isCurrent = self.stateLock.withLock {
-                    self.isAcceptingFrames && self.streamGeneration == generation
-                }
-                guard isCurrent else { return }
-                handler?(frame)
+            guard let generation = scheduledGeneration else { return }
+            Task { @MainActor [weak self] in
+                await self?.deliverPendingFrames(generation: generation)
             }
         }
     }

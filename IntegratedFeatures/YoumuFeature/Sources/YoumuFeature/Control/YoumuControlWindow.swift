@@ -37,7 +37,7 @@ final class YoumuControlWindowController: NSObject, NSWindowDelegate {
       backing: .buffered,
       defer: false
     )
-    window.title = "游目"
+    window.title = "截图"
     window.contentView = hostingView
     window.contentMinSize = NSSize(width: 680, height: 520)
     window.isReleasedWhenClosed = false
@@ -122,7 +122,7 @@ struct YoumuControlView: View {
       if embedded {
         VStack(spacing: 0) {
           HStack(spacing: 12) {
-            Picker("游目设置", selection: $selectedPane) {
+            Picker("截图设置", selection: $selectedPane) {
               Text("通用").tag(Pane.general)
               Text("翻译引擎").tag(Pane.translation)
             }
@@ -133,7 +133,7 @@ struct YoumuControlView: View {
               Button(action: openShortcutManager) {
                 Label("快捷键", systemImage: "keyboard")
               }
-              .help("在功能快捷键中管理游目按键")
+              .help("在功能快捷键中管理截图按键")
             }
           }
           .padding(16)
@@ -175,7 +175,7 @@ struct YoumuControlView: View {
 
   private var sidebar: some View {
     VStack(alignment: .leading, spacing: 6) {
-      Text("游目")
+      Text("截图")
         .font(.headline)
         .padding(.horizontal, 10)
         .padding(.bottom, 4)
@@ -202,7 +202,7 @@ struct YoumuControlView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(pane.title)
-        .accessibilityHint("切换到游目\(pane.title)设置")
+        .accessibilityHint("切换到截图\(pane.title)设置")
       }
 
       Spacer(minLength: 0)
@@ -317,7 +317,7 @@ struct YoumuControlView: View {
         HStack {
           Button {
             SpeechService.shared.toggle(
-              text: "游目，看见哪里，就从哪里开始理解。",
+              text: "截图、识别文字、翻译，一键完成。",
               language: "zh-CN")
           } label: {
             Label(
@@ -591,7 +591,7 @@ private struct YoumuShortcutOwnershipView: View {
     VStack(alignment: .leading, spacing: 14) {
       Label("快捷键只保存一份", systemImage: "link.circle.fill")
         .font(.title3.weight(.semibold))
-      Text("游目不再单独注册或保存全局快捷键。请在 Mac 哲学的应用中心或功能快捷键页修改，两处会始终使用同一份配置。")
+      Text("截图不再单独注册或保存全局快捷键。请在 Mac 哲学的应用中心或功能快捷键页修改，两处会始终使用同一份配置。")
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
       Button {

@@ -1,5 +1,8 @@
 import Darwin
 import Foundation
+#if canImport(SystemMetricsSupport)
+import SystemMetricsSupport
+#endif
 
 enum HelperRestartBackoff {
   static let stableRunDuration: TimeInterval = 30
@@ -74,101 +77,19 @@ struct SystemMonitorSnapshot {
 }
 
 final class SystemMonitor {
-  private struct NetworkCounters {
-    let receivedBytes: UInt64
-    let sentBytes: UInt64
-    let activeInterfaceCount: Int
-    let interfaceNames: Set<String>
-  }
-
-  private var previousNetworkCounters: NetworkCounters?
-  private var previousNetworkSampleTime: TimeInterval?
+  private var networkSampler = NetworkTrafficRateSampler()
 
   func sample() -> SystemMonitorSnapshot {
-    let now = ProcessInfo.processInfo.systemUptime
-    let counters = Self.readNetworkCounters()
-    let network = networkSnapshot(from: counters, now: now)
-    previousNetworkCounters = counters
-    previousNetworkSampleTime = now
-
+    let rate = networkSampler.sample(
+      counters: NetworkInterfaceTrafficCounterReader.read(),
+      at: ProcessInfo.processInfo.systemUptime)
     return SystemMonitorSnapshot(
       memory: Self.readMemoryUsage(),
-      network: network,
-      sampledAt: Date()
-    )
-  }
-
-  private func networkSnapshot(
-    from counters: NetworkCounters,
-    now: TimeInterval
-  ) -> NetworkUsageSnapshot {
-    guard let previousNetworkCounters, let previousNetworkSampleTime,
-      previousNetworkCounters.interfaceNames == counters.interfaceNames
-    else {
-      return NetworkUsageSnapshot(
-        downloadBytesPerSecond: 0,
-        uploadBytesPerSecond: 0,
-        activeInterfaceCount: counters.activeInterfaceCount
-      )
-    }
-
-    let elapsed = max(now - previousNetworkSampleTime, 0.001)
-    return NetworkUsageSnapshot(
-      downloadBytesPerSecond: Double(Self.delta(counters.receivedBytes, previousNetworkCounters.receivedBytes))
-        / elapsed,
-      uploadBytesPerSecond: Double(Self.delta(counters.sentBytes, previousNetworkCounters.sentBytes))
-        / elapsed,
-      activeInterfaceCount: counters.activeInterfaceCount
-    )
-  }
-
-  private static func delta(_ current: UInt64, _ previous: UInt64) -> UInt64 {
-    current >= previous ? current - previous : 0
-  }
-
-  private static func readNetworkCounters() -> NetworkCounters {
-    var interfaces: UnsafeMutablePointer<ifaddrs>?
-    guard getifaddrs(&interfaces) == 0, let firstInterface = interfaces else {
-      return NetworkCounters(
-        receivedBytes: 0,
-        sentBytes: 0,
-        activeInterfaceCount: 0,
-        interfaceNames: [])
-    }
-    defer { freeifaddrs(interfaces) }
-
-    var receivedBytes: UInt64 = 0
-    var sentBytes: UInt64 = 0
-    var activeInterfaceCount = 0
-    var interfaceNames: Set<String> = []
-    var cursor: UnsafeMutablePointer<ifaddrs>? = firstInterface
-
-    while let interface = cursor {
-      defer { cursor = interface.pointee.ifa_next }
-      guard let address = interface.pointee.ifa_addr else { continue }
-      guard Int32(address.pointee.sa_family) == AF_LINK else { continue }
-
-      let flags = interface.pointee.ifa_flags
-      guard flags & UInt32(IFF_UP) != 0, flags & UInt32(IFF_LOOPBACK) == 0 else { continue }
-      guard let namePointer = interface.pointee.ifa_name else { continue }
-      let interfaceName = String(cString: namePointer)
-      guard !interfaceName.hasPrefix("lo") else { continue }
-      guard let data = interface.pointee.ifa_data?.assumingMemoryBound(to: if_data.self).pointee else {
-        continue
-      }
-
-      receivedBytes += UInt64(data.ifi_ibytes)
-      sentBytes += UInt64(data.ifi_obytes)
-      activeInterfaceCount += 1
-      interfaceNames.insert(interfaceName)
-    }
-
-    return NetworkCounters(
-      receivedBytes: receivedBytes,
-      sentBytes: sentBytes,
-      activeInterfaceCount: activeInterfaceCount,
-      interfaceNames: interfaceNames
-    )
+      network: NetworkUsageSnapshot(
+        downloadBytesPerSecond: rate.downloadBytesPerSecond,
+        uploadBytesPerSecond: rate.uploadBytesPerSecond,
+        activeInterfaceCount: rate.activeInterfaceCount),
+      sampledAt: Date())
   }
 
   private static func readMemoryUsage() -> MemoryUsageSnapshot {

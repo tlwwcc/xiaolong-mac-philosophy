@@ -112,7 +112,7 @@ final class InPlaceTranslationController {
         processingTask = Task { [weak self] in
             guard let self = self else { return }
             do {
-                let ocrResults = try await self.recognizeText(image)
+                let ocrResults = OCRService.translationBlocks(try await self.recognizeText(image))
                 try Task.checkCancellation()
                 guard !ocrResults.isEmpty else {
                     await MainActor.run {
@@ -124,11 +124,14 @@ final class InPlaceTranslationController {
 
                 let settings = AppSettings.load()
                 let targetLanguage = settings.targetLanguage
+                let uncertain = Set(ocrResults.indices.filter {
+                    OCRService.hasUncertainLiteral(ocrResults[$0].text)
+                })
 
                 // 「英语八级眼镜」：已是目标语言的块跳过翻译、跳过覆盖渲染，
                 // 只有外文块发给 LLM —— 混排界面里中文部分纹丝不动
                 let toTranslate = ocrResults.enumerated().filter {
-                    LanguageClassifier.shouldTranslate(
+                    !uncertain.contains($0.offset) && LanguageClassifier.shouldTranslate(
                         $0.element.text,
                         targetLanguage: targetLanguage
                     )
@@ -142,8 +145,10 @@ final class InPlaceTranslationController {
                         }
                         self.finishProcessing()
                         self.showHint(
-                            text: "识别内容已是目标语言：\(targetLanguage.displayName)（可在设置中切换）",
-                            isError: false
+                            text: uncertain.isEmpty
+                                ? "识别内容已是目标语言：\(targetLanguage.displayName)（可在设置中切换）"
+                                : "部分符号未能可靠识别，已保留原图，请放大选区重试。",
+                            isError: !uncertain.isEmpty
                         )
                     }
                     return
@@ -168,7 +173,7 @@ final class InPlaceTranslationController {
                 try Task.checkCancellation()
                 // 子集下标 → 原始块下标 映射
                 var translations: [Int: String] = [:]
-                var failed = Set<Int>()
+                var failed = uncertain
                 for (subIndex, result) in results.enumerated() {
                     let originalIndex = toTranslate[subIndex].offset
                     // 目标语言/数字以及翻译后未变化的缩写保留原像素。
@@ -438,7 +443,7 @@ final class InPlaceTranslationController {
         guard let rendered = renderedImage else { return }
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
-        let defaultName = "游目-译文-\(formatter.string(from: Date())).png"
+        let defaultName = "截图-译文-\(formatter.string(from: Date())).png"
 
         NSApp.activate(ignoringOtherApps: true)
         let panel = NSSavePanel()

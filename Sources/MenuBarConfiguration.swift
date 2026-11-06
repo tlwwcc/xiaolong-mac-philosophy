@@ -35,7 +35,7 @@ enum MenuBarCatalog {
   static let items: [MenuBarCatalogItemDescriptor] = [
     MenuBarCatalogItemDescriptor(
       id: .youmu,
-      title: "游目",
+      title: "截图",
       detail: "截图、OCR、翻译与选区朗读",
       systemImage: "viewfinder",
       isVisibleByDefault: true),
@@ -77,7 +77,7 @@ enum MenuBarCatalog {
       isVisibleByDefault: false),
     MenuBarCatalogItemDescriptor(
       id: .pijuanPDF,
-      title: "披卷",
+      title: "PDF 浏览器",
       detail: "打开 PDF 阅读器",
       systemImage: "doc.richtext",
       isVisibleByDefault: false),

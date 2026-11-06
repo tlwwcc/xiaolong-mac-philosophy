@@ -1,6 +1,9 @@
 import AppKit
 import Darwin
 import Foundation
+#if canImport(SystemMetricsSupport)
+import SystemMetricsSupport
+#endif
 
 private let helperEnvironment = ProcessInfo.processInfo.environment
 private let defaultsSuiteName =
@@ -153,77 +156,15 @@ private final class DisplayOptionsReader {
 }
 
 private final class NetworkSpeedSampler {
-  private struct Counters {
-    let receivedBytes: UInt64
-    let sentBytes: UInt64
-    let interfaceNames: Set<String>
-  }
-
-  private var previousCounters: Counters?
-  private var previousSampleTime: TimeInterval?
+  private var rateSampler = NetworkTrafficRateSampler()
 
   func sample() -> NetworkSnapshot {
-    let now = ProcessInfo.processInfo.systemUptime
-    let counters = readCounters()
-    defer {
-      previousCounters = counters
-      previousSampleTime = now
-    }
-
-    guard let previousCounters, let previousSampleTime,
-      previousCounters.interfaceNames == counters.interfaceNames
-    else {
-      return NetworkSnapshot(downloadBytesPerSecond: 0, uploadBytesPerSecond: 0)
-    }
-
-    let elapsed = max(now - previousSampleTime, 0.001)
+    let rate = rateSampler.sample(
+      counters: NetworkInterfaceTrafficCounterReader.read(),
+      at: ProcessInfo.processInfo.systemUptime)
     return NetworkSnapshot(
-      downloadBytesPerSecond: Double(delta(counters.receivedBytes, previousCounters.receivedBytes))
-        / elapsed,
-      uploadBytesPerSecond: Double(delta(counters.sentBytes, previousCounters.sentBytes)) / elapsed
-    )
-  }
-
-  private func delta(_ current: UInt64, _ previous: UInt64) -> UInt64 {
-    current >= previous ? current - previous : 0
-  }
-
-  private func readCounters() -> Counters {
-    var interfaces: UnsafeMutablePointer<ifaddrs>?
-    guard getifaddrs(&interfaces) == 0, let firstInterface = interfaces else {
-      return Counters(receivedBytes: 0, sentBytes: 0, interfaceNames: [])
-    }
-    defer { freeifaddrs(interfaces) }
-
-    var receivedBytes: UInt64 = 0
-    var sentBytes: UInt64 = 0
-    var interfaceNames: Set<String> = []
-    var cursor: UnsafeMutablePointer<ifaddrs>? = firstInterface
-
-    while let interface = cursor {
-      defer { cursor = interface.pointee.ifa_next }
-      guard let address = interface.pointee.ifa_addr else { continue }
-      guard Int32(address.pointee.sa_family) == AF_LINK else { continue }
-
-      let flags = interface.pointee.ifa_flags
-      guard flags & UInt32(IFF_UP) != 0, flags & UInt32(IFF_LOOPBACK) == 0 else { continue }
-      guard let namePointer = interface.pointee.ifa_name else { continue }
-      let interfaceName = String(cString: namePointer)
-      guard !interfaceName.hasPrefix("lo") else { continue }
-      guard let data = interface.pointee.ifa_data?.assumingMemoryBound(to: if_data.self).pointee
-      else {
-        continue
-      }
-
-      receivedBytes += UInt64(data.ifi_ibytes)
-      sentBytes += UInt64(data.ifi_obytes)
-      interfaceNames.insert(interfaceName)
-    }
-
-    return Counters(
-      receivedBytes: receivedBytes,
-      sentBytes: sentBytes,
-      interfaceNames: interfaceNames)
+      downloadBytesPerSecond: rate.downloadBytesPerSecond,
+      uploadBytesPerSecond: rate.uploadBytesPerSecond)
   }
 }
 
@@ -698,7 +639,7 @@ private final class NetworkSpeedStatusItemApp: NSObject, NSApplicationDelegate {
     menu.addItem(
       makeMenuItem(
         id: StatusMenuCommandID.pijuanPDF,
-        title: "披卷",
+        title: "PDF 浏览器",
         systemImage: "doc.richtext",
         isHidden: true))
     menu.addItem(
@@ -1160,18 +1101,48 @@ private func fullRate(_ bytesPerSecond: Double) -> String {
 }
 
 #if AIXLG_NETWORK_STATUS_LAYOUT_FIXTURE
-  private func extremeCompositedTextLuminance(
+  private struct FixtureTextPaint {
+    let red: CGFloat
+    let green: CGFloat
+    let blue: CGFloat
+    let alpha: CGFloat
+    let coverageError: CGFloat
+    let observedPeakAlpha: CGFloat
+
+    func compositedLuminance(background: CGFloat) -> CGFloat {
+      (red * 0.2126 + green * 0.7152 + blue * 0.0722) * alpha
+        + background * (1 - alpha)
+    }
+
+    func contrastRatio(background: CGFloat) -> CGFloat {
+      func linear(_ value: CGFloat) -> CGFloat {
+        value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+      }
+      let foreground = linear(red * alpha + background * (1 - alpha)) * 0.2126
+        + linear(green * alpha + background * (1 - alpha)) * 0.7152
+        + linear(blue * alpha + background * (1 - alpha)) * 0.0722
+      let backdrop = linear(background)
+      return (max(foreground, backdrop) + 0.05) / (min(foreground, backdrop) + 0.05)
+    }
+  }
+
+  // A tiny glyph may have no fully covered pixel at 1x. Compare to the same native glyph
+  // rendered with opaque ink, so anti-aliasing coverage cannot masquerade as dimmed paint.
+  private func fixtureTextPaint(
     in image: NSImage,
-    pointRect: CGRect,
-    backgroundLuminance: CGFloat,
-    findMinimum: Bool = false
-  ) -> CGFloat {
+    mask: NSImage,
+    pointRect: CGRect
+  ) -> FixtureTextPaint? {
     guard let tiffData = image.tiffRepresentation,
       let bitmap = NSBitmapImageRep(data: tiffData),
+      let maskData = mask.tiffRepresentation,
+      let reference = NSBitmapImageRep(data: maskData),
+      bitmap.pixelsWide == reference.pixelsWide,
+      bitmap.pixelsHigh == reference.pixelsHigh,
       image.size.width > 0,
       image.size.height > 0
     else {
-      return 0
+      return nil
     }
     let scaleX = CGFloat(bitmap.pixelsWide) / image.size.width
     let scaleY = CGFloat(bitmap.pixelsHigh) / image.size.height
@@ -1180,23 +1151,87 @@ private func fullRate(_ bytesPerSecond: Double) -> String {
     let lowerY = max(0, Int(floor((image.size.height - pointRect.maxY) * scaleY)))
     let upperY = min(
       bitmap.pixelsHigh, Int(ceil((image.size.height - pointRect.minY) * scaleY)))
-    guard lowerX < upperX, lowerY < upperY else { return 0 }
-
-    var extreme: CGFloat = findMinimum ? 1 : 0
+    guard lowerX < upperX, lowerY < upperY else { return nil }
+    var pixels: [(mask: CGFloat, alpha: CGFloat)] = []
+    var dot: CGFloat = 0
+    var squaredMask: CGFloat = 0
+    var colorWeight: CGFloat = 0
+    var red: CGFloat = 0
+    var green: CGFloat = 0
+    var blue: CGFloat = 0
+    var observedPeakAlpha: CGFloat = 0
     for x in lowerX..<upperX {
       for y in lowerY..<upperY {
-        guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else {
+        guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB),
+          let maskColor = reference.colorAt(x: x, y: y)?.usingColorSpace(.sRGB),
+          maskColor.alphaComponent > 0.1
+        else {
           continue
         }
-        let foregroundLuminance =
-          color.redComponent * 0.2126 + color.greenComponent * 0.7152
-          + color.blueComponent * 0.0722
         let alpha = color.alphaComponent
-        let composited = foregroundLuminance * alpha + backgroundLuminance * (1 - alpha)
-        extreme = findMinimum ? min(extreme, composited) : max(extreme, composited)
+        let coverage = maskColor.alphaComponent
+        pixels.append((coverage, alpha))
+        dot += coverage * alpha
+        squaredMask += coverage * coverage
+        observedPeakAlpha = max(observedPeakAlpha, alpha)
+        if alpha > 0.15 {
+          colorWeight += alpha
+          red += color.redComponent * alpha
+          green += color.greenComponent * alpha
+          blue += color.blueComponent * alpha
+        }
       }
     }
-    return extreme
+    guard !pixels.isEmpty, squaredMask > 0, colorWeight > 0 else { return nil }
+    let paintAlpha = dot / squaredMask
+    let error = sqrt(pixels.reduce(CGFloat(0)) {
+      $0 + pow($1.alpha - $1.mask * paintAlpha, 2)
+    } / CGFloat(pixels.count))
+    return FixtureTextPaint(
+      red: red / colorWeight, green: green / colorWeight, blue: blue / colorWeight,
+      alpha: paintAlpha, coverageError: error, observedPeakAlpha: observedPeakAlpha)
+  }
+
+  @MainActor
+  private func fixtureOpaqueTextMask(
+    size: NSSize, metrics: [StatusMetric], appearance: NSAppearance
+  ) -> NSImage {
+    let image = NSImage(size: size)
+    let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .medium)
+    let unitFont = NSFont.monospacedSystemFont(ofSize: 7.5, weight: .medium)
+    let labelFont = NSFont.systemFont(ofSize: 6.2, weight: .regular)
+    let metricFont = NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .regular)
+    var opaqueInk = NSColor.black
+    appearance.performAsCurrentDrawingAppearance {
+      opaqueInk = NSColor.labelColor.withAlphaComponent(1).usingColorSpace(.sRGB) ?? .black
+    }
+    func width(_ text: String, _ font: NSFont) -> CGFloat {
+      (text as NSString).size(withAttributes: [.font: font]).width
+    }
+    func text(_ value: String, x: CGFloat, y: CGFloat, font: NSFont) {
+      (value as NSString).draw(
+        at: CGPoint(x: x, y: y),
+        withAttributes: [.font: font, .foregroundColor: opaqueInk])
+    }
+    let valueWidth = width("999", valueFont)
+    let unitX: CGFloat = 9 + valueWidth + 1.5
+    let unitWidth = ["B/s", "KB/s", "MB/s", "GB/s"].map { width($0, unitFont) }.max() ?? 0
+    image.lockFocus()
+    NSColor.clear.setFill()
+    NSRect(origin: .zero, size: size).fill()
+    // Explicit fixture strings, not the renderer's draw/color implementation.
+    text("9.9", x: 9 + valueWidth - width("9.9", valueFont), y: 9.1, font: valueFont)
+    text("MB/s", x: unitX, y: 9.9, font: unitFont)
+    text("249", x: 9 + valueWidth - width("249", valueFont), y: -0.2, font: valueFont)
+    text("KB/s", x: unitX, y: 0.6, font: unitFont)
+    var x = unitX + unitWidth + 5
+    for metric in metrics {
+      text(metric.label, x: x, y: 11.3, font: labelFont)
+      text(metric.value, x: x, y: 0, font: metricFont)
+      x += max(20, width(metric.label, labelFont), width("100%", metricFont)) + 4
+    }
+    image.unlockFocus()
+    return image
   }
 
   private func countBrightTextPixels(in image: NSImage) -> Int {
@@ -1394,23 +1429,82 @@ private func fullRate(_ bytesPerSecond: Double) -> String {
       fixtureMetricOriginX += width
     }
     let textRects = rateRects + metricRects
-    let darkForegroundPeaks = textRects.map {
-      extremeCompositedTextLuminance(in: darkImage, pointRect: $0, backgroundLuminance: 0.16)
+    let darkMask = fixtureOpaqueTextMask(
+      size: darkImage.size, metrics: fixtureMetrics, appearance: darkAppearance)
+    let lightMask = fixtureOpaqueTextMask(
+      size: lightImage.size, metrics: fixtureMetrics, appearance: lightAppearance)
+    let darkPaint = textRects.compactMap {
+      fixtureTextPaint(in: darkImage, mask: darkMask, pointRect: $0)
     }
-    let lightForegroundPeaks = textRects.map {
-      extremeCompositedTextLuminance(
-        in: lightImage, pointRect: $0, backgroundLuminance: 0.94, findMinimum: true)
+    let lightPaint = textRects.compactMap {
+      fixtureTextPaint(in: lightImage, mask: lightMask, pointRect: $0)
     }
+    func matchesExpectedPaint(_ samples: [FixtureTextPaint], appearance: NSAppearance) -> Bool {
+      var expected: NSColor?
+      appearance.performAsCurrentDrawingAppearance {
+        expected = NSColor.labelColor.withAlphaComponent(0.94).usingColorSpace(.sRGB)
+      }
+      guard samples.count == textRects.count, let expected else { return false }
+      return samples.allSatisfy {
+        abs($0.red - expected.redComponent) <= 0.02
+          && abs($0.green - expected.greenComponent) <= 0.02
+          && abs($0.blue - expected.blueComponent) <= 0.02
+          && abs($0.alpha - 0.94) <= 0.02
+          && $0.coverageError <= 0.02
+      }
+    }
+    let darkForegroundPeaks = darkPaint.map { $0.compositedLuminance(background: 0.16) }
+    let lightForegroundPeaks = lightPaint.map { $0.compositedLuminance(background: 0.94) }
     guard darkForegroundPeaks.allSatisfy({ $0 >= 0.92 }),
       (darkForegroundPeaks.max() ?? 0) - (darkForegroundPeaks.min() ?? 0) <= 0.02,
       lightForegroundPeaks.allSatisfy({ $0 <= 0.09 }),
-      (lightForegroundPeaks.max() ?? 0) - (lightForegroundPeaks.min() ?? 0) <= 0.02
+      (lightForegroundPeaks.max() ?? 0) - (lightForegroundPeaks.min() ?? 0) <= 0.02,
+      matchesExpectedPaint(darkPaint, appearance: darkAppearance),
+      matchesExpectedPaint(lightPaint, appearance: lightAppearance),
+      darkPaint.allSatisfy({ $0.contrastRatio(background: 0.16) >= 7 }),
+      lightPaint.allSatisfy({ $0.contrastRatio(background: 0.94) >= 7 })
     else {
       fputs(
-        "network rate, unit, RAM, CPU, and GPU text do not share one adaptive foreground color "
-          + "(dark=\(darkForegroundPeaks), light=\(lightForegroundPeaks))\n",
+        "network adaptive text paint mismatch after native glyph coverage normalization "
+          + "(dark=\(darkForegroundPeaks), light=\(lightForegroundPeaks), "
+          + "darkAlpha=\(darkPaint.map(\.alpha)), lightAlpha=\(lightPaint.map(\.alpha)))\n",
         stderr)
       return 1
+    }
+
+    if let directory = ProcessInfo.processInfo.environment["AIXLG_NETWORK_STATUS_EVIDENCE_DIR"] {
+      let url = URL(fileURLWithPath: directory, isDirectory: true)
+      do {
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        func observations(_ paints: [FixtureTextPaint], background: CGFloat) -> [[String: CGFloat]] {
+          paints.map {
+            ["red": $0.red, "green": $0.green, "blue": $0.blue, "paintAlpha": $0.alpha,
+             "observedPeakAlpha": $0.observedPeakAlpha, "coverageError": $0.coverageError,
+             "normalizedLuminance": $0.compositedLuminance(background: background),
+             "contrastRatio": $0.contrastRatio(background: background)]
+          }
+        }
+        let data = try JSONSerialization.data(withJSONObject: [
+          "dark": observations(darkPaint, background: 0.16),
+          "light": observations(lightPaint, background: 0.94),
+          "groups": ["upload value", "upload unit", "download value", "download unit",
+                     "RAM label", "RAM value", "CPU label", "CPU value", "GPU label", "GPU value"],
+        ], options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: url.appendingPathComponent("paint-observations.json"), options: .atomic)
+        for (name, image) in [
+          ("dark", darkImage), ("light", lightImage),
+          ("dark-mask", darkMask), ("light-mask", lightMask),
+        ] {
+          guard let bytes = image.tiffRepresentation,
+            let bitmap = NSBitmapImageRep(data: bytes),
+            let png = bitmap.representation(using: .png, properties: [:])
+          else { return 1 }
+          try png.write(to: url.appendingPathComponent("\(name).png"), options: .atomic)
+        }
+      } catch {
+        fputs("could not write network status fixture evidence: \(error)\n", stderr)
+        return 1
+      }
     }
 
     if let previewPath = ProcessInfo.processInfo.environment["AIXLG_NETWORK_STATUS_PREVIEW_PATH"],

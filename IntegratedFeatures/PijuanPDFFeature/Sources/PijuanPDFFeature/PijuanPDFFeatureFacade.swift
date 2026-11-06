@@ -92,11 +92,11 @@ public enum PijuanPDFFeatureConfigurationError: Error, Equatable, LocalizedError
   public var errorDescription: String? {
     switch self {
     case .emptyChannelBundleIdentifier:
-      return "披卷需要宿主提供开发版或稳定版的 Bundle ID。"
+      return "PDF 浏览器需要宿主提供开发版或稳定版的 Bundle ID。"
     case .emptyFeatureIdentifier:
-      return "披卷需要非空的功能标识。"
+      return "PDF 浏览器需要非空的功能标识。"
     case .preferencesSuiteMismatch(let expected, let actual):
-      return "披卷偏好域不匹配：期望 \(expected)，实际 \(actual)。"
+      return "PDF 浏览器偏好域不匹配：期望 \(expected)，实际 \(actual)。"
     case .defaultAssociationForbiddenInDevelopment:
       return "开发版禁止申请系统默认 PDF 打开方式。"
     }
@@ -209,7 +209,7 @@ public final class PijuanPDFFeatureFacade {
       styleMask: [.titled, .closable, .miniaturizable, .resizable],
       backing: .buffered,
       defer: false)
-    window.title = "披卷"
+    window.title = "PDF 浏览器"
     window.contentViewController = NSHostingController(rootView: makeRootView())
     window.isReleasedWhenClosed = false
     window.center()
@@ -256,7 +256,7 @@ public final class PijuanPDFFeatureFacade {
       styleMask: [.titled, .closable, .miniaturizable],
       backing: .buffered,
       defer: false)
-    window.title = "披卷 · 帮助"
+    window.title = "PDF 浏览器 · 帮助"
     window.contentViewController = NSHostingController(rootView: content)
     window.isReleasedWhenClosed = false
     window.center()
